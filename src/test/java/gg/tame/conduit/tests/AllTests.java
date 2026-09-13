@@ -6,7 +6,11 @@ import gg.tame.conduit.protocol.ProtocolSession;
 import gg.tame.conduit.protocol.VarIntFrameDecoder;
 import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.routing.BackendSelector;
+import gg.tame.conduit.auth.HasJoinedResponse;
+import gg.tame.conduit.auth.MojangSessionAuthenticator;
+import gg.tame.conduit.auth.SessionQuery;
 import gg.tame.conduit.network.MinecraftProxy;
+import gg.tame.conduit.network.PacketTransport;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ForwardingMode;
@@ -55,6 +59,9 @@ public final class AllTests {
     completeModernBackendExchange();
     rejectInvalidLoginPluginRequests();
     mockBackendModernForwardingWireExchange();
+    encryptionAndServerHash();
+    sessionAuthentication();
+    onlineModeFeedsAuthenticatedIdentityToForwarding();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {
@@ -89,6 +96,7 @@ public final class AllTests {
     Path config = Files.createTempFile("conduit", ".toml");
     Files.writeString(config, configuration("none"));
     require(ConfigurationLoader.load(config).maxFrameBytes() == 64, "configuration did not load");
+    require(ConfigurationLoader.load(config).authentication().mode() == gg.tame.conduit.config.AuthenticationMode.OFFLINE, "missing authentication must default to offline");
     Files.writeString(config, configuration("modern"));
     try { ConfigurationLoader.load(config); throw new AssertionError("modern mode accepted without secret"); }
     catch (IllegalArgumentException expected) { }
@@ -240,6 +248,136 @@ public final class AllTests {
         backend.join(); serving.interrupt();
       }
     }
+  }
+  private static void encryptionAndServerHash() throws Exception {
+    require(gg.tame.conduit.crypto.ServerHash.of("Notch".getBytes(StandardCharsets.ISO_8859_1)).equals("4ed1f46bbe04bc756bcb17c0c7ce3e4632f06a48"), "Notch hash");
+    require(gg.tame.conduit.crypto.ServerHash.of("jeb_".getBytes(StandardCharsets.ISO_8859_1)).equals("-7c9d5b0044c130109a5d7b5fb5c317c02b4e28c1"), "negative jeb_ hash");
+    require(gg.tame.conduit.crypto.ServerHash.of("simon".getBytes(StandardCharsets.ISO_8859_1)).equals("88e16a1019277b15d58faf0541e11910eb756f6"), "leading-zero simon hash");
+    java.security.KeyPair keys = gg.tame.conduit.crypto.RsaKeys.generate();
+    byte[] secret = new byte[16]; new java.security.SecureRandom().nextBytes(secret);
+    byte[] encrypted = gg.tame.conduit.crypto.RsaKeys.encrypt(keys.getPublic(), secret);
+    require(java.util.Arrays.equals(secret, gg.tame.conduit.crypto.RsaKeys.decrypt(keys.getPrivate(), encrypted)), "RSA round trip");
+    byte[] verify = {1, 2, 3, 4};
+    require(!java.util.Arrays.equals(verify, secret), "token and secret must differ");
+    javax.crypto.Cipher encrypt = gg.tame.conduit.crypto.AesCfb8.encryptor(secret);
+    javax.crypto.Cipher decrypt = gg.tame.conduit.crypto.AesCfb8.decryptor(secret);
+    byte[] message = {9, 8, 7, 6, 5};
+    require(java.util.Arrays.equals(message, decrypt.update(encrypt.update(message))), "AES/CFB8 round trip");
+    java.io.ByteArrayOutputStream encryptedBytes = new java.io.ByteArrayOutputStream();
+    try (java.io.OutputStream out = gg.tame.conduit.crypto.CipherStreams.encrypting(encryptedBytes, gg.tame.conduit.crypto.AesCfb8.encryptor(secret))) {
+      MinecraftFrames.write(out, new byte[] {1, 2, 3});
+    }
+    try (java.io.InputStream in = gg.tame.conduit.crypto.CipherStreams.decrypting(new ByteArrayInputStream(encryptedBytes.toByteArray()), gg.tame.conduit.crypto.AesCfb8.decryptor(secret))) {
+      require(java.util.Arrays.equals(MinecraftFrames.read(in, 16), new byte[] {1, 2, 3}), "encrypted packet framing round trip");
+    }
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(765);
+    gg.tame.conduit.login.EncryptionHandshake handshake = new gg.tame.conduit.login.EncryptionHandshake(keys);
+    gg.tame.conduit.login.EncryptionRequest request = gg.tame.conduit.login.EncryptionRequest.decode(protocol, handshake.request().encode(protocol));
+    byte[] wrongToken = request.verifyToken().clone(); wrongToken[0] ^= 1;
+    ByteArrayOutputStream bad = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bad)) {
+      MinecraftOutput.varInt(output, 1);
+      MinecraftOutput.bytes(output, gg.tame.conduit.crypto.RsaKeys.encrypt(keys.getPublic(), secret));
+      MinecraftOutput.bytes(output, gg.tame.conduit.crypto.RsaKeys.encrypt(keys.getPublic(), wrongToken));
+    }
+    try { handshake.sharedSecret(protocol, bad.toByteArray()); throw new AssertionError("bad verify token accepted"); }
+    catch (Exception expected) { }
+    String hash = gg.tame.conduit.crypto.ServerHash.of("", secret, keys.getPublic());
+    require(hash.equals(gg.tame.conduit.crypto.ServerHash.of("", secret, keys.getPublic())), "server hash must be deterministic");
+  }
+  private static void sessionAuthentication() throws Exception {
+    HasJoinedResponse.Result parsed = HasJoinedResponse.parse("{\"id\":\"11111111222233334444555555555555\",\"name\":\"Notch\",\"properties\":[{\"name\":\"textures\",\"value\":\"val\",\"signature\":\"sig\"}]}");
+    require(parsed.uniqueId().equals(HasJoinedResponse.uuid("11111111-2222-3333-4444-555555555555")) && parsed.username().equals("Notch") && parsed.properties().size() == 1, "hasJoined parse");
+    try { HasJoinedResponse.parse("{\"name\":\"Notch\"}"); throw new AssertionError("missing id accepted"); }
+    catch (gg.tame.conduit.auth.AuthenticationException expected) { }
+    try { HasJoinedResponse.uuid("not-a-uuid"); throw new AssertionError("invalid uuid accepted"); }
+    catch (gg.tame.conduit.auth.AuthenticationException expected) { }
+    com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    http.createContext("/ok", exchange -> respond(exchange, 200, "{\"id\":\"000000000000000000000000000000aa\",\"name\":\"playr\",\"properties\":[]}"));
+    http.createContext("/reject", exchange -> { exchange.sendResponseHeaders(204, -1); exchange.close(); });
+    http.createContext("/slow", exchange -> { try { Thread.sleep(400); } catch (InterruptedException ignored) { } respond(exchange, 200, "{}"); });
+    http.createContext("/bad", exchange -> respond(exchange, 200, "{"));
+    http.start();
+    int port = http.getAddress().getPort();
+    gg.tame.conduit.config.AuthenticationSettings ok = new gg.tame.conduit.config.AuthenticationSettings(gg.tame.conduit.config.AuthenticationMode.ONLINE, "http://127.0.0.1:" + port + "/ok", 1000);
+    PlayerProfile profile = new MojangSessionAuthenticator(ok).verify(new SessionQuery("playr", "abc", Optional.empty()));
+    require(profile.authenticated() && profile.uniqueId().getLeastSignificantBits() == 0xaa, "successful session verification");
+    try { new MojangSessionAuthenticator(new gg.tame.conduit.config.AuthenticationSettings(gg.tame.conduit.config.AuthenticationMode.ONLINE, "http://127.0.0.1:" + port + "/reject", 1000)).verify(new SessionQuery("playr", "abc", Optional.empty())); throw new AssertionError("rejection accepted"); }
+    catch (gg.tame.conduit.auth.AuthenticationException expected) { }
+    try { new MojangSessionAuthenticator(new gg.tame.conduit.config.AuthenticationSettings(gg.tame.conduit.config.AuthenticationMode.ONLINE, "http://127.0.0.1:" + port + "/slow", 100)).verify(new SessionQuery("playr", "abc", Optional.empty())); throw new AssertionError("timeout accepted"); }
+    catch (gg.tame.conduit.auth.AuthenticationException expected) { }
+    try { new MojangSessionAuthenticator(new gg.tame.conduit.config.AuthenticationSettings(gg.tame.conduit.config.AuthenticationMode.ONLINE, "http://127.0.0.1:" + port + "/bad", 1000)).verify(new SessionQuery("playr", "abc", Optional.empty())); throw new AssertionError("malformed body accepted"); }
+    catch (gg.tame.conduit.auth.AuthenticationException expected) { }
+    http.stop(0);
+  }
+  private static void onlineModeFeedsAuthenticatedIdentityToForwarding() throws Exception {
+    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
+    java.util.concurrent.atomic.AtomicReference<String> requestedHash = new java.util.concurrent.atomic.AtomicReference<>();
+    com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+    http.createContext("/session/minecraft/hasJoined", exchange -> {
+      requestedHash.set(exchange.getRequestURI().getRawQuery());
+      respond(exchange, 200, "{\"id\":\"000000000000000000000000000000aa\",\"name\":\"playr\",\"properties\":[{\"name\":\"textures\",\"value\":\"skin\"}]}");
+    });
+    http.start();
+    try (ServerSocket backendListener = new ServerSocket(0)) {
+      Thread backend = Thread.startVirtualThread(() -> {
+        try (Socket socket = backendListener.accept()) {
+          MinecraftFrames.read(socket.getInputStream(), 2048);
+          MinecraftFrames.read(socket.getInputStream(), 2048);
+          MinecraftFrames.write(socket.getOutputStream(), modernRequest(9, 1));
+          byte[] response = MinecraftFrames.read(socket.getInputStream(), 2048);
+          try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(response))) {
+            MinecraftInput.varInt(input); MinecraftInput.varInt(input); input.readBoolean();
+            input.readNBytes(32); byte[] signed = input.readAllBytes();
+            try (DataInputStream payload = new DataInputStream(new ByteArrayInputStream(signed))) {
+              MinecraftInput.varInt(payload); MinecraftInput.string(payload, 255);
+              UUID uuid = new UUID(payload.readLong(), payload.readLong());
+              require(uuid.equals(new UUID(0, 0xaa)), "forwarding used Login Start UUID instead of authenticated UUID");
+              require(MinecraftInput.string(payload, 16).equals("playr"), "authenticated username");
+            }
+          }
+          MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});
+          MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});
+        } catch (Exception exception) { throw new RuntimeException(exception); }
+      });
+      gg.tame.conduit.config.AuthenticationSettings auth = new gg.tame.conduit.config.AuthenticationSettings(gg.tame.conduit.config.AuthenticationMode.ONLINE, "http://127.0.0.1:" + http.getAddress().getPort() + "/session/minecraft/hasJoined", 2000);
+      ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 2048,
+          ForwardingMode.MODERN, Optional.of(secret), List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", backendListener.getLocalPort()))), List.of("lobby"), List.of(), auth);
+      java.security.KeyPair keys = gg.tame.conduit.crypto.RsaKeys.generate();
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration, new MojangSessionAuthenticator(auth), keys)) {
+        int proxyPort = proxy.port();
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxyPort)) {
+          ProtocolDefinition protocol = ProtocolDefinition.forVersion(765);
+          MinecraftFrames.write(client.getOutputStream(), new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2});
+          MinecraftFrames.write(client.getOutputStream(), loginStart());
+          gg.tame.conduit.login.EncryptionRequest request = gg.tame.conduit.login.EncryptionRequest.decode(protocol, MinecraftFrames.read(client.getInputStream(), 2048));
+          byte[] shared = new byte[16]; new java.security.SecureRandom().nextBytes(shared);
+          java.security.PublicKey publicKey = java.security.KeyFactory.getInstance("RSA").generatePublic(new java.security.spec.X509EncodedKeySpec(request.publicKey()));
+          ByteArrayOutputStream response = new ByteArrayOutputStream();
+          try (DataOutputStream output = new DataOutputStream(response)) {
+            MinecraftOutput.varInt(output, 1);
+            MinecraftOutput.bytes(output, gg.tame.conduit.crypto.RsaKeys.encrypt(publicKey, shared));
+            MinecraftOutput.bytes(output, gg.tame.conduit.crypto.RsaKeys.encrypt(publicKey, request.verifyToken()));
+          }
+          MinecraftFrames.write(client.getOutputStream(), response.toByteArray());
+          PacketTransport encrypted = new PacketTransport(
+              gg.tame.conduit.crypto.CipherStreams.decrypting(client.getInputStream(), gg.tame.conduit.crypto.AesCfb8.decryptor(shared)),
+              gg.tame.conduit.crypto.CipherStreams.encrypting(client.getOutputStream(), gg.tame.conduit.crypto.AesCfb8.encryptor(shared)));
+          require(java.util.Arrays.equals(encrypted.read(2048), new byte[] {2}), "encrypted Login Success missing");
+          require(java.util.Arrays.equals(encrypted.read(2048), new byte[] {2}), "encrypted Finish Configuration missing");
+        }
+        backend.join(); serving.interrupt();
+      }
+    }
+    require(requestedHash.get() != null && requestedHash.get().contains("username=playr") && requestedHash.get().contains("serverId="), "session service was not queried");
+    http.stop(0);
+  }
+  private static void respond(com.sun.net.httpserver.HttpExchange exchange, int status, String body) throws java.io.IOException {
+    byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+    exchange.sendResponseHeaders(status, bytes.length);
+    exchange.getResponseBody().write(bytes);
+    exchange.close();
   }
   private static BackendLoginPipeline pipeline(Path secret) throws Exception {
     return new BackendLoginPipeline(ProtocolDefinition.forVersion(765), new ModernForwarder(ForwardingSecret.load(secret)),

@@ -8,12 +8,18 @@ import java.util.List;
 public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes,
                                   ForwardingMode forwardingMode, Optional<Path> forwardingSecretFile,
                                   List<BackendServer> backends, List<String> initialBackends,
-                                  List<String> fallbackBackends) {
+                                  List<String> fallbackBackends, AuthenticationSettings authentication) {
+  public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
+                             Optional<Path> forwardingSecretFile, List<BackendServer> backends,
+                             List<String> initialBackends, List<String> fallbackBackends) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends, AuthenticationSettings.offline());
+  }
   public ConduitConfiguration {
     if (listener.getPort() < 1 || listener.getPort() > 65535) throw new IllegalArgumentException("listener.port must be 1..65535");
     if (maxFrameBytes < 1 || maxFrameBytes > 8 * 1024 * 1024) throw new IllegalArgumentException("listener.max-frame-bytes must be 1..8388608");
     if (forwardingMode == ForwardingMode.MODERN && forwardingSecretFile.isEmpty()) throw new IllegalArgumentException("forwarding.secret-file is required for modern forwarding");
     if (forwardingMode != ForwardingMode.MODERN && forwardingSecretFile.isPresent()) throw new IllegalArgumentException("forwarding.secret-file is only valid for modern forwarding");
+    if (authentication == null) authentication = AuthenticationSettings.offline();
     backends = List.copyOf(backends);
     initialBackends = List.copyOf(initialBackends);
     fallbackBackends = List.copyOf(fallbackBackends);

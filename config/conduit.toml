@@ -7,6 +7,11 @@ max-frame-bytes = 1048576
 mode = "none"
 # secret-file = "secrets/forwarding.secret"
 
+[authentication]
+mode = "offline"
+# session-url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+# timeout-millis = 5000
+
 [servers.lobby]
 host = "127.0.0.1"
 port = 25566

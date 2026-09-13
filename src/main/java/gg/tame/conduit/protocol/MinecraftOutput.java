@@ -13,4 +13,7 @@ public final class MinecraftOutput {
   public static void string(DataOutput output, String value) throws IOException {
     byte[] bytes = value.getBytes(StandardCharsets.UTF_8); varInt(output, bytes.length); output.write(bytes);
   }
+  public static void bytes(DataOutput output, byte[] value) throws IOException {
+    varInt(output, value.length); output.write(value);
+  }
 }

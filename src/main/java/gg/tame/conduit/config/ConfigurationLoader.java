@@ -42,7 +42,16 @@ public final class ConfigurationLoader {
       servers.add(new BackendServer(name, new InetSocketAddress(values.get(key), integer(values, "servers." + name + ".port"))));
     }
     return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
-        list(values, "routing.initial"), list(values, "routing.fallback"));
+        list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values));
+  }
+
+  private static AuthenticationSettings authentication(Map<String, String> values) {
+    AuthenticationMode authMode = values.containsKey("authentication.mode")
+        ? AuthenticationMode.parse(required(values, "authentication.mode"))
+        : AuthenticationMode.OFFLINE;
+    String url = values.getOrDefault("authentication.session-url", AuthenticationSettings.DEFAULT_SESSION_URL);
+    int timeout = values.containsKey("authentication.timeout-millis") ? integer(values, "authentication.timeout-millis") : 5_000;
+    return new AuthenticationSettings(authMode, url, timeout);
   }
 
   private static String required(Map<String, String> values, String key) {

@@ -14,6 +14,7 @@ public final class Main {
     Path configPath = Path.of(arguments[checkOnly ? 1 : 0]);
     ConduitConfiguration config = ConfigurationLoader.load(configPath);
     if (config.forwardingSecretFile().isPresent()) System.out.println("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
+    System.out.println("Authentication mode: " + config.authentication().mode().name().toLowerCase());
     Forwarders.create(config);
     if (checkOnly) { System.out.println("Configuration valid."); return; }
     try (MinecraftProxy listener = new MinecraftProxy(config)) {

@@ -22,4 +22,9 @@ public final class MinecraftInput {
     byte[] bytes = new byte[length]; input.readFully(bytes);
     return new String(bytes, StandardCharsets.UTF_8);
   }
+  public static byte[] bytes(DataInput input, int maximumBytes) throws IOException {
+    int length = varInt(input);
+    if (length < 0 || length > maximumBytes) throw new IOException("byte array length exceeds limit");
+    byte[] bytes = new byte[length]; input.readFully(bytes); return bytes;
+  }
 }

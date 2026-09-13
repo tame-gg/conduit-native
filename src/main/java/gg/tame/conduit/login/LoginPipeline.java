@@ -17,6 +17,10 @@ public final class LoginPipeline {
   private PlayerProfile player;
   public LoginPipeline(ProtocolSession session, ProtocolDefinition protocol) { this.session = session; this.protocol = protocol; }
   public PlayerProfile player() { if (player == null) throw new IllegalStateException("Login Start has not arrived"); return player; }
+  public void adopt(PlayerProfile authenticated) {
+    if (player == null) throw new IllegalStateException("Login Start has not arrived");
+    this.player = authenticated;
+  }
   public void observe(PacketDirection direction, byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       int id = MinecraftInput.varInt(input);
