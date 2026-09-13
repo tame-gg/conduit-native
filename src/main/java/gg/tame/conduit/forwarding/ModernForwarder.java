@@ -11,15 +11,16 @@ import gg.tame.conduit.protocol.MinecraftOutput;
 
 /** Builds the public modern-forwarding binary payload and authenticates it with HMAC-SHA-256. */
 public final class ModernForwarder implements PlayerInfoForwarder {
-  private static final int FORWARDING_FORMAT_VERSION = 1;
+  public static final int FORWARDING_FORMAT_VERSION = 1;
   private final ForwardingSecret secret;
   public ModernForwarder(ForwardingSecret secret) { this.secret = secret; }
   @Override public ForwardingMode mode() { return ForwardingMode.MODERN; }
   @Override public byte[] payload(ForwardingRequest request) {
     try {
+      if (request.forwardingVersion() != FORWARDING_FORMAT_VERSION) throw new IllegalArgumentException("unsupported modern forwarding version: " + request.forwardingVersion());
       ByteArrayOutputStream raw = new ByteArrayOutputStream();
       try (DataOutputStream out = new DataOutputStream(raw)) {
-        MinecraftOutput.varInt(out, FORWARDING_FORMAT_VERSION);
+        MinecraftOutput.varInt(out, request.forwardingVersion());
         MinecraftOutput.string(out, request.clientAddress().getHostAddress());
         out.writeLong(request.player().uniqueId().getMostSignificantBits()); out.writeLong(request.player().uniqueId().getLeastSignificantBits());
         MinecraftOutput.string(out, request.player().username());
