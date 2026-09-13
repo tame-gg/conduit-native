@@ -3,7 +3,7 @@ package gg.tame.conduit.launcher;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ConfigurationLoader;
 import gg.tame.conduit.forwarding.ForwardingSecret;
-import gg.tame.conduit.network.ConduitListener;
+import gg.tame.conduit.network.MinecraftProxy;
 import java.nio.file.Path;
 
 public final class Main {
@@ -14,7 +14,7 @@ public final class Main {
     ConduitConfiguration config = ConfigurationLoader.load(configPath);
     if (config.forwardingSecretFile().isPresent()) System.out.println("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
     if (checkOnly) { System.out.println("Configuration valid."); return; }
-    try (ConduitListener listener = ConduitListener.bind(config)) {
+    try (MinecraftProxy listener = new MinecraftProxy(config)) {
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
       Thread.currentThread().join();
     }

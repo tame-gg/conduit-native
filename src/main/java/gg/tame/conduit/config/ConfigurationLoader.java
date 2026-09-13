@@ -7,6 +7,8 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Minimal, strict TOML subset for the foundation configuration. */
 public final class ConfigurationLoader {
@@ -33,7 +35,14 @@ public final class ConfigurationLoader {
     int maxFrame = integer(values, "listener.max-frame-bytes");
     ForwardingMode mode = ForwardingMode.parse(required(values, "forwarding.mode"));
     Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file")).map(value -> path.getParent().resolve(value).normalize());
-    return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret);
+    List<BackendServer> servers = new ArrayList<>();
+    for (String key : values.keySet()) {
+      if (!key.startsWith("servers.") || !key.endsWith(".host")) continue;
+      String name = key.substring("servers.".length(), key.length() - ".host".length());
+      servers.add(new BackendServer(name, new InetSocketAddress(values.get(key), integer(values, "servers." + name + ".port"))));
+    }
+    return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
+        list(values, "routing.initial"), list(values, "routing.fallback"));
   }
 
   private static String required(Map<String, String> values, String key) {
@@ -44,5 +53,18 @@ public final class ConfigurationLoader {
   private static int integer(Map<String, String> values, String key) {
     try { return Integer.parseInt(required(values, key)); }
     catch (NumberFormatException exception) { throw new IllegalArgumentException(key + " must be an integer", exception); }
+  }
+  private static List<String> list(Map<String, String> values, String key) {
+    String raw = required(values, key);
+    if (!raw.startsWith("[") || !raw.endsWith("]")) throw new IllegalArgumentException(key + " must be a string array");
+    String contents = raw.substring(1, raw.length() - 1).strip();
+    if (contents.isEmpty()) return List.of();
+    List<String> result = new ArrayList<>();
+    for (String part : contents.split(",")) {
+      String value = part.strip();
+      if (value.length() < 2 || !value.startsWith("\"") || !value.endsWith("\"")) throw new IllegalArgumentException(key + " must contain quoted names");
+      result.add(value.substring(1, value.length() - 1));
+    }
+    return result;
   }
 }
