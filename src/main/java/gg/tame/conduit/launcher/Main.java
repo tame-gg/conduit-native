@@ -18,7 +18,7 @@ public final class Main {
     if (checkOnly) { System.out.println("Configuration valid."); return; }
     try (MinecraftProxy listener = new MinecraftProxy(config)) {
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
-      Thread.currentThread().join();
+      listener.serve();
     }
   }
 }

@@ -10,7 +10,6 @@ public record LoginPluginRequest(int messageId, String channel, byte[] data) {
   public static LoginPluginRequest decode(byte[] body, int maximumPayloadBytes) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
       int messageId = MinecraftInput.varInt(input);
-      if (messageId < 0) throw new IOException("invalid login plugin message id");
       String channel = MinecraftInput.string(input, 32767);
       if (channel.isBlank()) throw new IOException("empty login plugin channel");
       byte[] data = input.readAllBytes();

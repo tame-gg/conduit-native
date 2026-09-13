@@ -29,7 +29,10 @@ Request/Response exchange on the backend connection.
 Modern forwarding:
 
 * Channel: `velocity:player_info`
-* Request: one unsigned version byte (only version `1` is implemented)
+* Request: one unsigned version byte. Paper 1.20.4 sends `4` (lazy session). Conduit accepts
+  versions `1` through `4` and echoes that version in the signed body. Version `5+` is rejected
+  (fail closed, no legacy downgrade).
+* Message IDs are signed VarInts and may be negative; Paper uses `ThreadLocalRandom.nextInt()`.
 * Response: Minecraft Login Plugin Response (id `0x02`) with the matching message id, success flag,
   32-byte HMAC-SHA-256, then the signed forwarding body (version, IP, UUID, username, properties)
 
@@ -50,12 +53,24 @@ Set Compression during login is understood so a later compressed Login Success c
 identified. Prefer `network-compression-threshold=-1` on backends until a broader compression path
 is tested.
 
-## Paper
+## Paper 1.20.4 interoperability
 
-Real Paper interoperability is **not** claimed in this milestone. No Paper server was exercised in
-the accompanying test run. A Paper backend would need `online-mode=false`, Velocity modern forwarding
-enabled with the same secret Conduit uses, and protocol 765 clients. Only forwarding format version 1
-is implemented; a backend that requests version 2+ is rejected (fail closed, no legacy downgrade).
+Demonstrated against official **Paper git-Paper-499 (MC: 1.20.4)**, protocol 765, Java 21:
+
+* Paper Velocity modern forwarding enabled, shared secret, `online-mode=false`,
+  `network-compression-threshold=-1`, listen `127.0.0.1` only
+* Conduit `forwarding.mode = modern` with the same secret
+* A protocol-765 login probe (not the Mojang launcher GUI) completed:
+
+  Login Start → Paper Login Plugin Request (`velocity:player_info`, version byte `4`) →
+  Conduit HMAC response → Paper Login Success with the forwarded UUID/username →
+  Configuration Finish → Play Login (`0x29`). Paper logged the forwarded UUID and
+  “Player left the game” after the probe disconnected.
+
+Versions 2–3 include optional chat-key material in the Velocity spec. Paper 1.20.4’s login
+handler accepts 1–4 and reads address/profile immediately after the version VarInt; Conduit
+echoes the requested version with the version-1 field layout (no extra key block). Version 5+
+is still rejected.
 
 ## Explicitly out of scope here
 

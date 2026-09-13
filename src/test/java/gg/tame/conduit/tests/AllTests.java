@@ -149,8 +149,10 @@ public final class AllTests {
       require(input.readBoolean() && MinecraftInput.string(input, 255).equals("sig"), "property signature");
       require(input.available() == 0, "unexpected trailing forwarding bytes");
     }
-    try { forwarder.payload(new ForwardingRequest(player, InetAddress.getByName("127.0.0.1"), 765, 4)); throw new AssertionError("unsupported forwarding version accepted"); }
+    try { forwarder.payload(new ForwardingRequest(player, InetAddress.getByName("127.0.0.1"), 765, 5)); throw new AssertionError("unsupported forwarding version accepted"); }
     catch (IllegalArgumentException expected) { }
+    byte[] lazy = forwarder.payload(new ForwardingRequest(player, InetAddress.getByName("127.0.0.1"), 765, 4));
+    require(MinecraftInput.varInt(new DataInputStream(new ByteArrayInputStream(java.util.Arrays.copyOfRange(lazy, 32, lazy.length)))) == 4, "lazy-session version was not preserved");
     Path empty = Files.createTempFile("conduit-empty", ".secret"); Files.writeString(empty, " \n");
     try { ForwardingSecret.load(empty); throw new AssertionError("empty secret accepted"); }
     catch (IllegalArgumentException expected) { }
@@ -174,14 +176,21 @@ public final class AllTests {
     }
     require(pipeline.onBackendPacket(new byte[] {2}, 1024) == null && pipeline.state() == ConnectionState.CONFIGURATION, "Login Success transition failed");
     require(pipeline.onBackendPacket(new byte[] {2}, 1024) == null && pipeline.state() == ConnectionState.PLAY, "Finish Configuration transition failed");
-    try { pipeline(secret).onBackendPacket(modernRequest(1, 2), 1024); throw new AssertionError("unsupported forwarding version accepted"); }
+    try { pipeline(secret).onBackendPacket(modernRequest(1, 5), 1024); throw new AssertionError("unsupported forwarding version accepted"); }
     catch (java.io.IOException expected) { }
+    byte[] lazyResponse = pipeline(secret).onBackendPacket(modernRequest(-333808985, 4), 1024);
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(lazyResponse))) {
+      require(MinecraftInput.varInt(input) == 2 && MinecraftInput.varInt(input) == -333808985 && input.readBoolean(), "negative Paper message id must be echoed");
+      input.readNBytes(32);
+      require(MinecraftInput.varInt(input) == 4, "Paper lazy-session version must be echoed");
+    }
   }
   private static void rejectInvalidLoginPluginRequests() throws Exception {
     Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
     byte[] valid = pipeline(secret).onBackendPacket(pluginRequest(3, "velocity:player_info", new byte[] {1}), 1024);
     require(valid != null && valid[1] == 3, "valid request id must be echoed");
-    expectIO(() -> LoginPluginRequest.decode(pluginBody(-1, "velocity:player_info", new byte[] {1}), 1024), "negative message id accepted");
+    LoginPluginRequest negative = LoginPluginRequest.decode(pluginBody(-1, "velocity:player_info", new byte[] {1}), 1024);
+    require(negative.messageId() == -1, "signed login plugin message ids must round-trip");
     expectIO(() -> pipeline(secret).onBackendPacket(pluginRequest(1, "minecraft:brand", new byte[] {1}), 1024), "unknown channel accepted");
     expectIO(() -> pipeline(secret).onBackendPacket(pluginRequest(1, "velocity:player_info", new byte[] {1, 2}), 1024), "malformed payload accepted");
     expectIO(() -> pipeline(secret).onBackendPacket(pluginRequest(1, "velocity:player_info", new byte[0]), 1024), "empty payload accepted");
