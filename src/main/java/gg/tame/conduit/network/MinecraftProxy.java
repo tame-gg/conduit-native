@@ -85,6 +85,7 @@ public final class MinecraftProxy implements AutoCloseable {
     EncryptionHandshake handshake = new EncryptionHandshake(rsaKeys);
     transport.beginNegotiation();
     transport.write(handshake.request().encode(protocol));
+    System.out.println("Encryption request sent.");
     byte[] response;
     try { response = transport.read(configuration.maxFrameBytes()); }
     catch (IOException exception) { throw new AuthenticationException("missing encryption response", exception); }
@@ -93,8 +94,11 @@ public final class MinecraftProxy implements AutoCloseable {
     catch (AuthenticationException exception) { throw exception; }
     catch (Exception exception) { throw new AuthenticationException("invalid encryption response", exception); }
     transport.enableEncryption(secret);
+    System.out.println("Client encryption enabled.");
     String hash = handshake.serverHash(secret);
-    pipeline.adopt(authenticator.verify(new SessionQuery(pipeline.player().username(), hash, Optional.of(address))));
+    var authenticated = authenticator.verify(new SessionQuery(pipeline.player().username(), hash, Optional.of(address)));
+    pipeline.adopt(authenticated);
+    System.out.println("Session verified for " + authenticated.username() + " (" + authenticated.uniqueId() + ").");
   }
   private void completeBackendLogin(PacketTransport client, Socket backend, ProtocolDefinition protocol, ProtocolSession session, LoginPipeline clientLogin, java.net.InetAddress address) throws IOException {
     BackendLoginPipeline backendLogin = new BackendLoginPipeline(protocol, forwarder, clientLogin.player(), address, configuration.maxFrameBytes());

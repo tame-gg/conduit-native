@@ -61,19 +61,25 @@ Private keys, shared secrets, and session bodies are not logged.
 
 ## Modern forwarding
 
-Verified against **Paper git-Paper-499 (MC: 1.20.4)** with a protocol-765 probe (not the
-Mojang launcher GUI): Login Plugin `velocity:player_info` version 4, HMAC payload, Login
-Success, Configuration, Play. Paper logged the forwarded test UUID.
-
-Keep Paper `online-mode=false`, Velocity modern forwarding enabled, shared secret, and
+Verified against **Paper git-Paper-499 (MC: 1.20.4)**. Keep Paper `online-mode=false`,
+Velocity modern forwarding enabled, a matching secret, and
 `network-compression-threshold=-1`.
+
+## Real vanilla client
+
+Conduit has been validated with a real vanilla Minecraft 1.20.4 client using online-mode
+authentication and modern forwarding to Paper 1.20.4-499:
+
+* official 1.20.4 `client.jar` (protocol 765)
+* Encryption Request → Encryption Response → AES/CFB8
+* Mojang `hasJoined` succeeded
+* Paper received the Mojang-authenticated UUID/username (not the Login Start UUID)
+* the client reached Play, joined the world, and sent chat
 
 ## Testing notes
 
-Automated tests cover encryption, server-hash known values, mocked hasJoined, and
-online-mode → forwarding identity substitution. They do **not** use a real Mojang account
-or the official vanilla client. Vanilla-client online-mode compatibility is therefore
-**not** claimed.
+`./scripts/test.ps1` covers encryption, server-hash known values, mocked hasJoined, and
+online-mode identity substitution without a live Mojang account.
 
 ## Out of scope here
 
