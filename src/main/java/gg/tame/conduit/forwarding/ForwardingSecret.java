@@ -19,5 +19,6 @@ public final class ForwardingSecret {
     try { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value), 0, 6); }
     catch (Exception exception) { throw new IllegalStateException(exception); }
   }
+  byte[] bytes() { return value.clone(); }
   @Override public String toString() { return "ForwardingSecret[redacted]"; }
 }

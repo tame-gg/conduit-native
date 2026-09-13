@@ -5,6 +5,10 @@ import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.protocol.ProtocolSession;
+import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.protocol.StatusResponder;
+import gg.tame.conduit.login.LoginPipeline;
+import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.routing.BackendSelector;
 import java.io.IOException;
 import java.net.Socket;
@@ -32,16 +36,28 @@ public final class MinecraftProxy implements AutoCloseable {
       byte[] firstPacket = MinecraftFrames.read(client.getInputStream(), configuration.maxFrameBytes());
       Handshake handshake = Handshake.decode(firstPacket);
       ProtocolSession session = new ProtocolSession(); session.acceptHandshake(handshake.nextState());
+      ProtocolDefinition protocol = ProtocolDefinition.forVersion(handshake.protocolVersion());
+      if (handshake.nextState() == 1) { serveStatus(client, protocol); return; }
+      // Modern forwarding is built independently, but its login-plugin exchange is not live until
+      // it is validated against Paper. Never silently relay a modern-enabled backend request.
+      if (configuration.forwardingMode() != gg.tame.conduit.config.ForwardingMode.NONE) throw new IOException("configured forwarding mode requires the backend login-plugin adapter, which is not enabled yet");
+      byte[] loginStart = MinecraftFrames.read(client.getInputStream(), configuration.maxFrameBytes());
+      LoginPipeline pipeline = new LoginPipeline(session, protocol); pipeline.observe(PacketDirection.CLIENT_TO_SERVER, loginStart);
       Socket backend = connectBackend();
       if (backend == null) throw new IOException("all configured backends refused the connection");
       try (backend) {
         MinecraftFrames.write(backend.getOutputStream(), firstPacket);
+        MinecraftFrames.write(backend.getOutputStream(), loginStart);
         try (var relay = Executors.newVirtualThreadPerTaskExecutor()) {
           relay.submit(() -> copy(client, backend));
           copy(backend, client);
         }
       }
     } catch (IOException exception) { System.err.println("Connection closed: " + exception.getMessage()); }
+  }
+  private void serveStatus(Socket client, ProtocolDefinition protocol) throws IOException {
+    MinecraftFrames.write(client.getOutputStream(), StatusResponder.response(protocol, MinecraftFrames.read(client.getInputStream(), configuration.maxFrameBytes()), "Conduit"));
+    MinecraftFrames.write(client.getOutputStream(), StatusResponder.pong(protocol, MinecraftFrames.read(client.getInputStream(), configuration.maxFrameBytes())));
   }
   private Socket connectBackend() {
     for (BackendServer server : new BackendSelector(configuration).candidates()) {

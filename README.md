@@ -22,5 +22,9 @@ Requires a JDK capable of compiling Java 21 source. On Windows:
 
 ## Current scope
 
-This is a foundation, not yet a complete Minecraft proxy. It does not yet provide backend routing,
-login, server switching, forwarding serialization, a plugin runtime, or Velocity compatibility.
+This is a protocol-aware MVP, not yet a complete Minecraft proxy. It supports protocol 765
+(Minecraft 1.20.4), native backend selection, Login Start validation, transparent post-login relay,
+and local status/ping. It does not authenticate clients itself, inspect encrypted/compressed traffic,
+or yet run the modern-forwarding login-plugin exchange against Paper. Modern payload generation is
+implemented and HMAC-protected, but live modern mode fails safely until that adapter has an
+interoperability fixture. Legacy and BungeeGuard are explicitly unsupported.
