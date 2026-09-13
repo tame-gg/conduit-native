@@ -1,6 +1,7 @@
 package gg.tame.conduit.session;
 
 import gg.tame.conduit.brand.BrandRewriter;
+import gg.tame.conduit.command.CommandGraphs;
 import gg.tame.conduit.command.CommandManager;
 import gg.tame.conduit.command.CommandSource;
 import gg.tame.conduit.config.BackendServer;
@@ -31,14 +32,15 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public final class PlayerSession implements CommandSource, AutoCloseable {
+public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCloseable {
   private final ConduitConfiguration configuration;
   private final PacketTransport client;
   private final ProtocolDefinition protocol;
-  private final ProtocolSession protocolSession;
+  private final ProtocolSession clientState;
   private final LoginPipeline loginPipeline;
   private final PlayerInfoForwarder forwarder;
   private final CommandManager commands;
+  private final PlayerManager players;
   private final BackendSelector selector;
   private final Handshake handshake;
   private final byte[] originalHandshake;
@@ -50,24 +52,27 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
   private volatile BackendConnection backend;
   private volatile BackendConnection switchingTarget;
   private volatile boolean closed;
-  public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession protocolSession,
-      LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, CommandManager commands, BackendSelector selector,
+  private volatile boolean expectClientLoginAck;
+  private volatile boolean commandsDeclared;
+  private volatile Thread clientReader;
+  public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
+      LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, CommandManager commands, PlayerManager players, BackendSelector selector,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
-    this.configuration = configuration; this.client = client; this.protocol = protocol; this.protocolSession = protocolSession;
-    this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.commands = commands; this.selector = selector;
+    this.configuration = configuration; this.client = client; this.protocol = protocol; this.clientState = clientState;
+    this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.commands = commands; this.players = players; this.selector = selector;
     this.handshake = handshake; this.originalHandshake = originalHandshake; this.originalLoginStart = originalLoginStart; this.address = address;
   }
   public PlayerProfile profile() { return loginPipeline.player(); }
+  @Override public java.util.UUID uniqueId() { return profile().uniqueId(); }
   public SessionLifecycle lifecycle() { return lifecycle.get(); }
   public BackendConnection backend() { return backend; }
-  public void authenticating() { if (!lifecycle.compareAndSet(SessionLifecycle.CONNECTING, SessionLifecycle.AUTHENTICATING)) throw new IllegalStateException("invalid authentication transition"); }
-  public void finishAuthentication() { lifecycle.compareAndSet(SessionLifecycle.AUTHENTICATING, SessionLifecycle.CONNECTING); }
   public void play() throws IOException {
     BackendConnection initial = connectInitial();
     synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); }
+    players.add(this);
     Thread backendReader = Thread.startVirtualThread(this::readBackend);
     try { readClient(); }
-    finally { closed = true; backendReader.interrupt(); close(); }
+    finally { closed = true; players.remove(this); backendReader.interrupt(); close(); }
   }
   private BackendConnection connectInitial() throws IOException {
     IOException last = null;
@@ -81,7 +86,7 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
         return connection;
       } catch (IOException exception) {
         last = exception;
-        System.err.println("Backend unavailable: " + server.name());
+        System.err.println("Backend unavailable: " + server.name() + " (" + exception.getMessage() + ")");
       }
     }
     throw last == null ? new IOException("all configured backends refused the connection") : last;
@@ -93,11 +98,16 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
       if (response != null) { connection.writeUncompressed(response); continue; }
       if (!connection.login().shouldForward()) continue;
       if (!forwardLoginSuccess) throw new IOException("backend login failed");
-      client.write(packet);
+      writeClient(packet);
       loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, packet);
+    }
+    if (protocol.hasConfiguration() && protocol.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED)) {
+      connection.writeUncompressed(PlayPackets.loginAcknowledged(protocol));
+      expectClientLoginAck = true;
     }
   }
   private void readClient() {
+    clientReader = Thread.currentThread();
     try {
       while (!closed) {
         byte[] packet = client.read(configuration.maxFrameBytes());
@@ -109,29 +119,33 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
   }
   private boolean handleClientPacket(byte[] packet) throws IOException {
     int id = PlayPackets.packetId(packet);
-    if (protocolSession.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
+    if (expectClientLoginAck && id == 3 && packet.length <= 2) {
+      expectClientLoginAck = false;
+      return true;
+    }
+    if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
       return commands.dispatch(this, PlayPackets.chatCommand(packet));
     }
-    if (protocolSession.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
+    if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
       PlayPackets.TabRequest request = PlayPackets.tabRequest(packet);
       var command = gg.tame.conduit.command.ParsedCommand.parseKeepEmpty(request.text());
       if (request.text().startsWith("/") && commands.get(command.name()).isPresent()) {
         List<String> completions = commands.tabComplete(this, request.text());
         int start = request.text().lastIndexOf(' ') + 1;
         int length = Math.max(0, request.text().length() - start);
-        client.write(PlayPackets.tabComplete(protocol, request.transactionId(), start, length, completions));
+        writeClient(PlayPackets.tabComplete(protocol, request.transactionId(), start, length, completions));
         return true;
       }
     }
-    if (protocolSession.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED)) {
-      protocolSession.beginReconfiguration();
+    if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED)) {
+      clientState.beginReconfiguration();
       configurationAck.offer(Boolean.TRUE);
       return true;
     }
-    if (protocolSession.state() == ConnectionState.CONFIGURATION && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_FINISH)) {
-      if (switchingTarget != null) switchingTarget.writeUncompressed(packet);
-      else if (backend != null) backend.writeUncompressed(packet);
-      protocolSession.beginPlay();
+    if (clientState.state() == ConnectionState.CONFIGURATION && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_FINISH)) {
+      BackendConnection target = switchingTarget != null ? switchingTarget : backend;
+      if (target != null) target.writeUncompressed(packet);
+      clientState.beginPlay();
       configurationAck.offer(Boolean.TRUE);
       return true;
     }
@@ -146,15 +160,18 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
       }
       try {
         byte[] packet = current.readUncompressed();
-        if (lifecycle.get() != SessionLifecycle.CONNECTED || current != backend) continue;
-        ConnectionState state = protocolSession.state();
-        byte[] outbound = current.rewriteBrand(state == ConnectionState.PLAY ? ConnectionState.PLAY : ConnectionState.CONFIGURATION, packet);
-        if (isFinishConfiguration(packet) && !current.brandSeen()) {
-          client.write(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""));
+        synchronized (lock) {
+          if (lifecycle.get() != SessionLifecycle.CONNECTED || current != backend) continue;
+        }
+        ConnectionState backendState = current.state();
+        if (backendState == ConnectionState.CONFIGURATION) current.login().onBackendPacket(packet, configuration.maxFrameBytes());
+        byte[] outbound = current.rewriteBrand(brandState(backendState), packet);
+        if (clientState.state() == ConnectionState.CONFIGURATION && isFinishConfiguration(packet) && !current.brandSeen()) {
+          writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""));
           current.markBrandSeen();
         }
-        client.write(outbound);
-        if (state != ConnectionState.PLAY) loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, packet);
+        outbound = maybeMergeCommands(outbound);
+        writeClient(outbound);
         if (isPlayDisconnect(packet)) { close(); return; }
       } catch (IOException exception) {
         if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return;
@@ -162,11 +179,29 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
       }
     }
   }
+  private ConnectionState brandState(ConnectionState backendState) {
+    if (backendState == ConnectionState.PLAY) return ConnectionState.PLAY;
+    if (protocol.hasConfiguration()) return ConnectionState.CONFIGURATION;
+    return ConnectionState.PLAY;
+  }
+  private byte[] maybeMergeCommands(byte[] packet) throws IOException {
+    if (clientState.state() != ConnectionState.PLAY) return packet;
+    int id = PlayPackets.packetId(packet);
+    if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DECLARE_COMMANDS)) return packet;
+    try {
+      byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names());
+      commandsDeclared = true;
+      return merged;
+    } catch (IOException exception) {
+      System.err.println("Command tree merge skipped: " + exception.getMessage());
+      return packet;
+    }
+  }
   private boolean isFinishConfiguration(byte[] packet) throws IOException {
-    return PlayPackets.packetId(packet) == protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH);
+    return protocol.hasConfiguration() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.CONFIGURATION_FINISH);
   }
   private boolean isPlayDisconnect(byte[] packet) throws IOException {
-    return protocolSession.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.PLAY_DISCONNECT);
+    return clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.PLAY_DISCONNECT);
   }
   private void handleBackendLoss(BackendConnection lost) {
     synchronized (lock) {
@@ -182,12 +217,25 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
     }
     close();
   }
-  public void requestSwitch(String name) {
-    BackendServer server = selector.registry().get(name).orElseThrow();
-    Thread.startVirtualThread(() -> {
-      try { switchTo(server, false); }
-      catch (Exception exception) { sendMessage("Unable to connect to " + server.name() + "."); }
-    });
+  public void requestSwitch(String name) { transferTo(name); }
+  @Override public boolean transferTo(String name) {
+    BackendServer server = selector.registry().get(name).orElse(null);
+    if (server == null) return false;
+    if (Thread.currentThread() == clientReader) {
+      Thread.startVirtualThread(() -> {
+        if (!runSwitch(server)) sendMessage("Unable to connect to " + server.name() + ".");
+      });
+      return true;
+    }
+    return runSwitch(server);
+  }
+  private boolean runSwitch(BackendServer server) {
+    try {
+      switchTo(server, false);
+      return true;
+    } catch (Exception exception) {
+      return false;
+    }
   }
   private void switchTo(BackendServer server, boolean fallback) throws Exception {
     synchronized (lock) {
@@ -204,21 +252,24 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
       next = new BackendConnection(server, socket, protocol, forwarder, profile(), address, configuration, true);
       completeBackendLogin(next, false);
       switchingTarget = next;
-      configurationAck.clear();
-      client.write(PlayPackets.startConfiguration(protocol));
-      if (configurationAck.poll(10, TimeUnit.SECONDS) == null) throw new IOException("client did not acknowledge reconfiguration");
-      configurationAck.clear();
-      while (next.state() != ConnectionState.PLAY) {
-        byte[] packet = next.readUncompressed();
-        next.login().onBackendPacket(packet, configuration.maxFrameBytes());
-        byte[] outbound = next.rewriteBrand(ConnectionState.CONFIGURATION, packet);
-        if (isFinishConfiguration(packet) && !next.brandSeen()) {
-          client.write(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""));
-          next.markBrandSeen();
+      if (protocol.hasConfiguration()) {
+        configurationAck.clear();
+        writeClient(PlayPackets.startConfiguration(protocol));
+        if (configurationAck.poll(10, TimeUnit.SECONDS) == null) throw new IOException("client did not acknowledge reconfiguration");
+        configurationAck.clear();
+        while (next.state() != ConnectionState.PLAY) {
+          byte[] packet = next.readUncompressed();
+          next.login().onBackendPacket(packet, configuration.maxFrameBytes());
+          byte[] outbound = next.rewriteBrand(ConnectionState.CONFIGURATION, packet);
+          if (isFinishConfiguration(packet) && !next.brandSeen()) {
+            writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""));
+            next.markBrandSeen();
+          }
+          writeClient(outbound);
         }
-        client.write(outbound);
+        if (configurationAck.poll(10, TimeUnit.SECONDS) == null) throw new IOException("client did not finish configuration");
       }
-      if (configurationAck.poll(10, TimeUnit.SECONDS) == null) throw new IOException("client did not finish configuration");
+      commandsDeclared = false;
       synchronized (lock) {
         backend = next;
         switchingTarget = null;
@@ -236,10 +287,11 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
       throw exception;
     }
   }
+  private void writeClient(byte[] packet) throws IOException { synchronized (lock) { client.write(packet); } }
   @Override public String username() { return profile().username(); }
   @Override public boolean hasPermission(String permission) { return true; }
   @Override public void sendMessage(String message) {
-    try { if (protocolSession.state() == ConnectionState.PLAY) client.write(PlayPackets.systemChat(protocol, message)); }
+    try { if (clientState.state() == ConnectionState.PLAY) writeClient(PlayPackets.systemChat(protocol, message)); }
     catch (IOException ignored) { }
   }
   @Override public String currentBackend() {
@@ -249,6 +301,7 @@ public final class PlayerSession implements CommandSource, AutoCloseable {
   @Override public void close() {
     closed = true;
     lifecycle.set(SessionLifecycle.CLOSED);
+    if (players != null) players.remove(this);
     BackendConnection current = backend;
     if (current != null) current.close();
     BackendConnection switching = switchingTarget;

@@ -59,7 +59,7 @@ public final class BackendLoginPipeline {
       return null;
     }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_SUCCESS)) {
-      state = ConnectionState.CONFIGURATION;
+      state = protocol.hasConfiguration() ? ConnectionState.CONFIGURATION : ConnectionState.PLAY;
       if (hideLoginSuccess) forwardToClient = false;
       return null;
     }

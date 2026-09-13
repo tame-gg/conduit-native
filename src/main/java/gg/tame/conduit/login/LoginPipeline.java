@@ -26,8 +26,10 @@ public final class LoginPipeline {
       int id = MinecraftInput.varInt(input);
       byte[] body = input.readAllBytes();
       if (direction == PacketDirection.CLIENT_TO_SERVER && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_START)) player = LoginStart.decode(body).unverifiedProfile();
-      else if (direction == PacketDirection.SERVER_TO_CLIENT && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_SUCCESS)) session.beginConfiguration();
-      else if (direction == PacketDirection.SERVER_TO_CLIENT && session.state() == ConnectionState.CONFIGURATION && protocol.is(ConnectionState.CONFIGURATION, direction, id, PacketKind.CONFIGURATION_FINISH)) session.beginPlay();
+      else if (direction == PacketDirection.SERVER_TO_CLIENT && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_SUCCESS)) {
+        if (protocol.hasConfiguration()) session.beginConfiguration();
+        else session.enterPlayFromLogin();
+      }
     }
   }
 }

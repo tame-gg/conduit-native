@@ -87,8 +87,15 @@ public final class AllTests {
     pipeline.observe(PacketDirection.CLIENT_TO_SERVER, loginStart());
     pipeline.observe(PacketDirection.SERVER_TO_CLIENT, new byte[] {2});
     require(login.state() == ConnectionState.CONFIGURATION, "login to configuration failed");
-    pipeline.observe(PacketDirection.SERVER_TO_CLIENT, new byte[] {2});
-    require(login.state() == ConnectionState.PLAY, "configuration to play failed");
+    login.beginPlay();
+    require(login.state() == ConnectionState.PLAY, "client finish-configuration ack enters play");
+    require(protocol.hasConfiguration(), "1.20.4 uses configuration");
+    require(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS) == 0x11, "declare commands id");
+    ProtocolDefinition legacy = ProtocolDefinition.forVersion(763);
+    require(!legacy.hasConfiguration() && legacy.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN) == 0x28, "1.20.1 join game");
+    require(!legacy.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION), "1.20.1 has no start configuration");
+    try { ProtocolDefinition.forVersion(999); throw new AssertionError("unknown protocol accepted"); }
+    catch (IllegalArgumentException expected) { }
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_PLUGIN_REQUEST) == 4, "1.20.4 login plugin request id");
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE) == 2, "1.20.4 login plugin response id");
     require(protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH) == 2, "1.20.4 finish configuration id");
@@ -237,6 +244,7 @@ public final class AllTests {
           }
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});
+          drain(socket);
         } catch (Exception exception) { throw new RuntimeException(exception); }
       });
       ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 2048,
@@ -345,6 +353,7 @@ public final class AllTests {
           }
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});
+          drain(socket);
         } catch (Exception exception) { throw new RuntimeException(exception); }
       });
       gg.tame.conduit.config.AuthenticationSettings auth = new gg.tame.conduit.config.AuthenticationSettings(gg.tame.conduit.config.AuthenticationMode.ONLINE, "http://127.0.0.1:" + http.getAddress().getPort() + "/session/minecraft/hasJoined", 2000);
@@ -413,6 +422,11 @@ public final class AllTests {
     try { action.run(); throw new AssertionError(message); }
     catch (AssertionError error) { throw error; }
     catch (Exception expected) { if (!(expected instanceof java.io.IOException)) throw new AssertionError(message + ": " + expected); }
+  }
+  private static void drain(java.net.Socket socket) {
+    try {
+      while (!Thread.currentThread().isInterrupted()) MinecraftFrames.read(socket.getInputStream(), 2048);
+    } catch (Exception ignored) { }
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }
   private static int reservePort() throws Exception { try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); } }

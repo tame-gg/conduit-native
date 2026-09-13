@@ -19,6 +19,7 @@ import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.ProtocolSession;
 import gg.tame.conduit.protocol.StatusResponder;
 import gg.tame.conduit.routing.BackendSelector;
+import gg.tame.conduit.session.PlayerManager;
 import gg.tame.conduit.session.PlayerSession;
 import java.io.IOException;
 import java.net.Socket;
@@ -36,6 +37,7 @@ public final class MinecraftProxy implements AutoCloseable {
   private final PlayerAuthenticator authenticator;
   private final KeyPair rsaKeys;
   private final CommandManager commands;
+  private final PlayerManager players;
   private final BackendSelector selector;
   private volatile boolean running;
   public MinecraftProxy(ConduitConfiguration configuration) throws IOException {
@@ -46,7 +48,8 @@ public final class MinecraftProxy implements AutoCloseable {
     this.forwarder = Forwarders.create(configuration); this.listener = ServerSocketChannel.open(); listener.bind(configuration.listener());
     this.selector = new BackendSelector(configuration);
     this.commands = new CommandManager();
-    CoreCommands.register(commands, selector.registry());
+    this.players = new PlayerManager();
+    CoreCommands.register(commands, selector.registry(), players);
   }
   public int port() throws IOException { return ((java.net.InetSocketAddress) listener.getLocalAddress()).getPort(); }
   public void serve() throws IOException {
@@ -61,7 +64,14 @@ public final class MinecraftProxy implements AutoCloseable {
       byte[] firstPacket = transport.read(configuration.maxFrameBytes());
       Handshake handshake = Handshake.decode(firstPacket);
       ProtocolSession session = new ProtocolSession(); session.acceptHandshake(handshake.nextState());
-      ProtocolDefinition protocol = ProtocolDefinition.forVersion(handshake.protocolVersion());
+      ProtocolDefinition protocol;
+      try { protocol = ProtocolDefinition.forVersion(handshake.protocolVersion()); }
+      catch (IllegalArgumentException unsupported) {
+        if (handshake.nextState() == 2) {
+          try { transport.write(LoginDisconnect.encode(ProtocolDefinition.forVersion(765), "Unsupported Minecraft version.")); } catch (IOException ignored) { }
+        }
+        throw new IOException(unsupported.getMessage(), unsupported);
+      }
       if (handshake.nextState() == 1) { serveStatus(transport, protocol); return; }
       byte[] loginStart = transport.read(configuration.maxFrameBytes());
       LoginPipeline pipeline = new LoginPipeline(session, protocol); pipeline.observe(gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER, loginStart);
@@ -73,7 +83,7 @@ public final class MinecraftProxy implements AutoCloseable {
           throw new IOException(exception.getMessage(), exception);
         }
       }
-      try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, commands, selector,
+      try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, commands, players, selector,
           handshake, firstPacket, loginStart, client.getInetAddress())) {
         player.play();
       }

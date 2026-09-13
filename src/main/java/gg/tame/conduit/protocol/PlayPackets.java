@@ -9,6 +9,9 @@ import java.util.List;
 
 public final class PlayPackets {
   private PlayPackets() {}
+  public static byte[] loginAcknowledged(ProtocolDefinition protocol) throws IOException {
+    return idOnly(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED));
+  }
   public static byte[] startConfiguration(ProtocolDefinition protocol) throws IOException {
     return idOnly(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION));
   }
@@ -16,7 +19,8 @@ public final class PlayPackets {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT));
-      NetworkNbt.stringComponent(output, message);
+      if (protocol.hasConfiguration()) NetworkNbt.stringComponent(output, message);
+      else MinecraftOutput.string(output, "{\"text\":\"" + message.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
       output.writeBoolean(false);
     }
     return bytes.toByteArray();

@@ -41,6 +41,8 @@ public final class Phase6Tests {
     sessionLifecycleTransitions();
     switchBetweenMockBackends();
     failedSwitchKeepsCurrentBackend();
+    commandGraphMergeKeepsIndexesValid();
+    Phase7Tests.run();
   }
   private static void serverBrandTransformations() {
     require(ServerBrand.display("Paper").equals("Paper (Conduit)"), "Paper brand");
@@ -68,9 +70,10 @@ public final class Phase6Tests {
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[servers.minigames]\nhost=\"127.0.0.1\"\nport=3\n[servers.minigames-2]\nhost=\"127.0.0.1\"\nport=4\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     ServerRegistry registry = new ServerRegistry(gg.tame.conduit.config.ConfigurationLoader.load(config));
     CommandManager core = new CommandManager();
-    CoreCommands.register(core, registry);
+    CoreCommands.register(core, registry, new gg.tame.conduit.session.PlayerManager());
     RecordingSource player = new RecordingSource("lobby", true);
     core.dispatch(player, "/server");
+    require(player.messages.stream().anyMatch(line -> line.equals("Current server: lobby")), "current server");
     require(player.messages.stream().anyMatch(line -> line.equals("- lobby")), "server list hides addresses");
     require(player.messages.stream().noneMatch(line -> line.contains("127.0.0.1")), "server list leaked address");
     core.dispatch(player, "/server lobby");
@@ -78,9 +81,10 @@ public final class Phase6Tests {
     core.dispatch(player, "/server mini");
     require(player.messages.stream().anyMatch(line -> line.equals("Multiple servers match:")), "ambiguous");
     core.dispatch(player, "/server missing");
-    require(player.messages.stream().anyMatch(line -> line.equals("Unknown server.")), "unknown");
+    require(player.messages.stream().anyMatch(line -> line.equals("Unknown server: missing")), "unknown");
     core.dispatch(player, "/conduit");
     require(player.messages.stream().anyMatch(line -> line.startsWith("Version:")), "conduit version");
+    require(player.messages.stream().anyMatch(line -> line.equals("Current server: lobby")), "conduit current server");
     require(core.tabComplete(player, "/server s").equals(List.of("survival")), "server tab filter");
   }
   private static void serverNameMatching() throws Exception {
@@ -128,6 +132,7 @@ public final class Phase6Tests {
             require(message.brandText().equals("Paper (Conduit)"), "rewritten brand");
             require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 4096), new byte[] {2}), "lobby finish");
           }
+          MinecraftFrames.write(client.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(client.getOutputStream(), chatCommand("server survival"));
           byte[] start = MinecraftFrames.read(client.getInputStream(), 4096);
           require(PlayPackets.packetId(start) == 0x67, "start configuration");
@@ -165,6 +170,7 @@ public final class Phase6Tests {
           MinecraftFrames.read(client.getInputStream(), 4096);
           MinecraftFrames.read(client.getInputStream(), 4096);
           MinecraftFrames.read(client.getInputStream(), 4096);
+          MinecraftFrames.write(client.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(client.getOutputStream(), chatCommand("server survival"));
           byte[] message = MinecraftFrames.read(client.getInputStream(), 4096);
           require(PlayPackets.packetId(message) == 0x69, "system chat on failed switch");
@@ -209,6 +215,14 @@ public final class Phase6Tests {
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }
   private static int reservePort() throws Exception { try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); } }
+  private static void commandGraphMergeKeepsIndexesValid() throws Exception {
+    byte[] merged = gg.tame.conduit.command.CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765), List.of("lobby", "survival"));
+    require(PlayPackets.packetId(merged) == 0x11, "declare commands packet id");
+    gg.tame.conduit.command.CommandGraph graph = gg.tame.conduit.command.CommandGraph.decode(java.util.Arrays.copyOfRange(merged, 1, merged.length));
+    require(graph.nodes().size() >= 4, "proxy command nodes");
+    byte[] again = gg.tame.conduit.command.CommandGraphs.mergeProxyCommands(ProtocolDefinition.forVersion(765), merged, List.of("lobby"));
+    gg.tame.conduit.command.CommandGraph.decode(java.util.Arrays.copyOfRange(again, 1, again.length));
+  }
   private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
   private static final class RecordingSource implements CommandSource {
     private final String backend;

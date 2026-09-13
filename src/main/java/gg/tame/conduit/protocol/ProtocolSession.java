@@ -10,6 +10,7 @@ public final class ProtocolSession {
   }
   public void close() { state = ConnectionState.CLOSED; }
   public void beginConfiguration() { transition(ConnectionState.LOGIN, ConnectionState.CONFIGURATION); }
+  public void enterPlayFromLogin() { transition(ConnectionState.LOGIN, ConnectionState.PLAY); }
   public void beginReconfiguration() { transition(ConnectionState.PLAY, ConnectionState.CONFIGURATION); }
   public void beginPlay() { transition(ConnectionState.CONFIGURATION, ConnectionState.PLAY); }
   private void transition(ConnectionState expected, ConnectionState target) {

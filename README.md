@@ -18,9 +18,22 @@ Requires a JDK capable of compiling Java 21 source. On Windows:
 
 `--check-config <path>` validates a configuration without binding a listener.
 
-## Protocol
+## Supported Minecraft versions
 
-Supported version: **Minecraft 1.20.4 / protocol 765**.
+Protocol implementations (packet IDs + capabilities) exist for:
+
+| Minecraft | Protocol | Configuration state | Real vanilla client |
+|---|---|---|---|
+| 1.20.1 | 763 | no (`LOGIN` → `PLAY`) | not tested |
+| 1.20.3 / 1.20.4 | 765 | yes (`LOGIN` → `CONFIGURATION` → `PLAY`) | 1.20.4 login/Play previously verified; switching retest pending |
+
+Unknown handshake versions disconnect with `Unsupported Minecraft version.` They are not treated as 1.20.4.
+
+Recognized protocol numbers for 1.7.10, 1.8.9, 1.12.2, 1.16.5, 1.19.4, and 1.21.4 exist only as catalog entries. They have **no codecs**, so those clients cannot connect.
+
+There is **no** ViaVersion-style translation. `1.20.4 → 1.20.4` and `1.20.1 → 1.20.1` are DIRECT. Every other pairing is UNSUPPORTED, including `1.7.10 → 1.20.4` and `1.20.4 → 1.20.1`. Minecraft 26.2 is a goal, not an implemented protocol.
+
+Client and backend protocol versions must match.
 
 ## Authentication
 
@@ -46,7 +59,8 @@ Login Start
 
 Login Start UUID is **not** authoritative in online mode. Failures disconnect the client;
 there is no silent fallback to offline identity. Mojang authentication is not repeated when
-switching backends; the authenticated profile is reused.
+switching backends; the authenticated profile is reused. Each backend connection gets a fresh
+modern forwarding HMAC payload.
 
 ### Offline
 
@@ -87,17 +101,47 @@ in that incident (no reconnect loop). If none accept, the client is disconnected
 
 Native command framework (not Velocity's):
 
-* `/server` — list backend names
+* `/server` — `Current server: <name>` then available names
 * `/server <name>` — switch; exact match wins over prefix; ambiguous prefixes are rejected
-* `/server` tab completion — configured names only
-* `/conduit` — proxy version and current backend name
+* `/conduit` — version and `Current server: <name>`
+* `/send current <server>` — same as `/server <server>` (player only)
+* `/send <player> <server>` — move that online player (`server.send.others`)
+* `/send <server> <server>` — move everyone on the source server (`server.send.mass`)
 
-The Minecraft client stays connected to Conduit. Switching uses protocol 765 Start
-Configuration → backend login + modern forwarding (hidden Login Success) → configuration →
-Play, then the old backend is closed.
+Tab completion for `/send` offers `current`, backend names, and online players through CommandManager.
 
-Already connected: `You are already connected to lobby.`
-Failed switch: `Unable to connect to survival.` (existing backend kept)
+Permission nodes (stub currently grants them to connected players):
+
+* `server.use`
+* `server.send`
+* `server.send.others`
+* `server.send.mass`
+* `conduit.info`
+
+`/send` never lists backend addresses. Mass moves run with bounded concurrency; a failed player stays on the source backend.
+
+Proxy commands are intercepted and not forwarded to Paper. Other commands are forwarded.
+
+On protocol 765, Conduit merges `/server`, `/conduit`, and `/send` into the backend **Declare Commands**
+tree (brigadier node indexes are rewritten). If a backend tree cannot be decoded, the original
+backend packet is forwarded unchanged (those proxy commands may still execute but can appear red).
+
+## Switching (protocol 765)
+
+The client TCP connection stays on Conduit.
+
+1. New backend: handshake, Login Start (authenticated profile), modern forwarding
+2. Login Success is **not** sent to the client
+3. Conduit sends **Login Acknowledged** to the backend (the client ack is dropped as a duplicate)
+4. Client: Start Configuration → Configuration Acknowledged
+5. Forward configuration packets (registry, tags, brand) then Finish Configuration
+6. Client Finish Configuration ack is forwarded to the new backend (this is what enters Play)
+7. Swap session backend; close the old backend
+
+Client protocol state and backend protocol state are tracked separately.
+
+Brand rewrite and Finish Configuration detection are **state-scoped**. Packet id `2` in Play is
+not treated as Finish Configuration (that mismatch produced a vanilla decoder crash).
 
 ## Server brand
 
@@ -105,6 +149,7 @@ Conduit intercepts only the `minecraft:brand` plugin message:
 
 * `Paper` → `Paper (Conduit)`
 * `Purpur` → `Purpur (Conduit)`
+* `Fabric` → `Fabric (Conduit)`
 * `Paper (Conduit)` stays `Paper (Conduit)`
 * missing brand → `Conduit`
 
@@ -116,19 +161,26 @@ Velocity modern forwarding enabled, a matching secret, and
 
 ## Real vanilla client
 
-Conduit has been validated with a real vanilla Minecraft 1.20.4 client using online-mode
-authentication and modern forwarding to Paper 1.20.4-499 (Play, chat, authenticated UUID).
+Verified previously:
 
-Real vanilla `/server` switching between two Paper processes was **not** repeated in this
-phase. Multi-backend switching is covered by mock-backend integration tests
-(lobby ⇄ survival, client TCP remains open; failed switch keeps lobby).
+```text
+Minecraft 1.20.4 → Conduit (online) → Paper 1.20.4-499
+```
+
+Login, encryption, Mojang `hasJoined`, modern forwarding, Play, and chat.
+
+Lobby ⇄ Survival with a real vanilla 1.20.4 client after these protocol fixes is **not**
+claimed until that pass is repeated.
+
+1.20.1 is **not** claimed as real-client compatible.
 
 ## Testing notes
 
 `./scripts/test.ps1` covers encryption, mocked hasJoined, online-mode identity substitution,
-command dispatch, brand rewriting, routing matches, and two-backend switch/fallback mocks.
+command dispatch, command-graph index validation, brand rewriting, routing matches,
+protocol 763 vs 765 lookup, and two-backend switch/fallback mocks.
 
 ## Out of scope here
 
-Velocity plugins, native plugin API, legacy/BungeeGuard forwarding, multi-version support,
-and full compression.
+Velocity plugins, native plugin API, legacy/BungeeGuard forwarding, ViaVersion-style
+translation, and full compression.
