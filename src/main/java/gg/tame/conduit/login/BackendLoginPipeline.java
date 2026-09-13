@@ -22,15 +22,22 @@ public final class BackendLoginPipeline {
   private final PlayerProfile player;
   private final InetAddress clientAddress;
   private final PacketCompression compression;
+  private final boolean hideLoginSuccess;
+  private boolean forwardToClient = true;
   private ConnectionState state = ConnectionState.LOGIN;
   public BackendLoginPipeline(ProtocolDefinition protocol, PlayerInfoForwarder forwarder, PlayerProfile player, InetAddress clientAddress, int maximumPacketBytes) {
-    this.protocol = protocol; this.forwarder = forwarder; this.player = player; this.clientAddress = clientAddress;
-    this.compression = new PacketCompression(maximumPacketBytes);
+    this(protocol, forwarder, player, clientAddress, maximumPacketBytes, false);
   }
+  public BackendLoginPipeline(ProtocolDefinition protocol, PlayerInfoForwarder forwarder, PlayerProfile player, InetAddress clientAddress, int maximumPacketBytes, boolean hideLoginSuccess) {
+    this.protocol = protocol; this.forwarder = forwarder; this.player = player; this.clientAddress = clientAddress;
+    this.compression = new PacketCompression(maximumPacketBytes); this.hideLoginSuccess = hideLoginSuccess;
+  }
+  public boolean shouldForward() { return forwardToClient; }
   public ConnectionState state() { return state; }
   public PacketCompression compression() { return compression; }
   /** Returns a response packet only when a forwarding request was consumed. */
   public byte[] onBackendPacket(byte[] packet, int maximumPacketBytes) throws IOException {
+    forwardToClient = true;
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       int id = MinecraftInput.varInt(input); byte[] body = input.readAllBytes();
       if (state == ConnectionState.LOGIN) return handleLogin(id, body, maximumPacketBytes);
@@ -39,16 +46,21 @@ public final class BackendLoginPipeline {
     }
   }
   private byte[] handleLogin(int id, byte[] body, int maximumPacketBytes) throws IOException {
-    if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_DISCONNECT)) return null;
+    if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_DISCONNECT)) {
+      if (hideLoginSuccess) { forwardToClient = false; throw new IOException("backend disconnected during login"); }
+      return null;
+    }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_ENCRYPTION_REQUEST)) {
       throw new IOException("backend requested encryption; Conduit does not terminate Minecraft online-mode encryption yet");
     }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_SET_COMPRESSION)) {
       compression.enable(MinecraftInput.varInt(new DataInputStream(new ByteArrayInputStream(body))));
+      if (hideLoginSuccess) forwardToClient = false;
       return null;
     }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_SUCCESS)) {
       state = ConnectionState.CONFIGURATION;
+      if (hideLoginSuccess) forwardToClient = false;
       return null;
     }
     if (!protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_PLUGIN_REQUEST)) {

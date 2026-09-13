@@ -62,6 +62,7 @@ public final class AllTests {
     encryptionAndServerHash();
     sessionAuthentication();
     onlineModeFeedsAuthenticatedIdentityToForwarding();
+    Phase6Tests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {
@@ -91,6 +92,10 @@ public final class AllTests {
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_PLUGIN_REQUEST) == 4, "1.20.4 login plugin request id");
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE) == 2, "1.20.4 login plugin response id");
     require(protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH) == 2, "1.20.4 finish configuration id");
+    require(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x67, "start configuration id");
+    ProtocolSession reconfigure = new ProtocolSession();
+    reconfigure.acceptHandshake(2); reconfigure.beginConfiguration(); reconfigure.beginPlay(); reconfigure.beginReconfiguration();
+    require(reconfigure.state() == ConnectionState.CONFIGURATION, "reconfiguration");
   }
   private static void validateIndependentConfiguration() throws Exception {
     Path config = Files.createTempFile("conduit", ".toml");
@@ -243,7 +248,9 @@ public final class AllTests {
           MinecraftFrames.write(client.getOutputStream(), new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2});
           MinecraftFrames.write(client.getOutputStream(), loginStart());
           require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 2048), new byte[] {2}), "client did not receive Login Success");
-          require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 2048), new byte[] {2}), "client did not receive Finish Configuration");
+          byte[] next = MinecraftFrames.read(client.getInputStream(), 2048);
+          if (next.length > 0 && next[0] == 0) next = MinecraftFrames.read(client.getInputStream(), 2048);
+          require(java.util.Arrays.equals(next, new byte[] {2}), "client did not receive Finish Configuration");
         }
         backend.join(); serving.interrupt();
       }
@@ -365,7 +372,9 @@ public final class AllTests {
               gg.tame.conduit.crypto.CipherStreams.decrypting(client.getInputStream(), gg.tame.conduit.crypto.AesCfb8.decryptor(shared)),
               gg.tame.conduit.crypto.CipherStreams.encrypting(client.getOutputStream(), gg.tame.conduit.crypto.AesCfb8.encryptor(shared)));
           require(java.util.Arrays.equals(encrypted.read(2048), new byte[] {2}), "encrypted Login Success missing");
-          require(java.util.Arrays.equals(encrypted.read(2048), new byte[] {2}), "encrypted Finish Configuration missing");
+          byte[] next = encrypted.read(2048);
+          if (next.length > 0 && next[0] == 0) next = encrypted.read(2048);
+          require(java.util.Arrays.equals(next, new byte[] {2}), "encrypted Finish Configuration missing");
         }
         backend.join(); serving.interrupt();
       }

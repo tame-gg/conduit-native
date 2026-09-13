@@ -1,8 +1,11 @@
 package gg.tame.conduit.login;
 
 import gg.tame.conduit.protocol.MinecraftInput;
+import gg.tame.conduit.protocol.MinecraftOutput;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.List;
 import java.util.UUID;
@@ -18,4 +21,14 @@ public record LoginStart(String username, UUID clientUuid) {
     }
   }
   public PlayerProfile unverifiedProfile() { return new PlayerProfile(clientUuid, username, List.of(), false); }
+  public static byte[] encode(PlayerProfile profile) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, 0);
+      MinecraftOutput.string(output, profile.username());
+      output.writeLong(profile.uniqueId().getMostSignificantBits());
+      output.writeLong(profile.uniqueId().getLeastSignificantBits());
+    }
+    return bytes.toByteArray();
+  }
 }

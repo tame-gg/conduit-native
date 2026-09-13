@@ -16,6 +16,10 @@ mode = "offline"
 host = "127.0.0.1"
 port = 25566
 
+# [servers.survival]
+# host = "127.0.0.1"
+# port = 25567
+
 [routing]
 initial = ["lobby"]
 fallback = ["lobby"]
