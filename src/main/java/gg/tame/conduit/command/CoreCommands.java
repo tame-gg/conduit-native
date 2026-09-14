@@ -2,6 +2,7 @@ package gg.tame.conduit.command;
 
 import gg.tame.conduit.Conduit;
 import gg.tame.conduit.api.server.ServerAvailability;
+import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.metrics.ConduitMetrics;
 import gg.tame.conduit.plugin.PluginCatalog;
 import gg.tame.conduit.routing.ServerMatch;
@@ -23,7 +24,7 @@ import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Built-in Conduit commands. Player-facing output stays plain and short. */
+/** Built-in Conduit commands. Clean, polished proxy UX — not a dashboard. */
 public final class CoreCommands {
   private static final int MASS_SWITCH_CONCURRENCY = 16;
   private static final Set<String> RESERVED = Set.of(
@@ -80,12 +81,19 @@ public final class CoreCommands {
   private static void server(CommandSource source, ServerRegistry registry, ConduitRuntime runtime, List<String> arguments) {
     if (arguments.isEmpty()) {
       String current = source.currentBackend().isBlank() ? "none" : source.currentBackend();
-      source.sendMessage("You are currently connected to: " + current);
-      source.sendMessage("");
-      source.sendMessage("Servers:");
+      source.sendMessage(Text.of("You are currently connected to: ").color(Messages.LABEL)
+          .append(Text.of(current).color(Messages.CURRENT).bold()));
+      source.sendMessage(Text.empty());
+      source.sendMessage(Text.of("Servers:").color(Messages.BRAND).bold());
       for (String name : registry.names()) {
         boolean here = name.equalsIgnoreCase(current);
-        source.sendMessage("  " + (here ? "●" : "○") + " " + name);
+        if (here) {
+          source.sendMessage(Text.of("  ● ").color(Messages.CURRENT)
+              .append(Text.of(name).color(Messages.CURRENT).bold()));
+        } else {
+          source.sendMessage(Text.of("  ○ ").color(Messages.OTHER)
+              .append(Text.of(name).color(Messages.BODY)));
+        }
       }
       return;
     }
@@ -93,118 +101,136 @@ public final class CoreCommands {
     if (destination.isEmpty()) return;
     String name = destination.get();
     if (name.equalsIgnoreCase(source.currentBackend())) {
-      source.sendMessage("You are already connected to " + name + ".");
+      Messages.alreadyConnected(source, name);
       return;
     }
     if (!(source instanceof TrackedPlayer player)) {
-      source.sendMessage(name + " is unavailable. Please try again later.");
+      Messages.unavailable(source, name);
       return;
     }
-    if (runtime != null && runtime.selector().status(name).availability() == ServerAvailability.OFFLINE) {
-      source.sendMessage(name + " is unavailable. Please try again later.");
-      return;
-    }
-    source.sendMessage("Connecting to " + name + "...");
-    if (!player.transferTo(name)) {
-      // transferTo also notifies on async paths; keep a sync fallback message.
-      if (Thread.currentThread() != null) {
-        // Message is emitted by PlayerSession for both success and failure.
+    if (runtime != null) {
+      boolean drainBypass = source.hasPermission(Permissions.DRAIN_BYPASS) || source.hasPermission(Permissions.CONDUIT_ADMIN);
+      if (runtime.health().isDraining(name) && !drainBypass) {
+        Messages.failure(source, name + " is draining.");
+        return;
+      }
+      if (runtime.health().snapshot(name).health() == gg.tame.conduit.health.BackendHealth.UNHEALTHY) {
+        Messages.unavailable(source, name);
+        return;
+      }
+      if (runtime.selector().status(name).availability() == ServerAvailability.OFFLINE) {
+        Messages.unavailable(source, name);
+        return;
       }
     }
+    Messages.connecting(source, name);
+    player.transferTo(name);
   }
 
   private static void glist(CommandSource source, PlayerManager players, ServerRegistry registry) {
-    source.sendMessage("There are " + players.all().size() + " player(s) online.");
+    source.sendMessage(Text.of("There are ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(players.all().size())).color(Messages.BODY).bold())
+        .append(Text.of(" player(s) online.").color(Messages.LABEL)));
     for (String server : registry.names()) {
       List<TrackedPlayer> on = players.byServer(server);
       if (on.isEmpty()) continue;
-      source.sendMessage("[" + server + "] (" + on.size() + "): " + joinNames(on));
+      source.sendMessage(Text.of("[" + server + "] ").color(Messages.BRAND)
+          .append(Text.of("(" + on.size() + "): ").color(Messages.LABEL))
+          .append(Text.of(joinNames(on)).color(Messages.BODY)));
     }
   }
 
   private static void plist(CommandSource source, PlayerManager players, ServerRegistry registry, List<String> arguments) {
     if (arguments.isEmpty()) {
-      source.sendMessage("Usage: /plist <server>");
+      Messages.info(source, "Usage: /plist <server>");
       return;
     }
     Optional<String> server = resolveServer(source, registry, arguments.getFirst());
     if (server.isEmpty()) return;
     List<TrackedPlayer> on = players.byServer(server.get());
-    source.sendMessage("[" + server.get() + "] (" + on.size() + "): " + (on.isEmpty() ? "(none)" : joinNames(on)));
+    source.sendMessage(Text.of("[" + server.get() + "] ").color(Messages.BRAND)
+        .append(Text.of("(" + on.size() + "): ").color(Messages.LABEL))
+        .append(Text.of(on.isEmpty() ? "(none)" : joinNames(on)).color(Messages.BODY)));
   }
 
   private static void find(CommandSource source, PlayerManager players, List<String> arguments) {
     if (arguments.isEmpty()) {
-      source.sendMessage("Usage: /find <player>");
+      Messages.info(source, "Usage: /find <player>");
       return;
     }
     Optional<TrackedPlayer> found = players.getByUsername(arguments.getFirst());
     if (found.isEmpty()) {
-      source.sendMessage("Player " + arguments.getFirst() + " is not online.");
+      Messages.failure(source, "Player " + arguments.getFirst() + " is not online.");
       return;
     }
     TrackedPlayer player = found.get();
     String server = player.currentBackend() == null || player.currentBackend().isBlank() ? "connecting" : player.currentBackend();
-    source.sendMessage(player.username() + " is on " + server + ".");
+    source.sendMessage(Text.of(player.username()).color(Messages.BODY).bold()
+        .append(Text.of(" is on ").color(Messages.LABEL))
+        .append(Text.of(server).color(Messages.BRAND))
+        .append(Text.of(".").color(Messages.LABEL)));
   }
 
   private static void alert(CommandSource source, PlayerManager players, List<String> arguments) {
     if (arguments.isEmpty()) {
-      source.sendMessage("Usage: /alert <message>");
+      Messages.info(source, "Usage: /alert <message>");
       return;
     }
-    String body = "[Alert] " + String.join(" ", arguments);
+    Text line = Text.of("[Alert] ").color(Messages.WARN).bold()
+        .append(Text.of(String.join(" ", arguments)).color(Messages.BODY));
     int sent = 0;
     for (TrackedPlayer player : players.all()) {
       if (player instanceof CommandSource commandSource) {
-        commandSource.sendMessage(body);
+        commandSource.sendMessage(line);
         sent++;
       }
     }
-    source.sendMessage("Alert sent to " + sent + " player(s).");
+    Messages.success(source, "Alert sent to " + sent + " player(s).");
   }
 
   private static void ping(CommandSource source) {
-    source.sendMessage("Connected through Conduit " + Conduit.VERSION + ".");
+    source.sendMessage(Text.of("Connected through ").color(Messages.LABEL)
+        .append(Text.of(Conduit.BRAND + " " + Conduit.VERSION).color(Messages.BRAND).bold())
+        .append(Text.of(".").color(Messages.LABEL)));
   }
 
   private static void hub(CommandSource source, ConduitRuntime runtime) {
     if (!(source instanceof TrackedPlayer player) || runtime == null) {
-      source.sendMessage("Unable to resolve hub server.");
+      Messages.failure(source, "Unable to resolve hub server.");
       return;
     }
     var candidates = runtime.selector().candidates();
     if (candidates.isEmpty()) {
-      source.sendMessage("No servers configured.");
+      Messages.failure(source, "No servers configured.");
       return;
     }
     String hub = candidates.getFirst().name();
     if (hub.equalsIgnoreCase(source.currentBackend())) {
-      source.sendMessage("You are already connected to " + hub + ".");
+      Messages.alreadyConnected(source, hub);
       return;
     }
-    source.sendMessage("Connecting to " + hub + "...");
+    Messages.connecting(source, hub);
     player.transferTo(hub);
   }
 
   private static void gkick(CommandSource source, PlayerManager players, List<String> arguments) {
     if (arguments.isEmpty()) {
-      source.sendMessage("Usage: /gkick <player> [reason]");
+      Messages.info(source, "Usage: /gkick <player> [reason]");
       return;
     }
     Optional<TrackedPlayer> found = players.getByUsername(arguments.getFirst());
     if (found.isEmpty()) {
-      source.sendMessage("Player " + arguments.getFirst() + " is not online.");
+      Messages.failure(source, "Player " + arguments.getFirst() + " is not online.");
       return;
     }
     TrackedPlayer target = found.get();
     String reason = arguments.size() == 1 ? "Kicked by an operator." : String.join(" ", arguments.subList(1, arguments.size()));
     if (target instanceof gg.tame.conduit.api.player.Player api) {
       api.disconnect(reason);
-      source.sendMessage("Kicked " + target.username() + ".");
+      Messages.success(source, "Kicked " + target.username() + ".");
       return;
     }
-    source.sendMessage("Unable to kick " + target.username() + ".");
+    Messages.failure(source, "Unable to kick " + target.username() + ".");
   }
 
   private static void conduit(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments) {
@@ -216,103 +242,297 @@ public final class CoreCommands {
       case "info", "version" -> info(source, runtime, registry);
       case "plugins" -> plugins(source, runtime);
       case "servers" -> servers(source, runtime, registry);
-      case "uptime" -> source.sendMessage("Uptime: " + formatUptime(runtime == null ? 0 : runtime.uptimeMillis()));
+      case "uptime" -> source.sendMessage(Text.of("Uptime: ").color(Messages.LABEL)
+          .append(Text.of(formatUptime(runtime == null ? 0 : runtime.uptimeMillis())).color(Messages.BODY)));
       case "dump" -> dump(source, runtime, registry);
       case "heap" -> heap(source);
       case "reload" -> reload(source, runtime);
-      case "metrics" -> source.sendMessage(ConduitMetrics.current().snapshot().toString());
+      case "metrics" -> source.sendMessage(Text.of(ConduitMetrics.current().snapshot().toString()).color(Messages.LABEL));
       case "health" -> health(source, runtime, registry);
+      case "maintenance" -> maintenance(source, runtime, arguments.subList(1, arguments.size()));
+      case "drain" -> drain(source, runtime, registry, arguments.subList(1, arguments.size()), true);
+      case "undrain" -> drain(source, runtime, registry, arguments.subList(1, arguments.size()), false);
+      case "doctor" -> doctor(source, runtime);
+      case "diagnostics" -> diagnostics(source, runtime, registry);
       case "help" -> help(source);
-      default -> source.sendMessage("Unknown /conduit subcommand. Try /conduit help");
+      default -> Messages.info(source, "Unknown /conduit subcommand. Try /conduit help");
     }
   }
 
   private static void info(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
-    source.sendMessage("Conduit " + Conduit.VERSION);
-    source.sendMessage("");
+    source.sendMessage(Text.of(Conduit.BRAND + " " + Conduit.VERSION).color(Messages.BRAND).bold());
+    source.sendMessage(Text.empty());
     String current = source.currentBackend().isBlank() ? "none" : source.currentBackend();
-    source.sendMessage("Current server: " + current);
-    source.sendMessage("Servers: " + registry.names().size());
+    source.sendMessage(Text.of("Current server: ").color(Messages.LABEL)
+        .append(Text.of(current).color(Messages.CURRENT).bold()));
+    source.sendMessage(Text.of("Servers: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(registry.names().size())).color(Messages.BODY)));
     if (runtime != null) {
-      source.sendMessage("Players: " + ConduitMetrics.current().activePlayers());
-      source.sendMessage("Plugins: " + runtime.pluginCatalog().size());
+      source.sendMessage(Text.of("Players: ").color(Messages.LABEL)
+          .append(Text.of(String.valueOf(ConduitMetrics.current().activePlayers())).color(Messages.BODY)));
+      source.sendMessage(Text.of("Plugins: ").color(Messages.LABEL)
+          .append(Text.of(String.valueOf(runtime.pluginCatalog().size())).color(Messages.BODY)));
     }
   }
 
   private static void servers(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
-    source.sendMessage("Servers:");
+    source.sendMessage(Text.of("Conduit Servers").color(Messages.BRAND).bold());
+    source.sendMessage(Text.empty());
+    String current = source.currentBackend();
     for (String name : registry.names()) {
-      String state = "unknown";
-      if (runtime != null) {
-        var status = runtime.selector().status(name);
-        state = status.availability().name().toLowerCase(Locale.ROOT);
+      boolean here = name.equalsIgnoreCase(current);
+      ServerAvailability availability = runtime == null ? ServerAvailability.UNKNOWN : runtime.selector().status(name).availability();
+      String state = switch (availability) {
+        case ONLINE -> "Online";
+        case OFFLINE -> "Offline";
+        case CONNECTING -> "Switching";
+        case DEGRADED -> "Degraded";
+        case UNKNOWN -> "Unknown";
+      };
+      var stateColor = availability == ServerAvailability.ONLINE ? Messages.OK
+          : availability == ServerAvailability.OFFLINE ? Messages.BAD : Messages.WARN;
+      if (here) {
+        source.sendMessage(Text.of("● ").color(Messages.CURRENT).append(Text.of(name).color(Messages.CURRENT).bold()));
+      } else {
+        source.sendMessage(Text.of("○ ").color(Messages.OTHER).append(Text.of(name).color(Messages.BODY)));
       }
-      int players = runtime == null ? 0 : runtime.playerManager().byServer(name).size();
-      source.sendMessage("  " + name + " — " + state + " (" + players + " on proxy)");
+      source.sendMessage(Text.of("  ").append(Text.of(state).color(stateColor)));
+      source.sendMessage(Text.empty());
     }
   }
 
   private static void plugins(CommandSource source, ConduitRuntime runtime) {
     if (!source.hasPermission(Permissions.PLUGINS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("You do not have permission to use this command.");
+      Messages.permission(source);
       return;
     }
     PluginCatalog catalog = runtime == null ? null : runtime.pluginCatalog();
     if (catalog == null || catalog.size() == 0) {
-      source.sendMessage("No Conduit or Velocity plugins loaded.");
+      Messages.info(source, "No Conduit or Velocity plugins loaded.");
       return;
     }
-    source.sendMessage("Proxy plugins (" + catalog.size() + "):");
-    for (PluginCatalog.Entry entry : catalog.all()) source.sendMessage("- " + entry.display());
+    source.sendMessage(Text.of("Proxy plugins").color(Messages.BRAND).bold()
+        .append(Text.of(" (" + catalog.size() + ")").color(Messages.LABEL)));
+    for (PluginCatalog.Entry entry : catalog.all()) {
+      source.sendMessage(Text.of("- ").color(Messages.OTHER).append(Text.of(entry.display()).color(Messages.BODY)));
+    }
   }
 
   private static void help(CommandSource source) {
-    source.sendMessage("Conduit commands:");
+    source.sendMessage(Text.of("Conduit commands:").color(Messages.BRAND).bold());
     if (source.hasPermission(Permissions.SERVER_USE) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("/server");
-      source.sendMessage("/server <server>");
+      source.sendMessage(Text.of("/server").color(Messages.BODY));
+      source.sendMessage(Text.of("/server <server>").color(Messages.BODY));
     }
     if (source.hasPermission(Permissions.SERVER_SEND) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("/send <player|server|current> <server>");
+      source.sendMessage(Text.of("/send <player|server|current> <server>").color(Messages.BODY));
     }
     if (source.hasPermission(Permissions.CONDUIT_INFO) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("/conduit");
-      source.sendMessage("/conduit servers");
-      source.sendMessage("/conduit plugins");
+      source.sendMessage(Text.of("/conduit").color(Messages.BODY));
+      source.sendMessage(Text.of("/conduit servers").color(Messages.BODY));
+      source.sendMessage(Text.of("/conduit plugins").color(Messages.BODY));
+      source.sendMessage(Text.of("/conduit health").color(Messages.BODY));
+    }
+    if (source.hasPermission(Permissions.MAINTENANCE) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of("/conduit maintenance <on|off|status>").color(Messages.BODY));
+    }
+    if (source.hasPermission(Permissions.DRAIN) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of("/conduit drain <server>").color(Messages.BODY));
+      source.sendMessage(Text.of("/conduit undrain <server>").color(Messages.BODY));
+    }
+    if (source.hasPermission(Permissions.DOCTOR) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of("/conduit doctor").color(Messages.BODY));
+    }
+    if (source.hasPermission(Permissions.DIAGNOSTICS) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of("/conduit diagnostics").color(Messages.BODY));
+    }
+    if (source.hasPermission(Permissions.RELOAD) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of("/conduit reload").color(Messages.BODY));
     }
     if (source.hasPermission(Permissions.HUB) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("/hub");
+      source.sendMessage(Text.of("/hub").color(Messages.BODY));
     }
   }
 
   private static void health(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
-    if (runtime == null) {
-      source.sendMessage("Runtime unavailable.");
+    if (!source.hasPermission(Permissions.HEALTH) && !source.hasPermission(Permissions.CONDUIT_INFO)
+        && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      Messages.permission(source);
       return;
     }
-    source.sendMessage("Backend health:");
-    for (String name : registry.names()) {
-      var status = runtime.selector().status(name);
-      source.sendMessage("- " + name + ": " + status.availability().name().toLowerCase(Locale.ROOT));
+    if (runtime == null) {
+      Messages.failure(source, "Runtime unavailable.");
+      return;
     }
+    source.sendMessage(Text.of("Conduit backend health").color(Messages.BRAND).bold());
+    source.sendMessage(Text.empty());
+    String current = source.currentBackend();
+    for (String name : registry.names()) {
+      var snap = runtime.health().snapshot(name);
+      boolean here = name.equalsIgnoreCase(current);
+      String label = switch (snap.health()) {
+        case HEALTHY -> "Healthy";
+        case UNHEALTHY -> "Unhealthy";
+        case UNKNOWN -> "Unknown";
+      };
+      var color = snap.health() == gg.tame.conduit.health.BackendHealth.HEALTHY ? Messages.OK
+          : snap.health() == gg.tame.conduit.health.BackendHealth.UNHEALTHY ? Messages.BAD : Messages.WARN;
+      if (here) source.sendMessage(Text.of("● ").color(Messages.CURRENT).append(Text.of(name).color(Messages.CURRENT).bold()));
+      else source.sendMessage(Text.of("○ ").color(Messages.OTHER).append(Text.of(name).color(Messages.BODY)));
+      String detail = label + (snap.draining() ? " · draining" : "");
+      if (snap.consecutiveFailures() > 0 || snap.consecutiveSuccesses() > 0) {
+        detail += " · fail=" + snap.consecutiveFailures() + " ok=" + snap.consecutiveSuccesses();
+      }
+      source.sendMessage(Text.of("  ").append(Text.of(detail).color(color)));
+      source.sendMessage(Text.empty());
+    }
+  }
+
+  private static void maintenance(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
+    if (!source.hasPermission(Permissions.MAINTENANCE) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      Messages.permission(source);
+      return;
+    }
+    if (runtime == null) {
+      Messages.failure(source, "Runtime unavailable.");
+      return;
+    }
+    if (arguments.isEmpty() || arguments.getFirst().equalsIgnoreCase("status")) {
+      boolean active = runtime.maintenance().isActive();
+      source.sendMessage(Text.of("Maintenance: ").color(Messages.LABEL)
+          .append(Text.of(active ? "ON" : "OFF").color(active ? Messages.WARN : Messages.OK).bold()));
+      return;
+    }
+    try {
+      if (arguments.getFirst().equalsIgnoreCase("on")) {
+        if (!runtime.maintenance().featureEnabled()) {
+          Messages.failure(source, "Maintenance feature is disabled in config.");
+          return;
+        }
+        runtime.maintenance().enable();
+        Messages.success(source, "Maintenance mode enabled.");
+        return;
+      }
+      if (arguments.getFirst().equalsIgnoreCase("off")) {
+        runtime.maintenance().disable();
+        Messages.success(source, "Maintenance mode disabled.");
+        return;
+      }
+    } catch (java.io.IOException exception) {
+      Messages.failure(source, "Could not update maintenance flag.");
+      return;
+    }
+    Messages.info(source, "Usage: /conduit maintenance <on|off|status>");
+  }
+
+  private static void drain(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments, boolean enable) {
+    if (!source.hasPermission(Permissions.DRAIN) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      Messages.permission(source);
+      return;
+    }
+    if (runtime == null) {
+      Messages.failure(source, "Runtime unavailable.");
+      return;
+    }
+    if (arguments.isEmpty()) {
+      Messages.info(source, "Usage: /conduit " + (enable ? "drain" : "undrain") + " <server>");
+      return;
+    }
+    Optional<String> server = resolveServer(source, registry, arguments.getFirst());
+    if (server.isEmpty()) return;
+    if (enable) {
+      if (runtime.health().drain(server.get())) Messages.success(source, "Draining " + server.get() + ".");
+      else Messages.info(source, server.get() + " is already draining.");
+    } else {
+      if (runtime.health().undrain(server.get())) Messages.success(source, "Undrained " + server.get() + ".");
+      else Messages.info(source, server.get() + " was not draining.");
+    }
+  }
+
+  private static void doctor(CommandSource source, ConduitRuntime runtime) {
+    if (!source.hasPermission(Permissions.DOCTOR) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      Messages.permission(source);
+      return;
+    }
+    if (runtime == null) {
+      Messages.failure(source, "Runtime unavailable.");
+      return;
+    }
+    source.sendMessage(Text.of("Conduit doctor").color(Messages.BRAND).bold());
+    for (var finding : gg.tame.conduit.ops.OpsDoctor.run(runtime)) {
+      var color = switch (finding.severity()) {
+        case OK -> Messages.OK;
+        case WARNING -> Messages.WARN;
+        case ERROR -> Messages.BAD;
+      };
+      source.sendMessage(Text.of(finding.severity().name() + " ").color(color)
+          .append(Text.of(finding.message()).color(Messages.BODY)));
+    }
+  }
+
+  private static void diagnostics(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
+    if (!source.hasPermission(Permissions.DIAGNOSTICS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      Messages.permission(source);
+      return;
+    }
+    if (runtime == null) {
+      Messages.failure(source, "Runtime unavailable.");
+      return;
+    }
+    int healthy = 0;
+    int unhealthy = 0;
+    for (var snap : runtime.health().all()) {
+      if (snap.health() == gg.tame.conduit.health.BackendHealth.HEALTHY) healthy++;
+      if (snap.health() == gg.tame.conduit.health.BackendHealth.UNHEALTHY) unhealthy++;
+    }
+    source.sendMessage(Text.of("Conduit diagnostics").color(Messages.BRAND).bold());
+    source.sendMessage(Text.of("Version: ").color(Messages.LABEL).append(Text.of(Conduit.VERSION).color(Messages.BODY)));
+    source.sendMessage(Text.of("Uptime: ").color(Messages.LABEL).append(Text.of(formatUptime(runtime.uptimeMillis())).color(Messages.BODY)));
+    source.sendMessage(Text.of("Players: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(ConduitMetrics.current().activePlayers())).color(Messages.BODY)));
+    source.sendMessage(Text.of("Backends: ").color(Messages.LABEL)
+        .append(Text.of(registry.names().size() + " (healthy=" + healthy + ", unhealthy=" + unhealthy + ")").color(Messages.BODY)));
+    source.sendMessage(Text.of("Switches: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(ConduitMetrics.current().switches())).color(Messages.BODY)));
+    source.sendMessage(Text.of("Failed switches: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(ConduitMetrics.current().failedSwitches())).color(Messages.BODY)));
+    source.sendMessage(Text.of("Fallback events: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(ConduitMetrics.current().fallbackEvents())).color(Messages.BODY)));
+    source.sendMessage(Text.of("Maintenance: ").color(Messages.LABEL)
+        .append(Text.of(runtime.maintenance().isActive() ? "on" : "off").color(Messages.BODY)));
+    source.sendMessage(Text.of("Plugins: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(runtime.pluginCatalog().size())).color(Messages.BODY)));
   }
 
   private static void reload(CommandSource source, ConduitRuntime runtime) {
     if (!source.hasPermission(Permissions.RELOAD) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("You do not have permission to use this command.");
+      Messages.permission(source);
       return;
     }
     if (runtime == null) {
-      source.sendMessage("Unable to reload.");
+      Messages.failure(source, "Unable to reload.");
       return;
     }
-    runtime.selector().probeAll();
-    source.sendMessage("Re-probed configured backends.");
+    var result = runtime.reload();
+    if (!result.applied() && result.error() != null) {
+      Messages.failure(source, "Reload failed: " + result.error());
+      return;
+    }
+    Messages.success(source, "Configuration reloaded.");
+    if (!result.appliedLive().isEmpty()) {
+      Messages.info(source, "Applied live: " + String.join(", ", result.appliedLive()));
+    }
+    if (!result.restartRequired().isEmpty()) {
+      source.sendMessage(Text.of("Restart required:").color(Messages.WARN).bold());
+      for (String item : result.restartRequired()) {
+        source.sendMessage(Text.of("- ").color(Messages.OTHER).append(Text.of(item).color(Messages.BODY)));
+      }
+    }
   }
 
   private static void dump(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
     if (!source.hasPermission(Permissions.DUMP) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("You do not have permission to use this command.");
+      Messages.permission(source);
       return;
     }
     try {
@@ -325,15 +545,15 @@ public final class CoreCommands {
       body.append("metrics=").append(ConduitMetrics.current().snapshot()).append('\n');
       for (String name : registry.names()) body.append("server=").append(name).append('\n');
       Files.writeString(file, body.toString());
-      source.sendMessage("Wrote dump to " + file.toAbsolutePath());
+      Messages.success(source, "Wrote dump to " + file.toAbsolutePath());
     } catch (IOException exception) {
-      source.sendMessage("Dump failed.");
+      Messages.failure(source, "Dump failed.");
     }
   }
 
   private static void heap(CommandSource source) {
     if (!source.hasPermission(Permissions.HEAP) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("You do not have permission to use this command.");
+      Messages.permission(source);
       return;
     }
     try {
@@ -346,56 +566,62 @@ public final class CoreCommands {
           "com.sun.management:type=HotSpotDiagnostic",
           hotspot);
       hotspot.getMethod("dumpHeap", String.class, boolean.class).invoke(bean, file.toAbsolutePath().toString(), true);
-      source.sendMessage("Heap dump written to " + file.toAbsolutePath());
+      Messages.success(source, "Heap dump written to " + file.toAbsolutePath());
     } catch (ReflectiveOperationException | IOException exception) {
-      source.sendMessage("Heap dump unavailable.");
+      Messages.failure(source, "Heap dump unavailable.");
     }
   }
 
   private static void send(CommandSource source, ServerRegistry registry, PlayerManager players, ConduitRuntime runtime, List<String> arguments) {
     if (arguments.size() != 2) {
-      source.sendMessage("Usage: /send <source-server> <destination-server>");
-      source.sendMessage("       /send current <destination-server>");
-      source.sendMessage("       /send <player> <destination-server>");
+      Messages.info(source, "Usage: /send <source-server> <destination-server>");
+      Messages.info(source, "       /send current <destination-server>");
+      Messages.info(source, "       /send <player> <destination-server>");
       return;
     }
     Optional<String> destination = resolveServer(source, registry, arguments.get(1));
     if (destination.isEmpty()) return;
     String dest = destination.get();
     if (runtime != null && runtime.selector().status(dest).availability() == ServerAvailability.OFFLINE) {
-      source.sendMessage(dest + " is unavailable. Please try again later.");
+      Messages.failure(source, dest + " is unavailable.");
       return;
     }
     String from = arguments.getFirst();
     if (from.equalsIgnoreCase("current")) {
       if (!(source instanceof TrackedPlayer player)) {
-        source.sendMessage("current can only be used by a player.");
+        Messages.failure(source, "current can only be used by a player.");
         return;
       }
       if (dest.equalsIgnoreCase(source.currentBackend())) {
-        source.sendMessage(player.username() + " is already connected to " + dest + ".");
+        source.sendMessage(Text.of(player.username()).color(Messages.BODY)
+            .append(Text.of(" is already connected to ").color(Messages.LABEL))
+            .append(Text.of(dest).color(Messages.CURRENT))
+            .append(Text.of(".").color(Messages.LABEL)));
         return;
       }
-      source.sendMessage("Connecting to " + dest + "...");
-      if (player.transferTo(dest)) source.sendMessage("Sent " + player.username() + " to " + dest + ".");
+      Messages.connecting(source, dest);
+      if (player.transferTo(dest)) Messages.success(source, "Sent " + player.username() + " to " + dest + ".");
       return;
     }
     Optional<TrackedPlayer> player = players.getByUsername(from);
     if (player.isPresent()) {
       if (!source.hasPermission(Permissions.SERVER_SEND_OTHERS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-        source.sendMessage("You do not have permission to use this command.");
+        Messages.permission(source);
         return;
       }
       TrackedPlayer target = player.get();
       if (dest.equalsIgnoreCase(target.currentBackend())) {
-        source.sendMessage(target.username() + " is already connected to " + dest + ".");
+        source.sendMessage(Text.of(target.username()).color(Messages.BODY)
+            .append(Text.of(" is already connected to ").color(Messages.LABEL))
+            .append(Text.of(dest).color(Messages.CURRENT))
+            .append(Text.of(".").color(Messages.LABEL)));
         return;
       }
       if (!target.transferTo(dest)) {
-        source.sendMessage(dest + " is unavailable. Please try again later.");
+        Messages.failure(source, dest + " is unavailable.");
         return;
       }
-      source.sendMessage("Sent " + target.username() + " to " + dest + ".");
+      Messages.success(source, "Sent " + target.username() + " to " + dest + ".");
       return;
     }
     ServerMatch match = registry.resolve(from);
@@ -407,17 +633,17 @@ public final class CoreCommands {
       resolveServer(source, registry, from);
       return;
     }
-    source.sendMessage("Player " + from + " is not online.");
+    Messages.failure(source, "Player " + from + " is not online.");
   }
 
   private static void sendMass(CommandSource source, PlayerManager players, String from, String dest) {
     if (!source.hasPermission(Permissions.SERVER_SEND_MASS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage("You do not have permission to use this command.");
+      Messages.permission(source);
       return;
     }
     List<TrackedPlayer> targets = players.byServer(from);
     if (targets.isEmpty()) {
-      source.sendMessage("No players are connected to " + from + ".");
+      Messages.info(source, "No players are connected to " + from + ".");
       return;
     }
     AtomicInteger moved = new AtomicInteger();
@@ -442,19 +668,19 @@ public final class CoreCommands {
     for (Thread worker : workers) {
       try { worker.join(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
     }
-    source.sendMessage("Sent " + moved.get() + " players from " + from + " to " + dest + ".");
-    if (failed.get() > 0) source.sendMessage(failed.get() + " player(s) could not be moved.");
+    Messages.success(source, "Sent " + moved.get() + " players from " + from + " to " + dest + ".");
+    if (failed.get() > 0) Messages.failure(source, failed.get() + " player(s) could not be moved.");
   }
 
   private static Optional<String> resolveServer(CommandSource source, ServerRegistry registry, String query) {
     ServerMatch match = registry.resolve(query);
     if (match.kind() == ServerMatch.Kind.NONE) {
-      source.sendMessage("Unknown server: " + query);
+      Messages.failure(source, "Unknown server: " + query);
       return Optional.empty();
     }
     if (match.kind() == ServerMatch.Kind.AMBIGUOUS) {
-      source.sendMessage("Multiple servers match:");
-      for (String name : match.candidates()) source.sendMessage(name);
+      Messages.info(source, "Multiple servers match:");
+      for (String name : match.candidates()) source.sendMessage(Text.of(name).color(Messages.BODY));
       return Optional.empty();
     }
     return Optional.of(match.server().orElseThrow().name());
@@ -484,7 +710,8 @@ public final class CoreCommands {
 
   private static List<String> completeConduit(List<String> arguments) {
     if (arguments.size() > 1) return List.of();
-    return prefix(List.of("info", "plugins", "servers", "uptime", "dump", "heap", "reload", "metrics", "health", "help"),
+    return prefix(List.of("info", "plugins", "servers", "uptime", "dump", "heap", "reload", "metrics",
+            "health", "maintenance", "drain", "undrain", "doctor", "diagnostics", "help"),
         arguments.isEmpty() ? "" : arguments.getFirst());
   }
 

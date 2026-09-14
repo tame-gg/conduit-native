@@ -21,4 +21,11 @@ public final class Permissions {
   public static final String HEAP = "conduit.command.heap";
   public static final String RELOAD = "conduit.command.reload";
   public static final String UPTIME = "conduit.command.uptime";
+  public static final String MAINTENANCE = "conduit.command.maintenance";
+  public static final String MAINTENANCE_BYPASS = "conduit.maintenance.bypass";
+  public static final String DRAIN = "conduit.command.drain";
+  public static final String DRAIN_BYPASS = "conduit.drain.bypass";
+  public static final String HEALTH = "conduit.command.health";
+  public static final String DOCTOR = "conduit.command.doctor";
+  public static final String DIAGNOSTICS = "conduit.command.diagnostics";
 }

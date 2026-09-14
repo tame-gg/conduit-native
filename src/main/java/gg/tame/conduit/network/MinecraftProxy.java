@@ -49,6 +49,8 @@ public final class MinecraftProxy implements AutoCloseable {
   private final Semaphore authPermits = new Semaphore(MAX_CONCURRENT_AUTH);
   private final AtomicInteger connections = new AtomicInteger();
   private volatile boolean running;
+  private volatile boolean accepting = true;
+
   public MinecraftProxy(ConduitConfiguration configuration) throws IOException {
     this(configuration, Authenticators.create(configuration.authentication()), RsaKeys.generate(), Path.of("plugins"));
   }
@@ -58,7 +60,8 @@ public final class MinecraftProxy implements AutoCloseable {
   public MinecraftProxy(ConduitConfiguration configuration, PlayerAuthenticator authenticator, KeyPair rsaKeys, Path pluginsDirectory) throws IOException {
     this.configuration = configuration; this.authenticator = authenticator; this.rsaKeys = rsaKeys;
     this.forwarder = Forwarders.create(configuration); this.listener = ServerSocketChannel.open(); listener.bind(configuration.listener());
-    this.runtime = new ConduitRuntime(configuration, pluginsDirectory);
+    Path configDir = pluginsDirectory.getParent() == null ? Path.of(".") : pluginsDirectory.getParent();
+    this.runtime = new ConduitRuntime(configuration, pluginsDirectory, configDir);
     CoreCommands.register(runtime);
     try {
       Class.forName("gg.tame.conduit.compat.velocity.VelocityBoot")
@@ -74,11 +77,16 @@ public final class MinecraftProxy implements AutoCloseable {
   public int port() throws IOException { return ((java.net.InetSocketAddress) listener.getLocalAddress()).getPort(); }
   public void serve() throws IOException {
     running = true;
+    accepting = true;
     try { runtime.pluginRuntime().loadAll(); } catch (Exception exception) { ConduitLog.error("plugin load failed", exception); }
     runtime.events().fire(new ProxyStartEvent(runtime));
     try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       while (running) {
         SocketChannel client = listener.accept();
+        if (!accepting || runtime.gracefulShutdown().isShuttingDown()) {
+          try { client.close(); } catch (IOException ignored) { }
+          continue;
+        }
         if (connections.incrementAndGet() > MAX_CONNECTIONS) {
           connections.decrementAndGet();
           try { client.close(); } catch (IOException ignored) { }
@@ -105,7 +113,11 @@ public final class MinecraftProxy implements AutoCloseable {
         }
         throw new IOException(unsupported.getMessage(), unsupported);
       }
-      if (handshake.nextState() == 1) { serveStatus(transport, protocol); return; }
+      if (handshake.nextState() == 1) { serveStatus(transport, protocol, handshake.protocolVersion()); return; }
+      if (!runtime.versionGate().allows(handshake.protocolVersion())) {
+        try { transport.write(LoginDisconnect.encode(protocol, runtime.versionGate().kickMessage())); } catch (IOException ignored) { }
+        return;
+      }
       byte[] loginStart = transport.read(configuration.maxFrameBytes());
       LoginPipeline pipeline = new LoginPipeline(session, protocol); pipeline.observe(gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER, loginStart);
       if (authenticator.mode() == AuthenticationMode.ONLINE) {
@@ -118,12 +130,23 @@ public final class MinecraftProxy implements AutoCloseable {
       }
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
           handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(client.getInetAddress()))) {
+        if (runtime.maintenance().isActive() && !maintenanceBypass(player)) {
+          try { transport.write(LoginDisconnect.encode(protocol, runtime.maintenance().kickMessage())); } catch (IOException ignored) { }
+          return;
+        }
         runtime.events().fire(new PlayerLoginEvent(player));
         if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
         player.play();
       }
     } catch (IOException exception) { ConduitLog.warn("Connection closed: " + exception.getMessage()); }
     finally { connections.decrementAndGet(); }
+  }
+  private boolean maintenanceBypass(PlayerSession player) {
+    if (runtime.maintenance().settings().allowsUsername(player.username())) return true;
+    // Built-in permissive provider would otherwise make maintenance meaningless.
+    if (runtime.permissions() instanceof gg.tame.conduit.permission.PermissivePermissionProvider) return false;
+    return player.hasPermission(gg.tame.conduit.command.Permissions.MAINTENANCE_BYPASS)
+        || player.hasPermission(gg.tame.conduit.command.Permissions.CONDUIT_ADMIN);
   }
   private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address) throws IOException, AuthenticationException {
     if (!authPermits.tryAcquire()) throw new AuthenticationException("authentication busy");
@@ -149,12 +172,27 @@ public final class MinecraftProxy implements AutoCloseable {
       ConduitLog.info(authenticated.summary());
     } finally { authPermits.release(); }
   }
-  private void serveStatus(PacketTransport client, ProtocolDefinition protocol) throws IOException {
-    client.write(StatusResponder.response(protocol, client.read(configuration.maxFrameBytes()), "Conduit"));
+  private void serveStatus(PacketTransport client, ProtocolDefinition protocol, int clientProtocol) throws IOException {
+    String description = "Conduit";
+    String versionName = "Conduit " + protocol.version().displayName();
+    int advertised = protocol.version().number();
+    if (runtime.maintenance().isActive()) {
+      description = runtime.maintenance().motd();
+    }
+    if (runtime.versionGate().isEnabled() && !runtime.versionGate().allows(clientProtocol)) {
+      versionName = runtime.versionGate().pingVersionName(clientProtocol);
+      advertised = runtime.versionGate().statusProtocolAdvertisement(clientProtocol).orElse(clientProtocol);
+      if (!runtime.maintenance().isActive()) description = runtime.versionGate().kickMessage();
+    }
+    client.write(StatusResponder.response(protocol, client.read(configuration.maxFrameBytes()), description, versionName, advertised));
     client.write(StatusResponder.pong(protocol, client.read(configuration.maxFrameBytes())));
   }
   @Override public void close() throws IOException {
+    if (running) {
+      runtime.shutdownGracefully(() -> accepting = false);
+    }
     running = false;
+    accepting = false;
     listener.close();
     runtime.close();
   }

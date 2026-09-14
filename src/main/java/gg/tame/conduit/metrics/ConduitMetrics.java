@@ -21,6 +21,9 @@ public final class ConduitMetrics {
   private final LongAdder backendConnects = new LongAdder();
   private final LongAdder switchNanos = new LongAdder();
   private final LongAdder switches = new LongAdder();
+  private final LongAdder failedSwitches = new LongAdder();
+  private final LongAdder fallbackEvents = new LongAdder();
+  private final LongAdder unhealthyTransitions = new LongAdder();
   private final AtomicLong windowStart = new AtomicLong(System.nanoTime());
   private final AtomicLong lastInboundPackets = new AtomicLong();
   private final AtomicLong lastOutboundPackets = new AtomicLong();
@@ -38,6 +41,13 @@ public final class ConduitMetrics {
   public void encodeFailure() { encodeFailures.increment(); }
   public void backendConnect(long nanos) { backendConnects.increment(); backendConnectNanos.add(nanos); }
   public void serverSwitch(long nanos) { switches.increment(); switchNanos.add(nanos); }
+  public void failedSwitch() { failedSwitches.increment(); }
+  public void fallbackEvent() { fallbackEvents.increment(); }
+  public void backendUnhealthy() { unhealthyTransitions.increment(); }
+  public long switches() { return switches.sum(); }
+  public long failedSwitches() { return failedSwitches.sum(); }
+  public long fallbackEvents() { return fallbackEvents.sum(); }
+  public long unhealthyTransitions() { return unhealthyTransitions.sum(); }
   public int activePlayers() { return players.get(); }
   public int activeBackends() { return backends.get(); }
   public long authentications() { return authentications.sum(); }

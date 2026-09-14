@@ -4,6 +4,8 @@ import gg.tame.conduit.api.server.ServerAvailability;
 import gg.tame.conduit.api.server.ServerStatus;
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
+import gg.tame.conduit.health.BackendHealth;
+import gg.tame.conduit.health.BackendHealthService;
 import gg.tame.conduit.protocol.BackendStatusProbe;
 import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.ProtocolDefinition;
@@ -20,13 +22,19 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class BackendSelector {
   private final ConduitConfiguration configuration;
   private final ServerRegistry registry;
+  private final BackendHealthService health;
   private final ConcurrentHashMap<String, BackendStatusProbe.Advertisement> advertisements = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<String, ServerStatus> statuses = new ConcurrentHashMap<>();
   private volatile Instant lastRefresh = Instant.EPOCH;
 
   public BackendSelector(ConduitConfiguration configuration) {
+    this(configuration, null);
+  }
+
+  public BackendSelector(ConduitConfiguration configuration, BackendHealthService health) {
     this.configuration = configuration;
     this.registry = new ServerRegistry(configuration);
+    this.health = health;
     for (BackendServer server : registry.all()) {
       statuses.put(ServerRegistry.normalize(server.name()), ServerStatus.unknown(server.name()));
     }
@@ -34,11 +42,26 @@ public final class BackendSelector {
 
   public ServerRegistry registry() { return registry; }
   public Instant lastRefresh() { return lastRefresh; }
+  public BackendHealthService health() { return health; }
 
-  public void probeAll() { refreshStatus(true); }
+  public void probeAll() {
+    if (health != null) {
+      health.probeOnce();
+      lastRefresh = Instant.now();
+      return;
+    }
+    refreshStatus(true);
+  }
 
   /** Quiet refresh used by the scheduler — no stdout spam. */
-  public void refreshStatusQuietly() { refreshStatus(false); }
+  public void refreshStatusQuietly() {
+    if (health != null) {
+      health.probeOnce();
+      lastRefresh = Instant.now();
+      return;
+    }
+    refreshStatus(false);
+  }
 
   private void refreshStatus(boolean log) {
     Instant now = Instant.now();
@@ -65,10 +88,12 @@ public final class BackendSelector {
   }
 
   public Optional<BackendStatusProbe.Advertisement> advertisement(String name) {
+    if (health != null) return health.advertisement(name);
     return Optional.ofNullable(advertisements.get(ServerRegistry.normalize(name)));
   }
 
   public ServerStatus status(String name) {
+    if (health != null) return health.toServerStatus(name);
     String key = ServerRegistry.normalize(name);
     ServerStatus status = statuses.get(key);
     if (status != null) return status;
@@ -82,6 +107,7 @@ public final class BackendSelector {
   }
 
   public void markConnecting(String name) {
+    if (health != null) return; // health service owns probe state; connecting is session-local
     String key = ServerRegistry.normalize(name);
     ServerStatus prior = status(name);
     statuses.put(key, new ServerStatus(
@@ -101,33 +127,66 @@ public final class BackendSelector {
         .orElse(ProtocolCompatibility.between(clientProtocol, clientProtocol));
   }
 
+  public boolean isCompatible(int clientProtocol, String backendName) {
+    TranslationSupport support = compatibility(clientProtocol, backendName);
+    return support == TranslationSupport.DIRECT || support == TranslationSupport.TRANSLATED;
+  }
+
+  public boolean isEligible(String name, int clientProtocol, boolean allowDrainingBypass) {
+    if (registry.get(name).isEmpty()) return false;
+    if (!ProtocolDefinition.hasCodec(clientProtocol)) return false;
+    if (health != null) {
+      if (health.snapshot(name).health() == BackendHealth.UNHEALTHY) return false;
+      if (health.isDraining(name) && !allowDrainingBypass) return false;
+    } else if (status(name).availability() == ServerAvailability.OFFLINE) {
+      return false;
+    }
+    // Protocol translation honesty is separate: Via-style backends may accept the client wire
+    // protocol even when status advertises a different native version.
+    return true;
+  }
+
   public List<BackendServer> candidates() { return named(configuration.initialBackends(), configuration.fallbackBackends()); }
 
-  /** First hop follows routing.initial, then fallback, then any other configured servers. Protocol advertisements never reorder that list. */
+  /** First hop follows routing.initial, then fallback, then any other configured servers. */
   public List<BackendServer> candidatesFor(int clientProtocol) {
-    List<BackendServer> ordered = new ArrayList<>(candidates());
-    for (BackendServer server : registry.all()) {
-      if (ordered.contains(server)) continue;
-      var advertisement = advertisement(server.name());
-      if (advertisement.isEmpty()) {
-        ordered.add(server);
-        continue;
-      }
-      if (ProtocolCompatibility.between(clientProtocol, advertisement.get().protocol()) == TranslationSupport.DIRECT
-          || ProtocolDefinition.hasCodec(clientProtocol)) {
-        ordered.add(server);
-      }
+    return candidatesFor(clientProtocol, false);
+  }
+
+  public List<BackendServer> candidatesFor(int clientProtocol, boolean allowDrainingBypass) {
+    LinkedHashSet<String> orderedNames = new LinkedHashSet<>();
+    orderedNames.addAll(configuration.initialBackends());
+    orderedNames.addAll(configuration.fallbackBackends());
+    for (BackendServer server : registry.all()) orderedNames.add(server.name());
+    List<BackendServer> ordered = new ArrayList<>();
+    for (String name : orderedNames) {
+      if (!isEligible(name, clientProtocol, allowDrainingBypass)) continue;
+      registry.get(name).ifPresent(ordered::add);
     }
     return ordered.isEmpty() ? candidates() : ordered;
   }
 
   public List<BackendServer> fallback(String current, Set<String> failed) {
+    return fallback(current, failed, -1, false);
+  }
+
+  public List<BackendServer> fallback(String current, Set<String> failed, int clientProtocol, boolean allowDrainingBypass) {
     List<String> names = new ArrayList<>(configuration.fallbackBackends());
     names.removeIf(name -> ServerRegistry.normalize(name).equals(ServerRegistry.normalize(current)));
     names.removeIf(name -> failed.contains(ServerRegistry.normalize(name)));
-    // Prefer known-online fallbacks when status is available.
-    names.sort((a, b) -> Boolean.compare(status(b).online(), status(a).online()));
-    return named(names);
+    List<BackendServer> result = new ArrayList<>();
+    for (String name : names) {
+      if (clientProtocol >= 0 && !isEligible(name, clientProtocol, allowDrainingBypass)) continue;
+      if (clientProtocol < 0 && health != null) {
+        if (health.snapshot(name).health() == BackendHealth.UNHEALTHY) continue;
+        if (health.isDraining(name) && !allowDrainingBypass) continue;
+      }
+      registry.get(name).ifPresent(result::add);
+    }
+    if (clientProtocol < 0 && health == null) {
+      result.sort((a, b) -> Boolean.compare(status(b.name()).online(), status(a.name()).online()));
+    }
+    return result;
   }
 
   private List<BackendServer> named(List<String> first, List<String> extra) {

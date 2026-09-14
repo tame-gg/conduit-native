@@ -2,23 +2,35 @@ package gg.tame.conduit.config;
 
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
-import java.util.Optional;
 import java.util.List;
+import java.util.Optional;
 
 public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes,
                                   ForwardingMode forwardingMode, Optional<Path> forwardingSecretFile,
                                   List<BackendServer> backends, List<String> initialBackends,
                                   List<String> fallbackBackends, AuthenticationSettings authentication,
-                                  Optional<java.net.InetAddress> forwardedPlayerAddress) {
+                                  Optional<java.net.InetAddress> forwardedPlayerAddress,
+                                  OpsSettings ops) {
   public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
                              Optional<Path> forwardingSecretFile, List<BackendServer> backends,
                              List<String> initialBackends, List<String> fallbackBackends) {
-    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends, AuthenticationSettings.offline(), Optional.empty());
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends,
+        AuthenticationSettings.offline(), Optional.empty(), OpsSettings.defaults());
   }
   public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
                              Optional<Path> forwardingSecretFile, List<BackendServer> backends,
-                             List<String> initialBackends, List<String> fallbackBackends, AuthenticationSettings authentication) {
-    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends, authentication, Optional.empty());
+                             List<String> initialBackends, List<String> fallbackBackends,
+                             AuthenticationSettings authentication) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends,
+        authentication, Optional.empty(), OpsSettings.defaults());
+  }
+  public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
+                             Optional<Path> forwardingSecretFile, List<BackendServer> backends,
+                             List<String> initialBackends, List<String> fallbackBackends,
+                             AuthenticationSettings authentication,
+                             Optional<java.net.InetAddress> forwardedPlayerAddress) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends,
+        authentication, forwardedPlayerAddress, OpsSettings.defaults());
   }
   public ConduitConfiguration {
     if (listener.getPort() < 1 || listener.getPort() > 65535) throw new IllegalArgumentException("listener.port must be 1..65535");
@@ -27,6 +39,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     if (forwardingMode != ForwardingMode.MODERN && forwardingSecretFile.isPresent()) throw new IllegalArgumentException("forwarding.secret-file is only valid for modern forwarding");
     if (authentication == null) authentication = AuthenticationSettings.offline();
     if (forwardedPlayerAddress == null) forwardedPlayerAddress = Optional.empty();
+    if (ops == null) ops = OpsSettings.defaults();
     backends = List.copyOf(backends);
     initialBackends = List.copyOf(initialBackends);
     fallbackBackends = List.copyOf(fallbackBackends);
@@ -36,6 +49,18 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     for (String name : fallbackBackends) requireBackend(backends, name);
   }
   private static void requireBackend(List<BackendServer> backends, String name) {
-    if (backends.stream().noneMatch(backend -> backend.name().equals(name))) throw new IllegalArgumentException("routing references unknown backend: " + name);
+    if (backends.stream().noneMatch(backend -> backend.name().equals(name))) {
+      throw new IllegalArgumentException("routing references unknown backend: " + name);
+    }
+  }
+
+  public MaintenanceSettings maintenance() { return ops.maintenance(); }
+  public HealthSettings health() { return ops.health(); }
+  public VersionGateSettings versions() { return ops.versions(); }
+  public ShutdownSettings shutdown() { return ops.shutdown(); }
+
+  public ConduitConfiguration withOps(OpsSettings replacement) {
+    return new ConduitConfiguration(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends,
+        initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement);
   }
 }

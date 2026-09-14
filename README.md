@@ -5,7 +5,7 @@ Velocity or Velocity-CTD fork, and it has no dependency on either implementation
 
 The legacy `tame-gg/conduit` checkout is intentionally separate and untouched.
 
-Current version: **0.7.0**. Native plugin API version: **1**.
+Current version: **0.9.0**. Native plugin API version: **1**.
 
 ## Build and test
 
@@ -131,18 +131,43 @@ Local Paper does not care. Lobby → survival on a 26.2 client failed because Pl
 
 ## Commands
 
-Player-facing output is plain and short. No dashboards, boxes, or click-to-connect.
+Player-facing output is clean and polished: hierarchy, colors, and concise wording —
+Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or address leaks.
 
-* `/server` — current server + simple list (`●` current, `○` others); `/server <name>` switches
+* `/server` — `You are currently connected to: …` plus a scannable list (`●` current, `○` others); `/server <name>` switches
 * `/lobby`, `/survival`, … — slash aliases for configured names (when not reserved)
-* `/send` — `current` / player / mass moves
+* `/send` — `current` / player / mass moves (`✓ Sent …` / `✕ … is unavailable.`)
 * `/glist`, `/plist`, `/find`, `/alert`, `/ping`, `/hub`, `/gkick`
-* `/conduit` — `Conduit <version>` plus current server + counts
-* `/conduit servers` — brief status lines from the cached probe
+* `/conduit` — branded version line plus current server and counts
+* `/conduit servers` — name + Online/Offline status (more detail than `/server`, still compact)
+* `/conduit health` — cached backend health with hysteresis counters
+* `/conduit maintenance <on|off|status>` — native maintenance mode
+* `/conduit drain|undrain <server>` — rolling-restart drain
+* `/conduit doctor` / `/conduit diagnostics` — operator checks (no secrets)
+* `/conduit reload` — live-safe reload; lists exact restart-required keys
 * `/conduit plugins` — proxy plugins only (does not shadow Paper `/plugins`)
 * `/conduit help` — short permission-filtered list
 
-Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.player`, `conduit.server.send.mass`, `conduit.info`, …
+Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.player`, `conduit.server.send.mass`, `conduit.info`, `conduit.maintenance.bypass`, `conduit.drain.bypass`, …
+
+## Operations (Phase 1)
+
+| Feature | Status |
+|---------|--------|
+| Maintenance mode (+ flag persistence, MOTD, allowlist) | IMPLEMENTED |
+| Backend health probes + hysteresis (3 fail / 2 recover defaults) | IMPLEMENTED |
+| Drain / undrain | IMPLEMENTED |
+| Health-aware fallback / initial routing | IMPLEMENTED |
+| Client version gating (`[versions]`) | IMPLEMENTED |
+| Graceful shutdown (bounded transfer then disconnect) | IMPLEMENTED |
+| Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
+| Metrics HTTP endpoint | UNSUPPORTED (command diagnostics only) |
+| Security (throttle / bot filter / channel guard / attack mode) | UNSUPPORTED (Phase 2) |
+| Modded (known-packs / Forge / NeoForge / packet queue) | UNSUPPORTED (Phase 3) |
+
+Unhealthy backends are excluded from **new** routing only. Existing players are not kicked by a failed probe.
+
+Version gate is separate from protocol translation. `versions.strict-backend-match=true` refuses switches when Conduit has no translator between client and advertised backend codecs (default `false` keeps Via-style backends usable).
 
 ## Server switching
 
@@ -155,6 +180,7 @@ If the target refuses, times out (~4s), or fails before the client leaves Play:
 * the player stays on the current server
 * message: `<server> is unavailable. Please try again later.`
 
+Once the client has entered Minecraft's configuration phase for a switch, some failures may still require disconnecting the client (protocol limitation).
 ## Version support
 
 | Client | Backend | Mode | Status |

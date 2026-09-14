@@ -1,9 +1,12 @@
 package gg.tame.conduit.session;
 
 import gg.tame.conduit.brand.BrandRewriter;
+import gg.tame.conduit.api.text.Text;
+import gg.tame.conduit.api.text.TextColor;
 import gg.tame.conduit.command.CommandGraphs;
 import gg.tame.conduit.command.CommandManager;
 import gg.tame.conduit.command.CommandSource;
+import gg.tame.conduit.command.Messages;
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ForwardingMode;
@@ -25,6 +28,7 @@ import gg.tame.conduit.protocol.ProtocolProfileAdapter;
 import gg.tame.conduit.protocol.ProtocolSession;
 import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
+import gg.tame.conduit.metrics.ConduitMetrics;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -400,12 +404,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     lost.close();
     Set<String> failed = new HashSet<>();
     failed.add(ServerRegistry.normalize(lost.server().name()));
-    sendMessage(gg.tame.conduit.api.text.Text.of(lost.server().name() + " is unavailable."));
-    for (BackendServer server : selector.fallback(lost.server().name(), failed)) {
+    sendMessage(Text.of(lost.server().name() + " is unavailable.").color(TextColor.RED));
+    ConduitMetrics.current().fallbackEvent();
+    for (BackendServer server : selector.fallback(lost.server().name(), failed, clientProtocol, false)) {
       try {
-        sendMessage("Connecting to " + server.name() + "...");
+        Messages.connecting(this, server.name());
         switchTo(server, true);
-        sendMessage("Connected to " + server.name() + ".");
+        Messages.connected(this, server.name());
         return;
       }
       catch (Exception exception) { failed.add(ServerRegistry.normalize(server.name())); }
@@ -418,14 +423,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (server == null) return false;
     if (Thread.currentThread() == clientReader) {
       Thread.startVirtualThread(() -> {
-        if (runSwitch(server)) sendMessage("Connected to " + server.name() + ".");
-        else sendMessage(server.name() + " is unavailable. Please try again later.");
+        if (runSwitch(server)) Messages.connected(this, server.name());
+        else Messages.unavailable(this, server.name());
       });
       return true;
     }
     boolean ok = runSwitch(server);
-    if (ok) sendMessage("Connected to " + server.name() + ".");
-    else sendMessage(server.name() + " is unavailable. Please try again later.");
+    if (ok) Messages.connected(this, server.name());
+    else Messages.unavailable(this, server.name());
     return ok;
   }
   private boolean runSwitch(BackendServer server) {
@@ -433,6 +438,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       switchTo(server, false);
       return true;
     } catch (Exception exception) {
+      ConduitMetrics.current().failedSwitch();
       return false;
     }
   }
@@ -647,8 +653,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       System.out.println("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED)");
       return;
     }
-    // Status ping may advertise a different native version while ViaVersion (or similar) still
-    // accepts the client protocol on the wire. Conduit keeps the client codec and warns.
+    if (ProtocolDefinition.hasCodec(targetProtocol) && targetProtocol != clientProtocol
+        && support == gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED
+        && runtime.versionGate().settings().strictBackendMatch()) {
+      throw new IOException(server.name() + " is not compatible with your Minecraft version.");
+    }
     System.out.println("Client protocol " + clientProtocol + " connecting to " + server.name()
         + " advertised as " + targetProtocol + " (no Conduit translator; backend must accept the client protocol).");
   }

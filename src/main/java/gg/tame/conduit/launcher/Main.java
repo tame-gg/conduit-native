@@ -18,7 +18,10 @@ public final class Main {
     Forwarders.create(config);
     if (checkOnly) { System.out.println("Configuration valid."); return; }
     Path plugins = configPath.toAbsolutePath().getParent() == null ? Path.of("plugins") : configPath.toAbsolutePath().getParent().resolve("plugins");
+    gg.tame.conduit.config.ConfigMigrator.migrate(configPath);
+    config = ConfigurationLoader.load(configPath);
     try (MinecraftProxy listener = new MinecraftProxy(config, gg.tame.conduit.auth.Authenticators.create(config.authentication()), gg.tame.conduit.crypto.RsaKeys.generate(), plugins)) {
+      listener.runtime().bindConfigPath(configPath);
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
       listener.probeBackends();
       listener.serve();

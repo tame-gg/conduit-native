@@ -83,14 +83,16 @@ public final class Phase6Tests {
     core.dispatch(player, "/server mini");
     require(player.messages.stream().anyMatch(line -> line.equals("Multiple servers match:")), "ambiguous");
     core.dispatch(player, "/server missing");
-    require(player.messages.stream().anyMatch(line -> line.equals("Unknown server: missing")), "unknown");
+    require(player.messages.stream().anyMatch(line -> line.contains("Unknown server: missing")), "unknown");
     core.dispatch(player, "/conduit");
     require(player.messages.stream().anyMatch(line -> line.startsWith("Conduit ")), "conduit version");
     require(player.messages.stream().anyMatch(line -> line.equals("Current server: lobby")), "conduit current server");
     require(core.tabComplete(player, "/server s").equals(List.of("survival")), "server tab filter");
     require(core.dispatch(player, "/lobby"), "slash-server alias");
     core.dispatch(player, "/conduit servers");
-    require(player.messages.stream().anyMatch(line -> line.startsWith("Servers:")), "conduit servers");
+    require(player.messages.stream().anyMatch(line -> line.equals("Conduit Servers")), "conduit servers");
+    require(player.messages.stream().anyMatch(line -> line.equals("● lobby")), "conduit servers current");
+    require(player.messages.stream().anyMatch(line -> line.contains("Online") || line.contains("Unknown")), "conduit servers state");
     core.dispatch(player, "/conduit help");
     require(player.messages.stream().anyMatch(line -> line.contains("/server")), "conduit help");
   }

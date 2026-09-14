@@ -1,14 +1,19 @@
 package gg.tame.conduit.config;
 
+import gg.tame.conduit.protocol.ProtocolVersion;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.OptionalInt;
+import java.util.Set;
 
 /** Minimal, strict TOML subset for the foundation configuration. */
 public final class ConfigurationLoader {
@@ -52,7 +57,70 @@ public final class ConfigurationLoader {
       else servers.add(new BackendServer(name, new InetSocketAddress(values.get(hostKey), integer(values, "servers." + name + ".port"))));
     }
     return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
-        list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values), forwardedAddress(values));
+        list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
+        forwardedAddress(values), ops(values));
+  }
+
+  private static OpsSettings ops(Map<String, String> values) {
+    int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
+    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values));
+  }
+
+  private static MaintenanceSettings maintenance(Map<String, String> values) {
+    return new MaintenanceSettings(
+        optionalBoolean(values, "maintenance.enabled", true),
+        optionalBoolean(values, "maintenance.active-on-start", false),
+        optionalString(values, "maintenance.kick-message", MaintenanceSettings.DEFAULT_KICK),
+        optionalString(values, "maintenance.motd", MaintenanceSettings.DEFAULT_MOTD),
+        Set.copyOf(optionalList(values, "maintenance.allowlist")));
+  }
+
+  private static HealthSettings health(Map<String, String> values) {
+    return new HealthSettings(
+        optionalBoolean(values, "health.enabled", true),
+        optionalInteger(values, "health.interval-ms", 10_000),
+        optionalInteger(values, "health.timeout-ms", 1_500),
+        optionalInteger(values, "health.failure-threshold", 3),
+        optionalInteger(values, "health.success-threshold", 2));
+  }
+
+  private static ShutdownSettings shutdown(Map<String, String> values) {
+    return new ShutdownSettings(
+        optionalBoolean(values, "shutdown.graceful-enabled", true),
+        optionalInteger(values, "shutdown.timeout-ms", 5_000),
+        optionalString(values, "shutdown.message", ShutdownSettings.DEFAULT_MESSAGE));
+  }
+
+  private static VersionGateSettings versions(Map<String, String> values) {
+    Set<Integer> allow = new LinkedHashSet<>();
+    for (String entry : optionalList(values, "versions.allow")) {
+      allow.add(resolveProtocol(entry));
+    }
+    OptionalInt minimum = OptionalInt.empty();
+    OptionalInt maximum = OptionalInt.empty();
+    if (values.containsKey("versions.minimum")) minimum = OptionalInt.of(resolveProtocol(values.get("versions.minimum")));
+    if (values.containsKey("versions.maximum")) maximum = OptionalInt.of(resolveProtocol(values.get("versions.maximum")));
+    return new VersionGateSettings(
+        optionalBoolean(values, "versions.enabled", false),
+        allow,
+        minimum,
+        maximum,
+        optionalString(values, "versions.ping-version-name", VersionGateSettings.DEFAULT_PING),
+        optionalString(values, "versions.kick-message", VersionGateSettings.DEFAULT_KICK),
+        optionalString(values, "versions.kick-message-range", VersionGateSettings.DEFAULT_KICK_RANGE),
+        optionalBoolean(values, "versions.strict-backend-match", false));
+  }
+
+  static int resolveProtocol(String raw) {
+    if (raw == null || raw.isBlank()) throw new IllegalArgumentException("empty version token");
+    String token = raw.strip();
+    if (token.chars().allMatch(Character::isDigit)) return Integer.parseInt(token);
+    String normalized = token.toLowerCase(Locale.ROOT);
+    for (ProtocolVersion version : ProtocolVersion.CATALOG) {
+      if (version.displayName().equalsIgnoreCase(token)) return version.number();
+      if (("minecraft_" + version.displayName().replace('.', '_')).equalsIgnoreCase(normalized)) return version.number();
+    }
+    throw new IllegalArgumentException("unknown Minecraft version: " + raw);
   }
 
   private static AuthenticationSettings authentication(Map<String, String> values) {
@@ -86,15 +154,41 @@ public final class ConfigurationLoader {
     try { return Integer.parseInt(required(values, key)); }
     catch (NumberFormatException exception) { throw new IllegalArgumentException(key + " must be an integer", exception); }
   }
+  private static int optionalInteger(Map<String, String> values, String key, int fallback) {
+    if (!values.containsKey(key)) return fallback;
+    try { return Integer.parseInt(values.get(key).strip()); }
+    catch (NumberFormatException exception) { throw new IllegalArgumentException(key + " must be an integer", exception); }
+  }
+  private static boolean optionalBoolean(Map<String, String> values, String key, boolean fallback) {
+    if (!values.containsKey(key)) return fallback;
+    String raw = values.get(key).strip().toLowerCase(Locale.ROOT);
+    if (raw.equals("true")) return true;
+    if (raw.equals("false")) return false;
+    throw new IllegalArgumentException(key + " must be true or false");
+  }
+  private static String optionalString(Map<String, String> values, String key, String fallback) {
+    String value = values.get(key);
+    return value == null || value.isBlank() ? fallback : value;
+  }
   private static List<String> list(Map<String, String> values, String key) {
     String raw = required(values, key);
-    if (!raw.startsWith("[") || !raw.endsWith("]")) throw new IllegalArgumentException(key + " must be a string array");
-    String contents = raw.substring(1, raw.length() - 1).strip();
+    return parseList(raw, key);
+  }
+  private static List<String> optionalList(Map<String, String> values, String key) {
+    if (!values.containsKey(key)) return List.of();
+    return parseList(values.get(key), key);
+  }
+  private static List<String> parseList(String raw, String key) {
+    String text = raw.strip();
+    if (!text.startsWith("[") || !text.endsWith("]")) throw new IllegalArgumentException(key + " must be a string array");
+    String contents = text.substring(1, text.length() - 1).strip();
     if (contents.isEmpty()) return List.of();
     List<String> result = new ArrayList<>();
     for (String part : contents.split(",")) {
       String value = part.strip();
-      if (value.length() < 2 || !value.startsWith("\"") || !value.endsWith("\"")) throw new IllegalArgumentException(key + " must contain quoted names");
+      if (value.length() < 2 || !value.startsWith("\"") || !value.endsWith("\"")) {
+        throw new IllegalArgumentException(key + " must contain quoted names");
+      }
       result.add(value.substring(1, value.length() - 1));
     }
     return result;

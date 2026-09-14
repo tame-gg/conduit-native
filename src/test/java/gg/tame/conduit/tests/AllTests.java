@@ -69,6 +69,7 @@ public final class AllTests {
     Phase8Tests.run();
     Phase9Tests.run();
     Phase10Tests.run();
+    Phase11OpsTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

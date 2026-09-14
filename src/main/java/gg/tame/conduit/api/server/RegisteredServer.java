@@ -9,6 +9,7 @@ public interface RegisteredServer {
   String getName();
   InetSocketAddress getAddress();
   boolean isOnline();
+  default boolean isDraining() { return false; }
   default gg.tame.conduit.api.server.ServerStatus status() {
     return isOnline()
         ? gg.tame.conduit.api.server.ServerStatus.online(getName(), -1, "", -1, -1, -1, java.time.Instant.now())
