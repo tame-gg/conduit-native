@@ -63,6 +63,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   private boolean playLoginSent;
   private boolean needSelfPlayerInfo = true;
   private volatile Thread clientReader;
+  /**
+   * Body of the client's most recent Client Information packet, without the packet id.
+   *
+   * <p>The client sends this once, during its initial configuration, and never again unless the
+   * player changes a video setting. It carries Displayed Skin Parts — the bitmask for cape, jacket,
+   * sleeves, pants and hat. A backend that never receives it falls back to defaults and broadcasts
+   * them in player-info, which is what stripped the cape and the outer skin layer after a switch
+   * even though the textures property was intact the whole time. Cached here and replayed to every
+   * new backend, the way Velocity replays its cached client settings.
+   */
+  private volatile byte[] clientInformation;
   public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
       LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, CommandManager commands, PlayerManager players, BackendSelector selector,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
@@ -135,6 +146,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   }
   private boolean handleClientPacket(byte[] packet) throws IOException {
     int id = PlayPackets.packetId(packet);
+    rememberClientInformation(packet, id);
     if (expectClientLoginAck
         && protocol.is(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.LOGIN_ACKNOWLEDGED)
         && packet.length <= 2) {
@@ -176,6 +188,33 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       return true;
     }
     return false;
+  }
+  /** Caches Client Information from either state; the packet is still forwarded normally. */
+  private void rememberClientInformation(byte[] packet, int id) throws IOException {
+    ConnectionState state = clientState.state();
+    PacketKind kind = state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_CLIENT_INFORMATION
+        : state == ConnectionState.PLAY ? PacketKind.PLAY_CLIENT_INFORMATION : null;
+    if (kind == null || !protocol.defines(state, PacketDirection.CLIENT_TO_SERVER, kind)) return;
+    if (!protocol.is(state, PacketDirection.CLIENT_TO_SERVER, id, kind)) return;
+    clientInformation = PlayPackets.body(packet);
+    if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
+      System.out.println("TRACE cached client information from " + state + " (" + clientInformation.length + " body bytes)");
+    }
+  }
+  /** Replays the cached Client Information to a backend in the given state. */
+  private void replayClientInformation(BackendConnection target, ConnectionState state) {
+    byte[] body = clientInformation;
+    if (body == null || target == null) return;
+    PacketKind kind = state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_CLIENT_INFORMATION : PacketKind.PLAY_CLIENT_INFORMATION;
+    if (!protocol.defines(state, PacketDirection.CLIENT_TO_SERVER, kind)) return;
+    try {
+      target.writeUncompressed(PlayPackets.withId(protocol.id(state, PacketDirection.CLIENT_TO_SERVER, kind), body));
+      if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
+        System.out.println("TRACE replayed client information to " + target.server().name() + " in " + state);
+      }
+    } catch (IOException exception) {
+      System.err.println("Could not replay client information to " + target.server().name() + ": " + exception.getMessage());
+    }
   }
   private void readBackend() {
     while (!closed) {
@@ -226,7 +265,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       commandsDeclared = true;
       return merged;
     } catch (IOException exception) {
-      System.err.println("Command tree merge skipped: " + exception.getMessage());
+      System.err.println("Command tree merge skipped: " + exception);
+      gg.tame.conduit.protocol.ProfileTrace.dumpCommandTree(protocol, packet, exception);
       return packet;
     }
   }
@@ -319,6 +359,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       BackendConnection.handshake(socket, handshake, server, profile());
       next = new BackendConnection(server, socket, protocol, forwarder, profile(), address, configuration, true);
       completeBackendLogin(next, false);
+      // The client will not resend this; without it the new backend broadcasts default skin parts.
+      replayClientInformation(next, ConnectionState.CONFIGURATION);
+      gg.tame.conduit.protocol.ProfileTrace.beginSequence("switch to " + server.name(), 60);
       switchingTarget = next;
       if (protocol.hasConfiguration()) {
         configurationAck.clear();
@@ -377,6 +420,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
         next = null;
         lifecycle.set(SessionLifecycle.CONNECTED);
       }
+      replayClientInformation(backend, ConnectionState.PLAY);
       if (previous != null) previous.close();
     } catch (Exception exception) {
       switchingTarget = null;
@@ -437,10 +481,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
    *
    * <p>The new backend enters Play and starts sending Join Game, player-info updates and entity
    * data before {@code waitForClient} returns. Those Play packets used to fall off the end of this
-   * method and be discarded, which is where the TAB head, skin layer and cape went after a switch:
-   * reconfiguration clears the player list, and the backend's ADD_PLAYER that would refill it
-   * arrived inside this window. Only 776 reaches this path, because only 776 reads the backend
-   * while waiting on the client (known packs).
+   * method and be silently discarded. Tracing a real switch showed the window does not actually
+   * open in practice, so this was not the cause of the profile-rendering bug it was first written
+   * for; it is still a real hole, and dropping backend Play packets is never correct. The DROP case
+   * now logs rather than losing a packet in silence. Only 776 reaches this path, because only 776
+   * reads the backend while waiting on the client (known packs).
    */
   public static Handoff handoff(ConnectionState backendState, ConnectionState clientState) {
     if (backendState == ConnectionState.CONFIGURATION) return Handoff.FORWARD_CONFIGURATION;
@@ -466,12 +511,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       needSelfPlayerInfo = false;
       return;
     }
+    if (gg.tame.conduit.protocol.ProfileTrace.enabled()) System.out.println("TRACE conduit synthesizing self ADD_PLAYER");
     writeClient(gg.tame.conduit.protocol.PlayerInfoUpdate.selfAdd(protocol, profile()));
     needSelfPlayerInfo = false;
   }
   private void writeClient(byte[] packet) throws IOException {
     synchronized (lock) {
-      client.write(ProtocolProfileAdapter.backendToClient(protocol, clientState.state(), packet, profile()));
+      byte[] outbound = ProtocolProfileAdapter.backendToClient(protocol, clientState.state(), packet, profile());
+      if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
+        String where = lifecycle.get() == SessionLifecycle.SWITCHING ? "switch" : "steady";
+        gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());
+      }
+      client.write(outbound);
     }
   }
   @Override public String username() { return profile().username(); }

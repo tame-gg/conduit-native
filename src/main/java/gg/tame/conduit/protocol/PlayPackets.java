@@ -77,6 +77,22 @@ public final class PlayPackets {
   public static int packetId(byte[] packet) throws IOException {
     return MinecraftInput.varInt(new DataInputStream(new ByteArrayInputStream(packet)));
   }
+  /** The packet without its leading varint id. */
+  public static byte[] body(byte[] packet) throws IOException {
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      MinecraftInput.varInt(input);
+      return input.readAllBytes();
+    }
+  }
+  /** Re-frames a cached body under a different packet id, so it can be replayed into another state. */
+  public static byte[] withId(int id, byte[] body) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, id);
+      output.write(body);
+    }
+    return bytes.toByteArray();
+  }
   public static byte[] idOnly(int id) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) { MinecraftOutput.varInt(output, id); }
