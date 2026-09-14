@@ -41,7 +41,7 @@ public final class BackendConnection implements AutoCloseable {
   public static Socket open(BackendServer server) throws IOException {
     long start = System.nanoTime();
     Socket socket = new Socket();
-    socket.connect(server.address(), 5_000);
+    socket.connect(server.address(), 3_000);
     ConduitMetrics.current().backendConnect(System.nanoTime() - start);
     return socket;
   }

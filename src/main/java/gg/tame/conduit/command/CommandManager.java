@@ -43,7 +43,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     synchronized (this) { command = commands.get(parsed.name()); }
     if (command == null) return false;
     if (command.permission() != null && !command.permission().isBlank() && !source.hasPermission(command.permission())) {
-      source.sendMessage("You don't have permission to do that.");
+      source.sendMessage("You do not have permission to use this command.");
       return true;
     }
     command.executor().execute(source, parsed.arguments());

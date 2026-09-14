@@ -40,6 +40,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final ConduitConfiguration configuration;
   private final PacketTransport client;
   private final ProtocolDefinition protocol;
+  private final int clientProtocol;
+  private volatile int backendProtocol;
   private final ProtocolSession clientState;
   private final LoginPipeline loginPipeline;
   private final PlayerInfoForwarder forwarder;
@@ -80,6 +82,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, gg.tame.conduit.runtime.ConduitRuntime runtime,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
     this.configuration = configuration; this.client = client; this.protocol = protocol; this.clientState = clientState;
+    this.clientProtocol = protocol.version().number();
+    this.backendProtocol = this.clientProtocol;
     this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.runtime = runtime;
     this.commands = runtime.commandManager(); this.players = runtime.playerManager(); this.selector = runtime.selector();
     this.handshake = handshake; this.originalHandshake = originalHandshake; this.originalLoginStart = originalLoginStart; this.address = address;
@@ -396,16 +400,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     lost.close();
     Set<String> failed = new HashSet<>();
     failed.add(ServerRegistry.normalize(lost.server().name()));
-    sendMessage(gg.tame.conduit.api.text.Text.of("✕ ").color(gg.tame.conduit.api.text.TextColor.RED)
-        .append(gg.tame.conduit.api.text.Text.of(gg.tame.conduit.command.ConduitUi.titleCase(lost.server().name()) + " is unavailable.").color(gg.tame.conduit.api.text.TextColor.WHITE)));
+    sendMessage(gg.tame.conduit.api.text.Text.of(lost.server().name() + " is unavailable."));
     for (BackendServer server : selector.fallback(lost.server().name(), failed)) {
       try {
-        sendMessage(gg.tame.conduit.api.text.Text.of("Returning you to ")
-            .color(gg.tame.conduit.api.text.TextColor.GRAY)
-            .append(gg.tame.conduit.api.text.Text.of(gg.tame.conduit.command.ConduitUi.titleCase(server.name())).color(gg.tame.conduit.api.text.TextColor.AQUA).bold())
-            .append(gg.tame.conduit.api.text.Text.of("...").color(gg.tame.conduit.api.text.TextColor.GRAY)));
+        sendMessage("Connecting to " + server.name() + "...");
         switchTo(server, true);
-        gg.tame.conduit.command.ConduitUi.connected(this, gg.tame.conduit.command.ConduitUi.titleCase(server.name()));
+        sendMessage("Connected to " + server.name() + ".");
         return;
       }
       catch (Exception exception) { failed.add(ServerRegistry.normalize(server.name())); }
@@ -416,17 +416,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public boolean transferTo(String name) {
     BackendServer server = selector.registry().get(name).orElse(null);
     if (server == null) return false;
-    String display = gg.tame.conduit.command.ConduitUi.titleCase(server.name());
     if (Thread.currentThread() == clientReader) {
       Thread.startVirtualThread(() -> {
-        if (runSwitch(server)) gg.tame.conduit.command.ConduitUi.connected(this, display);
-        else gg.tame.conduit.command.ConduitUi.failure(this, "Unable to connect to " + display + ".", "The server is currently unavailable.");
+        if (runSwitch(server)) sendMessage("Connected to " + server.name() + ".");
+        else sendMessage(server.name() + " is unavailable. Please try again later.");
       });
       return true;
     }
     boolean ok = runSwitch(server);
-    if (ok) gg.tame.conduit.command.ConduitUi.connected(this, display);
-    else gg.tame.conduit.command.ConduitUi.failure(this, "Unable to connect to " + display + ".", "The server is currently unavailable.");
+    if (ok) sendMessage("Connected to " + server.name() + ".");
+    else sendMessage(server.name() + " is unavailable. Please try again later.");
     return ok;
   }
   private boolean runSwitch(BackendServer server) {
@@ -437,6 +436,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return false;
     }
   }
+  private static final int SWITCH_BUDGET_MS = 4_000;
   private void switchTo(BackendServer server, boolean fallback) throws Exception {
     var targetView = runtime.registered(server.name()).orElse(null);
     var sourceView = backend == null ? java.util.Optional.<gg.tame.conduit.api.server.RegisteredServer>empty() : runtime.registered(backend.server().name());
@@ -446,24 +446,35 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (connect.cancelled()) throw new IOException("connection cancelled");
     }
     long started = System.nanoTime();
+    long deadline = started + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SWITCH_BUDGET_MS);
     ensureCompatible(server);
     synchronized (lock) {
       if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
       if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
-      lifecycle.set(SessionLifecycle.SWITCHING);
-      lock.notifyAll();
+      // Stay CONNECTED during prepare so the current backend keeps flowing packets.
     }
     BackendConnection previous = backend;
     Socket socket = null;
     BackendConnection next = null;
     boolean clientEnteredConfiguration = false;
     try {
+      // PREPARE: open + login against the target while the current backend remains active.
       socket = BackendConnection.open(server);
+      enforceDeadline(deadline, "connect");
       BackendConnection.handshake(socket, handshake, server, profile());
       next = new BackendConnection(server, socket, protocol, forwarder, profile(), address, configuration, true);
+      next.setReadTimeoutMillis(remainingMillis(deadline));
       completeBackendLogin(next, false);
-      // The client will not resend this; without it the new backend broadcasts default skin parts.
+      enforceDeadline(deadline, "login");
       replayClientInformation(next, ConnectionState.CONFIGURATION);
+
+      // COMMIT: only now pause the old backend reader and involve the client.
+      synchronized (lock) {
+        if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
+        if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
+        lifecycle.set(SessionLifecycle.SWITCHING);
+        lock.notifyAll();
+      }
       gg.tame.conduit.protocol.ProfileTrace.beginSequence("switch to " + server.name(), 60);
       switchingTarget = next;
       if (protocol.hasConfiguration()) {
@@ -471,20 +482,23 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
         writeClient(PlayPackets.startConfiguration(protocol));
         clientEnteredConfiguration = true;
-        if (configurationAck.poll(10, TimeUnit.SECONDS) == null) throw new IOException("client did not acknowledge reconfiguration");
+        int waitSeconds = Math.max(1, remainingMillis(deadline) / 1000);
+        if (configurationAck.poll(waitSeconds, TimeUnit.SECONDS) == null) throw new IOException("client did not acknowledge reconfiguration");
         configurationAck.clear();
         knownPacksAck.clear();
         boolean registrySeen = !protocol.knownPacks();
         boolean knownPacksDone = !protocol.knownPacks();
         byte[] lastConfig = null;
         while (next.state() != ConnectionState.PLAY) {
+          enforceDeadline(deadline, "configuration");
+          next.setReadTimeoutMillis(remainingMillis(deadline));
           byte[] packet = next.readUncompressed();
           int id = PlayPackets.packetId(packet);
           next.login().onBackendPacket(packet, configuration.maxFrameBytes());
           byte[] outbound = next.rewriteBrand(ConnectionState.CONFIGURATION, packet);
           if (protocol.knownPacks() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_KNOWN_PACKS)) {
             writeClient(outbound);
-            if (knownPacksAck.poll(10, TimeUnit.SECONDS) == null) {
+            if (knownPacksAck.poll(Math.max(1, remainingMillis(deadline) / 1000), TimeUnit.SECONDS) == null) {
               throw new IOException("client did not reply to known packs");
             }
             knownPacksDone = true;
@@ -510,15 +524,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           lastConfig = outbound;
           writeClient(outbound);
         }
+        int finishWait = Math.max(1, remainingMillis(deadline) / 1000);
         if (protocol.knownPacks()) {
-          if (!waitForClient(configurationAck, next, 10)) throw new IOException("client did not finish configuration");
-        } else if (configurationAck.poll(10, TimeUnit.SECONDS) == null) {
+          if (!waitForClient(configurationAck, next, finishWait)) throw new IOException("client did not finish configuration");
+        } else if (configurationAck.poll(finishWait, TimeUnit.SECONDS) == null) {
           throw new IOException("client did not finish configuration");
         }
       }
       commandsDeclared = false;
       synchronized (lock) {
         backend = next;
+        backendProtocol = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(protocol.version().number());
         switchingTarget = null;
         next = null;
         lifecycle.set(SessionLifecycle.CONNECTED);
@@ -541,6 +557,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
             exception.getMessage() == null ? "switch failed" : exception.getMessage()));
       }
       if (clientEnteredConfiguration) {
+        // Client left PLAY; cannot safely restore the old Play session.
         try { writeClient(PlayPackets.configurationDisconnect(protocol, "Could not connect to " + server.name() + ".")); }
         catch (IOException ignored) { }
         close();
@@ -554,6 +571,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
       throw exception;
     }
+  }
+  private static void enforceDeadline(long deadlineNanos, String stage) throws IOException {
+    if (System.nanoTime() > deadlineNanos) throw new IOException("switch timed out during " + stage);
+  }
+  private static int remainingMillis(long deadlineNanos) {
+    long remaining = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime());
+    return (int) Math.max(1, Math.min(SWITCH_BUDGET_MS, remaining));
   }
   private boolean waitForClient(java.util.concurrent.BlockingQueue<Boolean> queue, BackendConnection backend, int seconds) throws IOException {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
@@ -608,17 +632,25 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (backendState == ConnectionState.PLAY && clientState == ConnectionState.PLAY) return Handoff.FORWARD_PLAY;
     return Handoff.DROP;
   }
+  public int clientProtocol() { return clientProtocol; }
+  public int backendProtocol() { return backendProtocol; }
   private void ensureCompatible(BackendServer server) throws IOException {
-    if (!ProtocolDefinition.hasCodec(protocol.version().number())) {
+    if (!ProtocolDefinition.hasCodec(clientProtocol)) {
       throw new IOException("Unsupported Minecraft version.");
     }
     var advertisement = selector.advertisement(server.name());
     if (advertisement.isEmpty()) return;
-    int backendProtocol = advertisement.get().protocol();
-    if (backendProtocol != protocol.version().number()) {
-      System.out.println("Client protocol " + protocol.version().number() + " connecting to " + server.name()
-          + " advertised as " + backendProtocol + " (backend must accept the client protocol, e.g. ViaVersion).");
+    int targetProtocol = advertisement.get().protocol();
+    var support = gg.tame.conduit.protocol.ProtocolCompatibility.between(clientProtocol, targetProtocol);
+    if (support == gg.tame.conduit.protocol.TranslationSupport.DIRECT) return;
+    if (support == gg.tame.conduit.protocol.TranslationSupport.TRANSLATED) {
+      System.out.println("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED)");
+      return;
     }
+    // Status ping may advertise a different native version while ViaVersion (or similar) still
+    // accepts the client protocol on the wire. Conduit keeps the client codec and warns.
+    System.out.println("Client protocol " + clientProtocol + " connecting to " + server.name()
+        + " advertised as " + targetProtocol + " (no Conduit translator; backend must accept the client protocol).");
   }
   private void emitSelfPlayerInfoIfNeeded() throws IOException {
     if (!needSelfPlayerInfo) return;
