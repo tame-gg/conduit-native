@@ -53,6 +53,7 @@ public final class BackendConnection implements AutoCloseable {
     if (rewritten.isPresent()) { brandSeen = true; return rewritten.get(); }
     return packet;
   }
+  public void setReadTimeoutMillis(int millis) throws IOException { socket.setSoTimeout(millis); }
   public boolean brandSeen() { return brandSeen; }
   public void markBrandSeen() { brandSeen = true; }
   @Override public void close() {

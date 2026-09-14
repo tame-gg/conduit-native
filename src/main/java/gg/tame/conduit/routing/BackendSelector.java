@@ -47,27 +47,21 @@ public final class BackendSelector {
         .orElse(ProtocolCompatibility.between(clientProtocol, clientProtocol));
   }
   public List<BackendServer> candidates() { return named(configuration.initialBackends(), configuration.fallbackBackends()); }
+  /** First hop follows routing.initial, then fallback, then any other configured servers. Protocol advertisements never reorder that list. */
   public List<BackendServer> candidatesFor(int clientProtocol) {
-    List<BackendServer> preferred = new ArrayList<>();
-    List<BackendServer> unknown = new ArrayList<>();
-    for (BackendServer server : candidates()) {
-      var advertisement = advertisement(server.name());
-      if (advertisement.isEmpty()) unknown.add(server);
-      else if (ProtocolCompatibility.between(clientProtocol, advertisement.get().protocol()) == TranslationSupport.DIRECT) preferred.add(server);
-    }
+    List<BackendServer> ordered = new ArrayList<>(candidates());
     for (BackendServer server : registry.all()) {
-      if (preferred.contains(server) || unknown.contains(server)) continue;
+      if (ordered.contains(server)) continue;
       var advertisement = advertisement(server.name());
-      if (advertisement.isEmpty()) continue;
-      if (ProtocolCompatibility.between(clientProtocol, advertisement.get().protocol()) == TranslationSupport.DIRECT) {
-        preferred.add(server);
-      } else if (ProtocolDefinition.hasCodec(clientProtocol)) {
-        unknown.add(server);
+      if (advertisement.isEmpty()) {
+        ordered.add(server);
+        continue;
+      }
+      if (ProtocolCompatibility.between(clientProtocol, advertisement.get().protocol()) == TranslationSupport.DIRECT
+          || ProtocolDefinition.hasCodec(clientProtocol)) {
+        ordered.add(server);
       }
     }
-    List<BackendServer> ordered = new ArrayList<>(preferred);
-    for (BackendServer server : candidates()) if (!ordered.contains(server)) ordered.add(server);
-    for (BackendServer server : unknown) if (!ordered.contains(server)) ordered.add(server);
     return ordered.isEmpty() ? candidates() : ordered;
   }
   public List<BackendServer> fallback(String current, Set<String> failed) {

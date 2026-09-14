@@ -41,7 +41,7 @@ public final class BackendLoginPipeline {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       int id = MinecraftInput.varInt(input); byte[] body = input.readAllBytes();
       if (state == ConnectionState.LOGIN) return handleLogin(id, body, maximumPacketBytes);
-      if (state == ConnectionState.CONFIGURATION) return handleConfiguration(id);
+      if (state == ConnectionState.CONFIGURATION) return handleConfiguration(id, body);
       return null;
     }
   }
@@ -77,8 +77,10 @@ public final class BackendLoginPipeline {
     if (data.length < 32) throw new IOException("invalid authentication material");
     return new LoginPluginResponse(request.messageId(), true, data).encode(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE));
   }
-  private byte[] handleConfiguration(int id) {
-    if (protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_FINISH)) state = ConnectionState.PLAY;
+  private byte[] handleConfiguration(int id, byte[] body) {
+    if (protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_FINISH) && body.length == 0) {
+      state = ConnectionState.PLAY;
+    }
     return null;
   }
 }

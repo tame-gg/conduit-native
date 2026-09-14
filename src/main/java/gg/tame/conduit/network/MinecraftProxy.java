@@ -85,7 +85,7 @@ public final class MinecraftProxy implements AutoCloseable {
         }
       }
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, commands, players, selector,
-          handshake, firstPacket, loginStart, client.getInetAddress())) {
+          handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(client.getInetAddress()))) {
         player.play();
       }
     } catch (IOException exception) { System.err.println("Connection closed: " + exception.getMessage()); }
@@ -108,6 +108,7 @@ public final class MinecraftProxy implements AutoCloseable {
     var authenticated = authenticator.verify(new SessionQuery(pipeline.player().username(), hash, Optional.of(address)));
     pipeline.adopt(authenticated);
     System.out.println("Session verified for " + authenticated.username() + " (" + authenticated.uniqueId() + ").");
+    System.out.println(authenticated.summary());
   }
   private void serveStatus(PacketTransport client, ProtocolDefinition protocol) throws IOException {
     client.write(StatusResponder.response(protocol, client.read(configuration.maxFrameBytes()), "Conduit"));

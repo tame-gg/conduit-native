@@ -15,6 +15,26 @@ public final class PlayPackets {
   public static byte[] startConfiguration(ProtocolDefinition protocol) throws IOException {
     return idOnly(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION));
   }
+  public static byte[] knownPacks(ProtocolDefinition protocol) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KNOWN_PACKS));
+      MinecraftOutput.varInt(output, 0);
+    }
+    return bytes.toByteArray();
+  }
+  public static byte[] resetChat(ProtocolDefinition protocol) throws IOException {
+    return idOnly(protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_RESET_CHAT));
+  }
+  public static byte[] configurationDisconnect(ProtocolDefinition protocol, String message) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT));
+      if (protocol.hasConfiguration()) NetworkNbt.stringComponent(output, message);
+      else MinecraftOutput.string(output, "{\"text\":\"" + message.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
+    }
+    return bytes.toByteArray();
+  }
   public static byte[] systemChat(ProtocolDefinition protocol, String message) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {

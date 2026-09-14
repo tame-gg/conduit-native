@@ -71,14 +71,22 @@ Login Start
   → AES/CFB8/NoPadding on the entire client byte stream
   → Minecraft signed SHA-1 server hash
   → HTTPS hasJoined
-  → authenticated UUID / username / properties
-  → modern forwarding
+  → authenticated UUID / username / properties (`textures` including cape JSON when Mojang sent it)
+  → Login Start to each backend uses that UUID/name (never the raw client Login Start after auth)
+  → modern forwarding includes the same property list
+  → Login Success and player-info ADD_PLAYER for this UUID are filled if the backend omitted textures
 ```
 
 Login Start UUID is **not** authoritative in online mode. Failures disconnect the client;
 there is no silent fallback to offline identity. Mojang authentication is not repeated when
-switching backends; the authenticated profile is reused. Each backend connection gets a fresh
-modern forwarding HMAC payload.
+switching backends; the authenticated `PlayerProfile` on the TCP session is reused. Each backend
+connection gets a fresh modern forwarding HMAC payload with those properties.
+
+Cape data lives inside the signed `textures` property (Base64 JSON with optional `CAPE.url`).
+Conduit preserves that blob; it does not download capes or invent URLs. A client without a cape
+in `textures` stays cape-less.
+
+Logs print `PlayerProfile.summary()` (property presence only, never values or signatures).
 
 ### Offline
 
@@ -109,18 +117,27 @@ initial = ["lobby"]
 fallback = ["lobby", "survival"]
 ```
 
-`routing.initial` is tried in order after authentication. If the current backend socket dies,
+`routing.initial` is tried in order after authentication. Matching native protocol on a later server
+does not jump the queue (a 26.2 client still starts on lobby when lobby is first). If the current backend socket dies,
 `routing.fallback` is tried next, skipping the dead server and any server that already failed
 in that incident (no reconnect loop). If none accept, the client is disconnected.
 
 `/server` only lists configured names. Addresses, ports, and secrets are never shown.
+
+Modern forwarding sends the TCP address Conduit accepted. Connecting to `127.0.0.1` therefore
+forwards `127.0.0.1`. Optional `forwarding.player-address` overrides that for remote backends.
+Local Paper does not care. Lobby → survival on a 26.2 client failed because Play packet id 16
+(`configuration_acknowledged`) was forwarded onto 1.20.4 login, not because of the IP.
 
 ## Commands
 
 Native command framework (not Velocity's):
 
 * `/server` — `Current server: <name>` then available names
-* `/server <name>` — switch; exact match wins over prefix; ambiguous prefixes are rejected
+* `/server <name>` — switch; exact match wins over prefix; ambiguous prefixes are rejected.
+  26.2 reconfiguration waits for Known Packs (same as Velocity #1302) before applying the new
+  backend's registry. ViaVersion on a 1.20.4 Paper box is a new handshake from Conduit; it can
+  work if that plugin translates configuration.
 * `/conduit` — version and `Current server: <name>`
 * `/send current <server>` — same as `/server <server>` (player only)
 * `/send <player> <server>` — move that online player (`server.send.others`)
@@ -196,7 +213,8 @@ claimed until that pass is repeated.
 
 `./scripts/test.ps1` covers encryption, mocked hasJoined, online-mode identity substitution,
 command dispatch, command-graph index validation, brand rewriting, routing matches,
-protocol 763 vs 765 lookup, and two-backend switch/fallback mocks.
+protocol 763 vs 765 lookup, two-backend switch/fallback mocks, and authenticated profile
+property round-trips (hasJoined, forwarding, Login Success, 26.2 player-info).
 
 ## Out of scope here
 

@@ -8,11 +8,17 @@ import java.util.List;
 public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes,
                                   ForwardingMode forwardingMode, Optional<Path> forwardingSecretFile,
                                   List<BackendServer> backends, List<String> initialBackends,
-                                  List<String> fallbackBackends, AuthenticationSettings authentication) {
+                                  List<String> fallbackBackends, AuthenticationSettings authentication,
+                                  Optional<java.net.InetAddress> forwardedPlayerAddress) {
   public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
                              Optional<Path> forwardingSecretFile, List<BackendServer> backends,
                              List<String> initialBackends, List<String> fallbackBackends) {
-    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends, AuthenticationSettings.offline());
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends, AuthenticationSettings.offline(), Optional.empty());
+  }
+  public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
+                             Optional<Path> forwardingSecretFile, List<BackendServer> backends,
+                             List<String> initialBackends, List<String> fallbackBackends, AuthenticationSettings authentication) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends, authentication, Optional.empty());
   }
   public ConduitConfiguration {
     if (listener.getPort() < 1 || listener.getPort() > 65535) throw new IllegalArgumentException("listener.port must be 1..65535");
@@ -20,6 +26,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     if (forwardingMode == ForwardingMode.MODERN && forwardingSecretFile.isEmpty()) throw new IllegalArgumentException("forwarding.secret-file is required for modern forwarding");
     if (forwardingMode != ForwardingMode.MODERN && forwardingSecretFile.isPresent()) throw new IllegalArgumentException("forwarding.secret-file is only valid for modern forwarding");
     if (authentication == null) authentication = AuthenticationSettings.offline();
+    if (forwardedPlayerAddress == null) forwardedPlayerAddress = Optional.empty();
     backends = List.copyOf(backends);
     initialBackends = List.copyOf(initialBackends);
     fallbackBackends = List.copyOf(fallbackBackends);

@@ -64,6 +64,7 @@ public final class AllTests {
     encryptionHelloLayout();
     sessionAuthentication();
     onlineModeFeedsAuthenticatedIdentityToForwarding();
+    ProfileTests.run();
     Phase6Tests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
@@ -102,7 +103,9 @@ public final class AllTests {
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE) == 2, "1.20.4 login plugin response id");
     require(protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH) == 2, "1.20.4 finish configuration id");
     ProtocolDefinition current = ProtocolDefinition.forVersion(776);
-    require(current.hasConfiguration() && current.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH) == 3, "26.2 finish configuration is not id 2");
+    require(current.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED) == 3, "26.2 login ack");
+    require(current.id(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_FINISH) == 3, "26.2 config finish shares login-ack id");
+    require(current.knownPacks() && current.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KNOWN_PACKS) == 0x0E, "26.2 known packs");
     require(current.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x76, "26.2 start configuration");
     require(gg.tame.conduit.protocol.ProtocolCompatibility.between(776, 776) == gg.tame.conduit.protocol.TranslationSupport.DIRECT, "26.2 direct");
     require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 776) == gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED, "no fake 1.20.4 to 26.2 translation");
@@ -130,6 +133,10 @@ public final class AllTests {
     require(handshake.protocolVersion() == 765 && handshake.requestedHost().equals("local") && handshake.requestedPort() == 25565 && handshake.nextState() == 2, "handshake failed");
     Path config = Files.createTempFile("conduit", ".toml"); Files.writeString(config, configuration("none"));
     require(new BackendSelector(ConfigurationLoader.load(config)).candidates().getFirst().name().equals("lobby"), "backend selection failed");
+    Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.smp]\nhost=\"127.0.0.1\"\nport=2\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
+    require(new BackendSelector(ConfigurationLoader.load(config)).candidatesFor(776).getFirst().name().equals("lobby"), "26.2 must not skip routing.initial");
+    Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\nplayer-address=\"203.0.113.9\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
+    require(ConfigurationLoader.load(config).forwardedPlayerAddress().orElseThrow().getHostAddress().equals("203.0.113.9"), "forwarding player-address");
   }
   private static void proxyRelaysHandshakeAndBackendData() throws Exception {
     try (ServerSocket backendListener = new ServerSocket(0)) {
@@ -137,6 +144,7 @@ public final class AllTests {
         try (Socket socket = backendListener.accept()) {
           byte[] handshake = MinecraftFrames.read(socket.getInputStream(), 128);
           require(Handshake.decode(handshake).nextState() == 2, "proxy did not forward handshake");
+          MinecraftFrames.read(socket.getInputStream(), 128);
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {1, 42});
         } catch (Exception exception) { throw new RuntimeException(exception); }
       });
@@ -401,6 +409,10 @@ public final class AllTests {
               UUID uuid = new UUID(payload.readLong(), payload.readLong());
               require(uuid.equals(new UUID(0, 0xaa)), "forwarding used Login Start UUID instead of authenticated UUID");
               require(MinecraftInput.string(payload, 16).equals("playr"), "authenticated username");
+              require(MinecraftInput.varInt(payload) == 1, "forwarded property count");
+              require(MinecraftInput.string(payload, 64).equals("textures"), "forwarded textures name");
+              require(MinecraftInput.string(payload, 32767).equals("skin"), "forwarded textures value");
+              require(!payload.readBoolean(), "unsigned mock textures");
             }
           }
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {2});

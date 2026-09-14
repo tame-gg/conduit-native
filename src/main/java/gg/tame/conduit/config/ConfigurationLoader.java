@@ -52,7 +52,7 @@ public final class ConfigurationLoader {
       else servers.add(new BackendServer(name, new InetSocketAddress(values.get(hostKey), integer(values, "servers." + name + ".port"))));
     }
     return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
-        list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values));
+        list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values), forwardedAddress(values));
   }
 
   private static AuthenticationSettings authentication(Map<String, String> values) {
@@ -60,8 +60,14 @@ public final class ConfigurationLoader {
         ? AuthenticationMode.parse(required(values, "authentication.mode"))
         : AuthenticationMode.OFFLINE;
     String url = values.getOrDefault("authentication.session-url", AuthenticationSettings.DEFAULT_SESSION_URL);
-    int timeout = values.containsKey("authentication.timeout-millis") ? integer(values, "authentication.timeout-millis") : 5_000;
+    int timeout = values.containsKey("authentication.timeout-millis") ? integer(values, "authentication.timeout-millis") : 15_000;
     return new AuthenticationSettings(authMode, url, timeout);
+  }
+  private static Optional<java.net.InetAddress> forwardedAddress(Map<String, String> values) {
+    String raw = values.get("forwarding.player-address");
+    if (raw == null || raw.isBlank()) return Optional.empty();
+    try { return Optional.of(java.net.InetAddress.getByName(raw)); }
+    catch (java.net.UnknownHostException exception) { throw new IllegalArgumentException("forwarding.player-address is not a valid IP"); }
   }
 
   private static InetSocketAddress parseAddress(String raw) {
