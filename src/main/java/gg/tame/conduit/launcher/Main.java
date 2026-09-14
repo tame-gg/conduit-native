@@ -17,7 +17,8 @@ public final class Main {
     System.out.println("Authentication mode: " + config.authentication().mode().name().toLowerCase());
     Forwarders.create(config);
     if (checkOnly) { System.out.println("Configuration valid."); return; }
-    try (MinecraftProxy listener = new MinecraftProxy(config)) {
+    Path plugins = configPath.toAbsolutePath().getParent() == null ? Path.of("plugins") : configPath.toAbsolutePath().getParent().resolve("plugins");
+    try (MinecraftProxy listener = new MinecraftProxy(config, gg.tame.conduit.auth.Authenticators.create(config.authentication()), gg.tame.conduit.crypto.RsaKeys.generate(), plugins)) {
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
       listener.probeBackends();
       listener.serve();

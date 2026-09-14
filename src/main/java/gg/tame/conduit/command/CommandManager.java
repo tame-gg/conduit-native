@@ -1,23 +1,40 @@
 package gg.tame.conduit.command;
 
+import gg.tame.conduit.api.plugin.Plugin;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Small native command dispatcher. Not a Velocity clone. */
-public final class CommandManager {
+public final class CommandManager implements gg.tame.conduit.api.command.CommandManager {
   private final Map<String, RegisteredCommand> commands = new LinkedHashMap<>();
+  private final Map<Plugin, List<RegisteredCommand>> owned = new ConcurrentHashMap<>();
   public synchronized void register(RegisteredCommand command) {
     put(command.name(), command);
     for (String alias : command.aliases()) put(alias, command);
+  }
+  @Override public synchronized void register(Plugin plugin, RegisteredCommand command) {
+    register(command);
+    owned.computeIfAbsent(plugin, ignored -> new ArrayList<>()).add(command);
   }
   public synchronized void unregister(String name) {
     RegisteredCommand command = commands.get(normalize(name));
     if (command == null) return;
     commands.entrySet().removeIf(entry -> entry.getValue() == command);
+  }
+  @Override public synchronized void unregister(Plugin plugin, String name) {
+    unregister(name);
+    List<RegisteredCommand> list = owned.get(plugin);
+    if (list != null) list.removeIf(command -> command.name().equals(normalize(name)));
+  }
+  @Override public synchronized void unregisterAll(Plugin plugin) {
+    List<RegisteredCommand> list = owned.remove(plugin);
+    if (list == null) return;
+    for (RegisteredCommand command : new ArrayList<>(list)) unregister(command.name());
   }
   public boolean dispatch(CommandSource source, String line) {
     ParsedCommand parsed = ParsedCommand.parse(line);

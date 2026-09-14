@@ -36,13 +36,14 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCloseable {
+public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tame.conduit.api.player.Player, AutoCloseable {
   private final ConduitConfiguration configuration;
   private final PacketTransport client;
   private final ProtocolDefinition protocol;
   private final ProtocolSession clientState;
   private final LoginPipeline loginPipeline;
   private final PlayerInfoForwarder forwarder;
+  private final gg.tame.conduit.runtime.ConduitRuntime runtime;
   private final CommandManager commands;
   private final PlayerManager players;
   private final BackendSelector selector;
@@ -59,6 +60,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   private volatile boolean closed;
   private volatile boolean expectClientLoginAck;
   private volatile boolean commandsDeclared;
+  private static final int MAX_DEFERRED_PLAY = 512;
   private final List<byte[]> deferredPlay = new java.util.ArrayList<>();
   private boolean playLoginSent;
   private boolean needSelfPlayerInfo = true;
@@ -75,25 +77,82 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
    */
   private volatile byte[] clientInformation;
   public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
-      LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, CommandManager commands, PlayerManager players, BackendSelector selector,
+      LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, gg.tame.conduit.runtime.ConduitRuntime runtime,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
     this.configuration = configuration; this.client = client; this.protocol = protocol; this.clientState = clientState;
-    this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.commands = commands; this.players = players; this.selector = selector;
+    this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.runtime = runtime;
+    this.commands = runtime.commandManager(); this.players = runtime.playerManager(); this.selector = runtime.selector();
     this.handshake = handshake; this.originalHandshake = originalHandshake; this.originalLoginStart = originalLoginStart; this.address = address;
   }
   public PlayerProfile profile() { return AuthenticatedPlayerProfile.require(loginPipeline.player()); }
   /** Same object as {@link #profile()}; the session never recreates identity on {@code /server}. */
   public PlayerProfile authenticatedProfile() { return profile(); }
   @Override public java.util.UUID uniqueId() { return profile().uniqueId(); }
+  @Override public boolean authenticated() { return profile().authenticated(); }
+  @Override public String connectionState() { return clientState.state().name(); }
+  @Override public OptionalServer currentServer() {
+    BackendConnection current = backend;
+    if (current == null) return new OptionalServerView(null);
+    return new OptionalServerView(runtime.registered(current.server().name()).orElse(null));
+  }
+  @Override public java.util.concurrent.CompletableFuture<Boolean> connect(gg.tame.conduit.api.server.RegisteredServer server) {
+    return java.util.concurrent.CompletableFuture.supplyAsync(() -> transferTo(server.getName()));
+  }
+  @Override public void disconnect(String reason) {
+    try { writeClient(PlayPackets.systemChat(protocol, reason)); } catch (IOException ignored) { }
+    close();
+  }
+  @Override public void sendPluginMessage(String channel, byte[] data) {
+    try {
+      ConnectionState state = clientState.state();
+      PacketKind kind = state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_PLUGIN_MESSAGE : PacketKind.PLAY_PLUGIN_MESSAGE;
+      if (!protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, kind)) return;
+      writeClient(new gg.tame.conduit.protocol.PluginMessage(channel, data).encode(protocol.id(state, PacketDirection.SERVER_TO_CLIENT, kind)));
+    } catch (IOException ignored) { }
+  }
+  private boolean forwardPluginMessage(byte[] packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction direction, BackendConnection target) {
+    try {
+      ConnectionState state = clientState.state();
+      PacketKind kind = direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY
+          ? (state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_PLUGIN_MESSAGE : PacketKind.PLAY_PLUGIN_MESSAGE)
+          : (state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_PLUGIN_MESSAGE : PacketKind.PLAY_PLUGIN_MESSAGE);
+      PacketDirection dir = direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY
+          ? PacketDirection.CLIENT_TO_SERVER : PacketDirection.SERVER_TO_CLIENT;
+      if (!protocol.defines(state, dir, kind)) return true;
+      if (!protocol.is(state, dir, PlayPackets.peekId(packet), kind)) return true;
+      var decoded = gg.tame.conduit.protocol.PluginMessage.decodeBody(PlayPackets.body(packet), configuration.maxFrameBytes());
+      var event = new gg.tame.conduit.api.event.messaging.PluginMessageEvent(this, decoded.channel(), decoded.data(), direction);
+      runtime.events().fire(event);
+      return !event.cancelled();
+    } catch (IOException ignored) {
+      return true;
+    }
+  }
+  private record OptionalServerView(gg.tame.conduit.api.server.RegisteredServer server) implements OptionalServer {
+    @Override public boolean isPresent() { return server != null; }
+    @Override public gg.tame.conduit.api.server.RegisteredServer orElse(gg.tame.conduit.api.server.RegisteredServer fallback) {
+      return server == null ? fallback : server;
+    }
+    @Override public String name() { return server == null ? "" : server.getName(); }
+  }
   public SessionLifecycle lifecycle() { return lifecycle.get(); }
   public BackendConnection backend() { return backend; }
   public void play() throws IOException {
     BackendConnection initial = connectInitial();
-    synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); }
+    synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); lock.notifyAll(); }
     players.add(this);
+    gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
+    runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
     Thread backendReader = Thread.startVirtualThread(this::readBackend);
     try { readClient(); }
-    finally { closed = true; players.remove(this); backendReader.interrupt(); close(); }
+    finally {
+      closed = true;
+      players.remove(this);
+      gg.tame.conduit.metrics.ConduitMetrics.current().playerLeft();
+      runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerDisconnectEvent(this));
+      backendReader.interrupt();
+      close();
+    }
   }
   private BackendConnection connectInitial() throws IOException {
     IOException last = null;
@@ -140,7 +199,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
           continue;
         }
         BackendConnection target = switchingTarget != null ? switchingTarget : backend;
-        if (target != null) target.writeUncompressed(packet);
+        if (target != null) {
+          if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY, target)) {
+            continue;
+          }
+          target.writeUncompressed(packet);
+        }
       }
     } catch (IOException ignored) { }
   }
@@ -154,7 +218,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       return true;
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
-      return commands.dispatch(this, PlayPackets.chatCommand(packet));
+      String command = PlayPackets.chatCommand(packet);
+      var chat = new gg.tame.conduit.api.event.player.PlayerChatEvent(this, "/" + command);
+      runtime.events().fire(chat);
+      if (chat.cancelled()) return true;
+      var execute = new gg.tame.conduit.api.event.command.CommandExecuteEvent(this, command);
+      runtime.events().fire(execute);
+      if (execute.cancelled()) return true;
+      try { return commands.dispatch(this, command); }
+      catch (RuntimeException exception) {
+        gg.tame.conduit.log.ConduitLog.error("command failed", exception);
+        return true;
+      }
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
       PlayPackets.TabRequest request = PlayPackets.tabRequest(packet);
@@ -218,10 +293,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   }
   private void readBackend() {
     while (!closed) {
-      BackendConnection current = backend;
-      if (current == null || lifecycle.get() == SessionLifecycle.SWITCHING) {
-        try { Thread.sleep(15); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
-        continue;
+      BackendConnection current;
+      synchronized (lock) {
+        while (!closed && (backend == null || lifecycle.get() == SessionLifecycle.SWITCHING)) {
+          try { lock.wait(1000); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
+        }
+        current = backend;
+        if (closed || current == null) continue;
       }
       try {
         byte[] packet = current.readUncompressed();
@@ -230,9 +308,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
         }
         ConnectionState backendState = current.state();
         if (backendState == ConnectionState.CONFIGURATION) current.login().onBackendPacket(packet, configuration.maxFrameBytes());
+        if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
         byte[] outbound = current.rewriteBrand(brandState(backendState), packet);
         if (clientState.state() == ConnectionState.CONFIGURATION && isFinishConfiguration(packet) && !current.brandSeen()) {
-          writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""));
+          writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""), true);
           current.markBrandSeen();
         }
         outbound = maybeMergeCommands(outbound);
@@ -240,7 +319,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
           flushDeferredPlay();
           continue;
         }
-        writeClient(outbound);
+        writeClient(outbound, true);
         if (clientState.state() == ConnectionState.PLAY && isPlayLogin(packet)) {
           emitSelfPlayerInfoIfNeeded();
         }
@@ -286,6 +365,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
     synchronized (lock) {
       if (backendState != ConnectionState.PLAY) return false;
       if (playLoginSent && clientState.state() == ConnectionState.PLAY) return false;
+      if (deferredPlay.size() >= MAX_DEFERRED_PLAY) throw new IOException("deferred play queue exceeded");
       deferredPlay.add(outbound);
       return true;
     }
@@ -311,6 +391,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
     synchronized (lock) {
       if (backend != lost || lifecycle.get() != SessionLifecycle.CONNECTED) return;
       lifecycle.set(SessionLifecycle.SWITCHING);
+      lock.notifyAll();
     }
     lost.close();
     Set<String> failed = new HashSet<>();
@@ -344,11 +425,20 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
     }
   }
   private void switchTo(BackendServer server, boolean fallback) throws Exception {
+    var targetView = runtime.registered(server.name()).orElse(null);
+    var sourceView = backend == null ? java.util.Optional.<gg.tame.conduit.api.server.RegisteredServer>empty() : runtime.registered(backend.server().name());
+    if (targetView != null) {
+      var connect = new gg.tame.conduit.api.event.player.PlayerServerConnectEvent(this, sourceView, targetView);
+      runtime.events().fire(connect);
+      if (connect.cancelled()) throw new IOException("connection cancelled");
+    }
+    long started = System.nanoTime();
     ensureCompatible(server);
     synchronized (lock) {
       if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
       if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
       lifecycle.set(SessionLifecycle.SWITCHING);
+      lock.notifyAll();
     }
     BackendConnection previous = backend;
     Socket socket = null;
@@ -419,14 +509,24 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
         switchingTarget = null;
         next = null;
         lifecycle.set(SessionLifecycle.CONNECTED);
+        lock.notifyAll();
       }
       replayClientInformation(backend, ConnectionState.PLAY);
       if (previous != null) previous.close();
+      gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
+      if (targetView != null) {
+        runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, sourceView, targetView));
+        runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchEvent(this, sourceView, targetView));
+      }
     } catch (Exception exception) {
       switchingTarget = null;
       if (next != null) next.close();
       else if (socket != null) try { socket.close(); } catch (IOException ignored) { }
-      System.err.println("Switch to " + server.name() + " failed: " + exception.getMessage());
+      gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception.getMessage());
+      if (targetView != null) {
+        runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent(this, sourceView, targetView,
+            exception.getMessage() == null ? "switch failed" : exception.getMessage()));
+      }
       if (clientEnteredConfiguration) {
         try { writeClient(PlayPackets.configurationDisconnect(protocol, "Could not connect to " + server.name() + ".")); }
         catch (IOException ignored) { }
@@ -434,7 +534,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
         throw exception;
       }
       synchronized (lock) {
-        if (lifecycle.get() == SessionLifecycle.SWITCHING) lifecycle.set(previous != null ? SessionLifecycle.CONNECTED : SessionLifecycle.CLOSED);
+        if (lifecycle.get() == SessionLifecycle.SWITCHING) {
+          lifecycle.set(previous != null ? SessionLifecycle.CONNECTED : SessionLifecycle.CLOSED);
+          lock.notifyAll();
+        }
       }
       throw exception;
     }
@@ -515,18 +618,22 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
     writeClient(gg.tame.conduit.protocol.PlayerInfoUpdate.selfAdd(protocol, profile()));
     needSelfPlayerInfo = false;
   }
-  private void writeClient(byte[] packet) throws IOException {
-    synchronized (lock) {
-      byte[] outbound = ProtocolProfileAdapter.backendToClient(protocol, clientState.state(), packet, profile());
-      if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
-        String where = lifecycle.get() == SessionLifecycle.SWITCHING ? "switch" : "steady";
-        gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());
-      }
-      client.write(outbound);
+  private void writeClient(byte[] packet) throws IOException { writeClient(packet, true); }
+  private void writeClient(byte[] packet, boolean flush) throws IOException {
+    byte[] outbound = ProtocolProfileAdapter.backendToClient(protocol, clientState.state(), packet, profile());
+    if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
+      String where = lifecycle.get() == SessionLifecycle.SWITCHING ? "switch" : "steady";
+      gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());
+    }
+    if (flush) client.write(outbound);
+    else {
+      client.writeUnflushed(outbound);
     }
   }
   @Override public String username() { return profile().username(); }
-  @Override public boolean hasPermission(String permission) { return true; }
+  @Override public boolean hasPermission(String permission) {
+    return runtime.permissions().hasPermission(this, permission);
+  }
   @Override public void sendMessage(String message) {
     try { if (clientState.state() == ConnectionState.PLAY) writeClient(PlayPackets.systemChat(protocol, message)); }
     catch (IOException ignored) { }
@@ -538,6 +645,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   @Override public void close() {
     closed = true;
     lifecycle.set(SessionLifecycle.CLOSED);
+    synchronized (lock) { lock.notifyAll(); }
     if (players != null) players.remove(this);
     BackendConnection current = backend;
     if (current != null) current.close();

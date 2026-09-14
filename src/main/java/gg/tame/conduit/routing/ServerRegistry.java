@@ -3,28 +3,36 @@ package gg.tame.conduit.routing;
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 
-/** Configured backend names only. Addresses stay private. */
+/** Configured backend names. Addresses stay out of command output. */
 public final class ServerRegistry {
-  private final Map<String, BackendServer> byNormalized = new LinkedHashMap<>();
+  private final Map<String, BackendServer> byNormalized = new ConcurrentHashMap<>();
   private final List<String> names = new ArrayList<>();
   public ServerRegistry(ConduitConfiguration configuration) {
-    for (BackendServer server : configuration.backends()) {
-      String key = normalize(server.name());
-      if (byNormalized.putIfAbsent(key, server) != null) throw new IllegalArgumentException("duplicate backend name: " + server.name());
-      names.add(server.name());
-    }
+    for (BackendServer server : configuration.backends()) register(server);
   }
   public static String normalize(String name) { return name.trim().toLowerCase(Locale.ROOT); }
+  public synchronized BackendServer register(BackendServer server) {
+    String key = normalize(server.name());
+    if (byNormalized.putIfAbsent(key, server) != null) throw new IllegalArgumentException("duplicate backend name: " + server.name());
+    names.add(server.name());
+    return server;
+  }
+  public synchronized boolean unregister(String name) {
+    BackendServer removed = byNormalized.remove(normalize(name));
+    if (removed == null) return false;
+    names.removeIf(existing -> normalize(existing).equals(normalize(name)));
+    return true;
+  }
   public Optional<BackendServer> get(String name) { return Optional.ofNullable(byNormalized.get(normalize(name))); }
   public boolean contains(String name) { return get(name).isPresent(); }
   public List<BackendServer> all() { return List.copyOf(byNormalized.values()); }
-  public List<String> names() { return List.copyOf(names); }
+  public synchronized List<String> names() { return List.copyOf(names); }
   public ServerMatch resolve(String query) {
     if (query == null || query.isBlank()) return ServerMatch.none();
     String needle = normalize(query);

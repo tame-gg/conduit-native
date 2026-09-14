@@ -1,0 +1,9 @@
+package gg.tame.conduit.permission;
+
+import gg.tame.conduit.api.permission.PermissionProvider;
+import gg.tame.conduit.api.permission.PermissionSubject;
+
+/** Default provider: allow every node. Replace to add a real permissions plugin. */
+public final class PermissivePermissionProvider implements PermissionProvider {
+  @Override public boolean hasPermission(PermissionSubject subject, String permission) { return true; }
+}

@@ -51,7 +51,10 @@ public final class CoreCommands {
   private static void conduit(CommandSource source) {
     source.sendMessage("Conduit");
     source.sendMessage("Version: " + Conduit.VERSION);
+    source.sendMessage("API: " + Conduit.API_VERSION);
     source.sendMessage("Current server: " + (source.currentBackend().isBlank() ? "none" : source.currentBackend()));
+    source.sendMessage("Players: " + gg.tame.conduit.metrics.ConduitMetrics.current().activePlayers());
+    source.sendMessage(gg.tame.conduit.metrics.ConduitMetrics.current().snapshot().toString());
   }
   private static void send(CommandSource source, ServerRegistry registry, PlayerManager players, List<String> arguments) {
     if (arguments.size() != 2) {
