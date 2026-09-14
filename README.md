@@ -49,6 +49,8 @@ address = "203.0.113.10:25921"
 
 or `host` + `port`. Commands never print those addresses. At startup Conduit status-pings each backend and logs its advertised protocol.
 
+Lobby and survival are Paper 1.20.4 with **ViaVersion 5.11.0**, so a 26.2 client can join them on the **client's** protocol (776). Status ping still reports 765; that is the native server version, not a Conduit translator.
+
 ## Authentication
 
 ```toml

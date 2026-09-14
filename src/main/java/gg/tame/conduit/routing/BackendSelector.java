@@ -58,13 +58,17 @@ public final class BackendSelector {
     for (BackendServer server : registry.all()) {
       if (preferred.contains(server) || unknown.contains(server)) continue;
       var advertisement = advertisement(server.name());
-      if (advertisement.isPresent() && ProtocolCompatibility.between(clientProtocol, advertisement.get().protocol()) == TranslationSupport.DIRECT) {
+      if (advertisement.isEmpty()) continue;
+      if (ProtocolCompatibility.between(clientProtocol, advertisement.get().protocol()) == TranslationSupport.DIRECT) {
         preferred.add(server);
+      } else if (ProtocolDefinition.hasCodec(clientProtocol)) {
+        unknown.add(server);
       }
     }
-    if (preferred.isEmpty() && unknown.isEmpty()) return candidates();
-    preferred.addAll(unknown);
-    return preferred;
+    List<BackendServer> ordered = new ArrayList<>(preferred);
+    for (BackendServer server : candidates()) if (!ordered.contains(server)) ordered.add(server);
+    for (BackendServer server : unknown) if (!ordered.contains(server)) ordered.add(server);
+    return ordered.isEmpty() ? candidates() : ordered;
   }
   public List<BackendServer> fallback(String current, Set<String> failed) {
     List<String> names = new ArrayList<>(configuration.fallbackBackends());

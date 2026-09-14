@@ -18,10 +18,8 @@ import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
 import gg.tame.conduit.protocol.PacketTrace;
 import gg.tame.conduit.protocol.PlayPackets;
-import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.ProtocolSession;
-import gg.tame.conduit.protocol.TranslationSupport;
 import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
 import java.io.IOException;
@@ -295,11 +293,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
     }
   }
   private void ensureCompatible(BackendServer server) throws IOException {
+    if (!ProtocolDefinition.hasCodec(protocol.version().number())) {
+      throw new IOException("Unsupported Minecraft version.");
+    }
     var advertisement = selector.advertisement(server.name());
     if (advertisement.isEmpty()) return;
     int backendProtocol = advertisement.get().protocol();
-    if (ProtocolCompatibility.between(protocol.version().number(), backendProtocol) != TranslationSupport.DIRECT) {
-      throw new IOException("Backend " + server.name() + " is running protocol " + backendProtocol + ", which Conduit does not yet support.");
+    if (backendProtocol != protocol.version().number()) {
+      System.out.println("Client protocol " + protocol.version().number() + " connecting to " + server.name()
+          + " advertised as " + backendProtocol + " (backend must accept the client protocol, e.g. ViaVersion).");
     }
   }
   private void writeClient(byte[] packet) throws IOException { synchronized (lock) { client.write(packet); } }
