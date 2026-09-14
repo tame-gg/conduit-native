@@ -321,12 +321,31 @@ Scheduler tasks run on `conduit-scheduler` threads, never on player socket threa
 
 ## Velocity compatibility
 
-**PARTIAL — NOT YET VERIFIED** against plugins compiled with `com.velocitypowered`.
+**PARTIAL — verified with an in-repo plugin compiled against `com.velocitypowered:velocity-api`.**
 
-Architecture: Velocity plugin → adapter (`gg.tame.conduit.compat.velocity`) → native API → core.
+Not verified with LuckPerms, ViaVersion, or other production Velocity plugins.
 
-Supported natively: player/server lookup, connect, messages, commands, events.
-Unsupported: Velocity internals, Adventure, scoreboards. Compatibility is never faked.
+Architecture:
+
+```text
+Velocity plugin JAR (velocity-plugin.json)
+      ↓
+src/compat-velocity adapters
+      ↓
+native Conduit API
+      ↓
+Conduit core
+```
+
+Fetch compile-time jars (never a Conduit core dependency):
+
+```powershell
+./scripts/fetch-velocity-compat.ps1
+```
+
+`./scripts/test.ps1` compiles core, then `src/compat-velocity` against `lib/*.jar` (includes `slf4j-nop`), then runs Phase9 which builds a real Velocity-API plugin and loads it.
+
+See `docs/VELOCITY_COMPATIBILITY.md` for the support matrix. Unsupported APIs throw; they are never faked.
 
 ## Protocol translation
 

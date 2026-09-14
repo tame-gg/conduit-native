@@ -34,6 +34,7 @@ public final class ConduitPluginManager implements PluginManager {
   private final ConduitEventManager events;
   private final ConduitScheduler scheduler;
   private final CommandManager commands;
+  private final List<ExternalJarHandler> extraHandlers = new ArrayList<>();
   public ConduitPluginManager(Path pluginsDirectory, ConduitProxy proxy, ConduitEventManager events, ConduitScheduler scheduler, CommandManager commands) {
     this.pluginsDirectory = pluginsDirectory;
     this.dataRoot = pluginsDirectory;
@@ -42,6 +43,7 @@ public final class ConduitPluginManager implements PluginManager {
     this.scheduler = scheduler;
     this.commands = commands;
   }
+  public void registerHandler(ExternalJarHandler handler) { extraHandlers.add(handler); }
   public void loadAll() throws IOException {
     Files.createDirectories(pluginsDirectory);
     List<Path> jars = new ArrayList<>();
@@ -50,11 +52,26 @@ public final class ConduitPluginManager implements PluginManager {
     }
     List<Pending> pending = new ArrayList<>();
     for (Path jar : jars) {
-      try { pending.add(read(jar)); }
+      try {
+        if (tryExternal(jar)) continue;
+        pending.add(read(jar));
+      }
       catch (Exception exception) { ConduitLog.error("rejected plugin jar " + jar.getFileName() + ": " + exception.getMessage()); }
     }
     pending = resolve(pending);
     for (Pending item : pending) enable(item);
+  }
+  private boolean tryExternal(Path jar) throws Exception {
+    Path normalized = jar.toAbsolutePath().normalize();
+    try (JarFile file = new JarFile(normalized.toFile())) {
+      for (ExternalJarHandler handler : extraHandlers) {
+        if (handler.accepts(file)) {
+          handler.load(normalized);
+          return true;
+        }
+      }
+    }
+    return false;
   }
   private Pending read(Path jar) throws Exception {
     Path normalized = jar.toAbsolutePath().normalize();
@@ -132,6 +149,7 @@ public final class ConduitPluginManager implements PluginManager {
   }
   public void disableAll() {
     for (Plugin plugin : new ArrayList<>(plugins())) disable(plugin);
+    for (ExternalJarHandler handler : extraHandlers) handler.shutdown();
   }
   private static void closeLoader(URLClassLoader loader) {
     try { loader.close(); } catch (IOException ignored) { }

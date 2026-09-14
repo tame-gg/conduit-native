@@ -7,3 +7,7 @@ run/
 *.secret
 sources.txt
 test-sources.txt
+main-sources.txt
+lib/*.jar
+conduit-start.log
+conduit-start.err.log

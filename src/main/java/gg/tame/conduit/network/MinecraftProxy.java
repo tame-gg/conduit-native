@@ -60,6 +60,14 @@ public final class MinecraftProxy implements AutoCloseable {
     this.forwarder = Forwarders.create(configuration); this.listener = ServerSocketChannel.open(); listener.bind(configuration.listener());
     this.runtime = new ConduitRuntime(configuration, pluginsDirectory);
     CoreCommands.register(runtime.commandManager(), runtime.selector().registry(), runtime.playerManager());
+    try {
+      Class.forName("gg.tame.conduit.compat.velocity.VelocityBoot")
+          .getMethod("install", ConduitRuntime.class)
+          .invoke(null, runtime);
+    } catch (ClassNotFoundException ignored) {
+    } catch (ReflectiveOperationException exception) {
+      ConduitLog.error("Velocity compatibility layer failed to install", exception);
+    }
   }
   public ConduitRuntime runtime() { return runtime; }
   public void probeBackends() { runtime.selector().probeAll(); }
