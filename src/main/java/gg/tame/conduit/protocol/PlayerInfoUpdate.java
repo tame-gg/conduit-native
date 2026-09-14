@@ -20,6 +20,8 @@ public final class PlayerInfoUpdate {
   public static final int UPDATE_DISPLAY_NAME = 0x20;
   public static final int UPDATE_LIST_PRIORITY = 0x40;
   public static final int UPDATE_HAT = 0x80;
+  /** Sanity bound on the entry count so a misparsed length cannot drive a huge decode loop. */
+  private static final int MAX_ENTRIES = 4096;
   private PlayerInfoUpdate() {}
   /**
    * 26.2 reconfiguration clears TAB. Login Success is hidden on switch, so the client only
@@ -50,6 +52,16 @@ public final class PlayerInfoUpdate {
     }
     return bytes.toByteArray();
   }
+  /**
+   * Replaces the local player's profile properties inside a backend player-info update.
+   *
+   * <p>The packet is re-serialized from what was decoded, so a decode that does not line up with
+   * the wire layout must never reach the client. Any decode failure, or a leftover byte after the
+   * declared entry count, returns the backend packet untouched instead of emitting a half-parsed
+   * rewrite with the remaining bytes appended. The packet is likewise returned untouched when
+   * nothing was substituted, so entries for other players stay byte-for-byte as the backend sent
+   * them.
+   */
   public static byte[] ensureOwnTextures(ProtocolDefinition protocol, byte[] packet, PlayerProfile profile) {
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE)) return packet;
     if (!profile.hasTextures()) return packet;
@@ -58,27 +70,35 @@ public final class PlayerInfoUpdate {
       if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_PLAYER_INFO_UPDATE)) return packet;
       int actions = input.readUnsignedByte();
       int count = MinecraftInput.varInt(input);
+      if ((actions & ADD_PLAYER) == 0) return packet;
+      if (count < 0 || count > MAX_ENTRIES) throw new IOException("invalid player-info entry count " + count);
       ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      boolean substituted = false;
       try (DataOutputStream output = new DataOutputStream(bytes)) {
         MinecraftOutput.varInt(output, id);
         output.writeByte(actions);
         MinecraftOutput.varInt(output, count);
-        for (int index = 0; index < count; index++) copyPlayer(input, output, actions, profile);
-        output.write(input.readAllBytes());
+        for (int index = 0; index < count; index++) substituted |= copyPlayer(input, output, actions, profile);
       }
-      return bytes.toByteArray();
-    } catch (IOException exception) {
-      System.err.println("player-info profile rewrite skipped: " + exception.getMessage());
+      if (input.available() != 0) throw new IOException(input.available() + " trailing bytes after " + count + " entries");
+      return substituted ? bytes.toByteArray() : packet;
+    } catch (IOException | RuntimeException exception) {
+      System.err.println("player-info rewrite skipped, backend packet forwarded unchanged: " + exception.getMessage());
       return packet;
     }
   }
-  private static void copyPlayer(DataInputStream input, DataOutputStream output, int actions, PlayerProfile profile) throws IOException {
+  /** Returns true when this entry's properties were replaced by the authenticated ones. */
+  private static boolean copyPlayer(DataInputStream input, DataOutputStream output, int actions, PlayerProfile profile) throws IOException {
+    boolean substituted = false;
     UUID uuid = GameProfiles.readUuid(input);
     GameProfiles.writeUuid(output, uuid);
     if ((actions & ADD_PLAYER) != 0) {
       String name = MinecraftInput.string(input, 16);
       List<ProfileProperty> properties = GameProfiles.readProperties(input);
-      if (uuid.equals(profile.uniqueId()) && profile.hasTextures()) properties = profile.properties();
+      if (uuid.equals(profile.uniqueId()) && !properties.equals(profile.properties())) {
+        properties = profile.properties();
+        substituted = true;
+      }
       MinecraftOutput.string(output, name);
       GameProfiles.writeProperties(output, properties);
     }
@@ -89,6 +109,7 @@ public final class PlayerInfoUpdate {
     if ((actions & UPDATE_DISPLAY_NAME) != 0) copyOptionalComponent(input, output);
     if ((actions & UPDATE_LIST_PRIORITY) != 0) MinecraftOutput.varInt(output, copyVarInt(input));
     if ((actions & UPDATE_HAT) != 0) output.writeBoolean(input.readBoolean());
+    return substituted;
   }
   private static int copyVarInt(DataInputStream input) throws IOException { return MinecraftInput.varInt(input); }
   private static void copyOptionalChat(DataInputStream input, DataOutputStream output) throws IOException {

@@ -192,6 +192,27 @@ The client TCP connection stays on Conduit.
 Conduit rewrites backend ADD_PLAYER for the local UUID to the canonical properties when present.
 Other players' properties are forwarded unchanged. Conduit does not invent skins or capes.
 
+On 776 the new backend reaches Play before the client finishes reconfiguring, because 776 waits on
+Known Packs. Backend Play packets read during that wait are forwarded, not discarded. Dropping them
+lost the backend's own `player_info_update` ADD_PLAYER — the packet that refills the player list
+reconfiguration just cleared — so the TAB head, skin layer and cape went missing after a switch
+depending on timing. 765 never hit this, because it does not read the backend while waiting.
+
+The clientbound profile rewrites are scoped to the client's connection state. Packet ids are only
+unique within a state: Login Success is id `2`, and id `2` in Configuration is Configuration
+Disconnect on 776 and Finish Configuration on 765.
+
+`PlayerInfoUpdate.ensureOwnTextures` re-serializes only what it decoded and requires the decode to
+consume the packet exactly. Any decode failure or leftover byte forwards the backend packet
+unchanged instead of emitting a half-parsed rewrite with the remainder appended. Packets with
+nothing to substitute are forwarded byte-for-byte.
+
+The 26.2 player-info layout was checked against ViaVersion 5.11.0's own definitions rather than
+assumed: a 1-byte action set (`BitSetType(8)`, unchanged since 1.21.4 and still current for 26.x),
+bits 0-7 in the order add / initialize chat / game mode / listed / latency / display name / list
+priority / hat, with boolean-prefixed optionals. Play ids for 776 match `ClientboundPackets26_1`
+(player info update `0x46`, login `0x31`, start configuration `0x76`, system chat `0x79`).
+
 Client protocol state and backend protocol state are tracked separately.
 
 Brand rewrite and Finish Configuration detection are **state-scoped**. Packet id `2` in Play is

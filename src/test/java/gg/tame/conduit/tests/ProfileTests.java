@@ -49,6 +49,11 @@ final class ProfileTests {
     forwardingPayloadIdenticalOnRepeatedSwitch();
     freezeKeepsAuthenticatedProperties();
     adapterIgnoresUnrelatedPackets();
+    adapterRewritesLoginSuccessOnlyInLogin();
+    playerInfoRejectsTrailingBytes();
+    playerInfoForwardsUntouchedWhenNothingSubstituted();
+    playerInfoRoundTripsEveryAction776();
+    switchHandoffNeverDropsBackendPlayPackets();
     mojangVerifyStoresTextures();
     protocolIds();
   }
@@ -229,6 +234,137 @@ final class ProfileTests {
     ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
     byte[] keepAlive = {4, 0, 0, 0, 0, 0, 0, 0, 1};
     require(java.util.Arrays.equals(keepAlive, ProtocolProfileAdapter.backendToClient(protocol, ConnectionState.PLAY, keepAlive, sample())), "unrelated");
+  }
+  /**
+   * Login Success is id 2 in Login, but id 2 in Configuration is Configuration Disconnect on 776
+   * and Finish Configuration on 765. Matching on the id alone rewrote those into a Game Profile.
+   */
+  private static void adapterRewritesLoginSuccessOnlyInLogin() throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    PlayerProfile profile = sample();
+    ByteArrayOutputStream packet = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(packet)) {
+      MinecraftOutput.varInt(output, protocol.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SUCCESS));
+      GameProfiles.writeUuid(output, profile.uniqueId());
+      MinecraftOutput.string(output, profile.username());
+      GameProfiles.writeProperties(output, List.of());
+      output.writeBoolean(true);
+    }
+    byte[] original = packet.toByteArray();
+    byte[] inLogin = ProtocolProfileAdapter.backendToClient(protocol, ConnectionState.LOGIN, original, profile);
+    require(!java.util.Arrays.equals(original, inLogin), "Login Success is still rewritten in Login");
+    for (ConnectionState state : List.of(ConnectionState.CONFIGURATION, ConnectionState.PLAY)) {
+      require(java.util.Arrays.equals(original, ProtocolProfileAdapter.backendToClient(protocol, state, original, profile)),
+          "id 2 must not be parsed as Login Success in " + state);
+    }
+  }
+  /** A decode that does not consume the whole packet must forward the backend bytes, not a splice. */
+  private static void playerInfoRejectsTrailingBytes() throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    PlayerProfile profile = sample();
+    byte[] valid = PlayerInfoUpdate.selfAdd(protocol, profile);
+    byte[] trailing = java.util.Arrays.copyOf(valid, valid.length + 3);
+    require(java.util.Arrays.equals(trailing, PlayerInfoUpdate.ensureOwnTextures(protocol, trailing, profile)),
+        "trailing bytes must abort the rewrite");
+    byte[] truncated = java.util.Arrays.copyOf(valid, valid.length - 2);
+    require(java.util.Arrays.equals(truncated, PlayerInfoUpdate.ensureOwnTextures(protocol, truncated, profile)),
+        "a truncated packet must abort the rewrite");
+  }
+  /** Other players' entries are forwarded transparently rather than re-encoded. */
+  private static void playerInfoForwardsUntouchedWhenNothingSubstituted() throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    PlayerProfile profile = sample();
+    ByteArrayOutputStream packet = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(packet)) {
+      MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE));
+      output.writeByte(PlayerInfoUpdate.ADD_PLAYER | PlayerInfoUpdate.UPDATE_LISTED);
+      MinecraftOutput.varInt(output, 2);
+      GameProfiles.writeUuid(output, new UUID(7, 7));
+      MinecraftOutput.string(output, "Alex");
+      GameProfiles.writeProperties(output, List.of(new ProfileProperty("textures", "b3RoZXI=", Optional.of("b3Rocw=="))));
+      output.writeBoolean(true);
+      GameProfiles.writeUuid(output, new UUID(8, 8));
+      MinecraftOutput.string(output, "Steve");
+      GameProfiles.writeProperties(output, List.of());
+      output.writeBoolean(true);
+    }
+    byte[] original = packet.toByteArray();
+    require(java.util.Arrays.equals(original, PlayerInfoUpdate.ensureOwnTextures(protocol, original, profile)),
+        "foreign entries forwarded byte-for-byte");
+    // The same packet carrying our own stale entry must be substituted.
+    byte[] mine = PlayerInfoUpdate.selfAdd(protocol, new PlayerProfile(profile.uniqueId(), profile.username(),
+        List.of(new ProfileProperty("textures", "c3RhbGU=", Optional.empty())), true));
+    byte[] fixed = PlayerInfoUpdate.ensureOwnTextures(protocol, mine, profile);
+    require(!java.util.Arrays.equals(mine, fixed), "our own stale entry is replaced");
+  }
+  /**
+   * Exercises every 26.2 action bit at once: 1-byte action set, then name+properties, chat key,
+   * game mode, listed, latency, optional display-name component, list priority and hat. Only the
+   * textures change; everything else must survive the re-encode.
+   */
+  private static void playerInfoRoundTripsEveryAction776() throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    PlayerProfile profile = sample();
+    int actions = PlayerInfoUpdate.ADD_PLAYER | PlayerInfoUpdate.INITIALIZE_CHAT | PlayerInfoUpdate.UPDATE_GAME_MODE
+        | PlayerInfoUpdate.UPDATE_LISTED | PlayerInfoUpdate.UPDATE_LATENCY | PlayerInfoUpdate.UPDATE_DISPLAY_NAME
+        | PlayerInfoUpdate.UPDATE_LIST_PRIORITY | PlayerInfoUpdate.UPDATE_HAT;
+    ByteArrayOutputStream packet = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(packet)) {
+      MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE));
+      output.writeByte(actions);
+      MinecraftOutput.varInt(output, 1);
+      GameProfiles.writeUuid(output, profile.uniqueId());
+      MinecraftOutput.string(output, profile.username());
+      GameProfiles.writeProperties(output, List.of(new ProfileProperty("textures", "c3RhbGU=", Optional.empty())));
+      output.writeBoolean(true);
+      GameProfiles.writeUuid(output, new UUID(9, 9));
+      output.writeLong(1234L);
+      MinecraftOutput.varInt(output, 3); output.write(new byte[] {1, 2, 3});
+      MinecraftOutput.varInt(output, 2); output.write(new byte[] {4, 5});
+      MinecraftOutput.varInt(output, 1);
+      output.writeBoolean(true);
+      MinecraftOutput.varInt(output, 55);
+      output.writeBoolean(true);
+      gg.tame.conduit.protocol.NetworkNbt.stringComponent(output, "Koels");
+      MinecraftOutput.varInt(output, 9);
+      output.writeBoolean(true);
+    }
+    byte[] rewritten = PlayerInfoUpdate.ensureOwnTextures(protocol, packet.toByteArray(), profile);
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(rewritten))) {
+      require(MinecraftInput.varInt(input) == 0x46, "id");
+      require(input.readUnsignedByte() == actions, "all eight action bits survive one byte");
+      require(MinecraftInput.varInt(input) == 1, "count");
+      require(GameProfiles.readUuid(input).equals(profile.uniqueId()), "uuid");
+      require(MinecraftInput.string(input, 16).equals("Koels"), "name");
+      var properties = GameProfiles.readProperties(input);
+      require(properties.size() == 1 && properties.getFirst().value().equals("c2tpbg==")
+          && properties.getFirst().signature().orElseThrow().equals("c2ln"), "signed textures substituted");
+      require(input.readBoolean(), "chat present");
+      require(GameProfiles.readUuid(input).equals(new UUID(9, 9)), "chat session uuid");
+      require(input.readLong() == 1234L, "chat expiry");
+      require(MinecraftInput.bytes(input, 8192).length == 3, "chat key");
+      require(MinecraftInput.bytes(input, 8192).length == 2, "chat signature");
+      require(MinecraftInput.varInt(input) == 1, "game mode");
+      require(input.readBoolean(), "listed");
+      require(MinecraftInput.varInt(input) == 55, "latency");
+      require(input.readBoolean(), "display name present");
+      gg.tame.conduit.protocol.NetworkNbt.skip(input);
+      require(MinecraftInput.varInt(input) == 9, "list priority");
+      require(input.readBoolean(), "hat");
+      require(input.available() == 0, "no trailing bytes");
+    }
+  }
+  /**
+   * The backend reaches Play before the client finishes reconfiguring. Its player-info ADD_PLAYER
+   * lands in that window, so it has to be forwarded rather than discarded.
+   */
+  private static void switchHandoffNeverDropsBackendPlayPackets() {
+    require(gg.tame.conduit.session.PlayerSession.handoff(ConnectionState.PLAY, ConnectionState.PLAY)
+        == gg.tame.conduit.session.PlayerSession.Handoff.FORWARD_PLAY, "backend Play packets reach the client");
+    require(gg.tame.conduit.session.PlayerSession.handoff(ConnectionState.CONFIGURATION, ConnectionState.CONFIGURATION)
+        == gg.tame.conduit.session.PlayerSession.Handoff.FORWARD_CONFIGURATION, "configuration still forwarded");
+    require(gg.tame.conduit.session.PlayerSession.handoff(ConnectionState.CONFIGURATION, ConnectionState.PLAY)
+        == gg.tame.conduit.session.PlayerSession.Handoff.FORWARD_CONFIGURATION, "late configuration still forwarded");
   }
   private static void mojangVerifyStoresTextures() throws Exception {
     com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

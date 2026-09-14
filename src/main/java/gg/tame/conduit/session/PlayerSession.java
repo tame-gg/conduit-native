@@ -425,7 +425,27 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       flushDeferredPlay();
       return;
     }
-    if (backendState == ConnectionState.CONFIGURATION) writeClient(outbound);
+    switch (handoff(backendState, clientState.state())) {
+      case FORWARD_CONFIGURATION -> writeClient(outbound);
+      case FORWARD_PLAY -> writeClient(maybeMergeCommands(outbound));
+      case DROP -> System.err.println("Dropped backend " + backendState + " packet while client was in " + clientState.state());
+    }
+  }
+  public enum Handoff { FORWARD_CONFIGURATION, FORWARD_PLAY, DROP }
+  /**
+   * Decides what to do with a backend packet read while the switch is waiting on the client.
+   *
+   * <p>The new backend enters Play and starts sending Join Game, player-info updates and entity
+   * data before {@code waitForClient} returns. Those Play packets used to fall off the end of this
+   * method and be discarded, which is where the TAB head, skin layer and cape went after a switch:
+   * reconfiguration clears the player list, and the backend's ADD_PLAYER that would refill it
+   * arrived inside this window. Only 776 reaches this path, because only 776 reads the backend
+   * while waiting on the client (known packs).
+   */
+  public static Handoff handoff(ConnectionState backendState, ConnectionState clientState) {
+    if (backendState == ConnectionState.CONFIGURATION) return Handoff.FORWARD_CONFIGURATION;
+    if (backendState == ConnectionState.PLAY && clientState == ConnectionState.PLAY) return Handoff.FORWARD_PLAY;
+    return Handoff.DROP;
   }
   private void ensureCompatible(BackendServer server) throws IOException {
     if (!ProtocolDefinition.hasCodec(protocol.version().number())) {
