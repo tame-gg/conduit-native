@@ -18,7 +18,7 @@ public final class EncryptionHandshake {
     this.verifyToken = new byte[4];
     new SecureRandom().nextBytes(this.verifyToken);
   }
-  public EncryptionRequest request() { return EncryptionRequest.create(keys.getPublic(), verifyToken); }
+  public EncryptionRequest request(ProtocolDefinition protocol) { return EncryptionRequest.create(protocol, keys.getPublic(), verifyToken); }
   public byte[] sharedSecret(ProtocolDefinition protocol, byte[] packet) throws Exception {
     EncryptionResponse response = EncryptionResponse.decode(protocol, packet);
     byte[] secret = RsaKeys.decrypt(keys.getPrivate(), response.encryptedSharedSecret());

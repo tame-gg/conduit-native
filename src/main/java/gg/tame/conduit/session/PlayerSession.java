@@ -79,7 +79,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   }
   private BackendConnection connectInitial() throws IOException {
     IOException last = null;
-    for (BackendServer server : selector.candidates()) {
+    for (BackendServer server : selector.candidatesFor(protocol.version().number())) {
       try {
         Socket socket = BackendConnection.open(server);
         MinecraftFrames.write(socket.getOutputStream(), originalHandshake);

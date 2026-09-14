@@ -93,7 +93,7 @@ public final class MinecraftProxy implements AutoCloseable {
   private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address) throws IOException, AuthenticationException {
     EncryptionHandshake handshake = new EncryptionHandshake(rsaKeys);
     transport.beginNegotiation();
-    transport.write(handshake.request().encode(protocol));
+    transport.write(handshake.request(protocol).encode(protocol));
     System.out.println("Encryption request sent.");
     byte[] response;
     try { response = transport.read(configuration.maxFrameBytes()); }

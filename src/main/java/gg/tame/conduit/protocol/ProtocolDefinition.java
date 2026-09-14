@@ -6,13 +6,15 @@ import java.util.Map;
 /** Packet-id registry for one supported protocol version. Add versions here, not to sessions. */
 public final class ProtocolDefinition {
   private final ProtocolVersion version;
-  private final boolean configurationPhase;
+  private final ProtocolCapabilities capabilities;
   private final Map<Key, Integer> ids;
-  private ProtocolDefinition(ProtocolVersion version, boolean configurationPhase, Map<Key, Integer> ids) {
-    this.version = version; this.configurationPhase = configurationPhase; this.ids = Map.copyOf(ids);
+  private ProtocolDefinition(ProtocolVersion version, ProtocolCapabilities capabilities, Map<Key, Integer> ids) {
+    this.version = version; this.capabilities = capabilities; this.ids = Map.copyOf(ids);
   }
   public ProtocolVersion version() { return version; }
-  public boolean hasConfiguration() { return configurationPhase; }
+  public ProtocolCapabilities capabilities() { return capabilities; }
+  public boolean hasConfiguration() { return capabilities.configurationPhase(); }
+  public boolean loginShouldAuthenticate() { return capabilities.loginShouldAuthenticate(); }
   public int id(ConnectionState state, PacketDirection direction, PacketKind kind) {
     Integer id = ids.get(new Key(state, direction, kind));
     if (id == null) throw new IllegalArgumentException("packet is not defined for " + version.displayName() + " " + state + "/" + direction + ": " + kind);
@@ -34,14 +36,14 @@ public final class ProtocolDefinition {
     return definition;
   }
   public static boolean hasCodec(int number) { return BY_NUMBER.containsKey(number); }
-  private static ProtocolDefinition define(ProtocolVersion version, boolean configuration, Object... entries) {
+  private static ProtocolDefinition define(ProtocolVersion version, ProtocolCapabilities capabilities, Object... entries) {
     Map<Key, Integer> ids = new HashMap<>();
     for (int index = 0; index < entries.length; index += 4) {
       ids.put(new Key((ConnectionState) entries[index], (PacketDirection) entries[index + 1], (PacketKind) entries[index + 2]), (Integer) entries[index + 3]);
     }
-    return new ProtocolDefinition(version, configuration, ids);
+    return new ProtocolDefinition(version, capabilities, ids);
   }
-  private static final ProtocolDefinition V1_20_4 = define(ProtocolVersion.MINECRAFT_1_20_4, true,
+  private static final ProtocolDefinition V1_20_4 = define(ProtocolVersion.MINECRAFT_1_20_4, new ProtocolCapabilities(true, false),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,
@@ -70,7 +72,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0A,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x0B
   );
-  private static final ProtocolDefinition V1_20_1 = define(ProtocolVersion.MINECRAFT_1_20_1, false,
+  private static final ProtocolDefinition V1_20_1 = define(ProtocolVersion.MINECRAFT_1_20_1, new ProtocolCapabilities(false, false),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,
@@ -93,7 +95,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09
   );
-  private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2, true,
+  private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2, new ProtocolCapabilities(true, true),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,

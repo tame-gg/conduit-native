@@ -26,7 +26,7 @@ Native intercept codecs (version + state + direction packet IDs) exist for:
 |---|---|---|---|
 | 1.20.1 | 763 | no | not tested |
 | 1.20.3 / 1.20.4 | 765 | yes | 1.20.4 login/Play previously verified; switching retest pending |
-| 26.2 | 776 | yes (Finish Configuration is id **3**, not 2) | **not tested** |
+| 26.2 | 776 | yes | **codec includes 26.2 `minecraft:hello` (Should Authenticate boolean); real vanilla PLAY verification pending** |
 
 Catalog only (handshake known, **no codec**, cannot connect):
 
@@ -36,9 +36,9 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 
 **Direct:** same codec version only (`765→765`, `763→763`, `776→776`).
 
-**Translated:** none. `1.20.4 → 26.2` and `1.7.10 → 26.2` are UNSUPPORTED until a translator exists.
+**Translated:** none. `1.20.4 → 26.2` and `26.2 → 1.20.4` are UNSUPPORTED.
 
-Do not read “26.2 codec registered” as “26.2 gameplay works through Conduit.”
+26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 
 Backends may be configured as:
 

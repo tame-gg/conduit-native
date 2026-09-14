@@ -60,6 +60,7 @@ public final class AllTests {
     rejectInvalidLoginPluginRequests();
     mockBackendModernForwardingWireExchange();
     encryptionAndServerHash();
+    encryptionHelloLayout();
     sessionAuthentication();
     onlineModeFeedsAuthenticatedIdentityToForwarding();
     Phase6Tests.run();
@@ -296,7 +297,7 @@ public final class AllTests {
     }
     ProtocolDefinition protocol = ProtocolDefinition.forVersion(765);
     gg.tame.conduit.login.EncryptionHandshake handshake = new gg.tame.conduit.login.EncryptionHandshake(keys);
-    gg.tame.conduit.login.EncryptionRequest request = gg.tame.conduit.login.EncryptionRequest.decode(protocol, handshake.request().encode(protocol));
+    gg.tame.conduit.login.EncryptionRequest request = gg.tame.conduit.login.EncryptionRequest.decode(protocol, handshake.request(protocol).encode(protocol));
     byte[] wrongToken = request.verifyToken().clone(); wrongToken[0] ^= 1;
     ByteArrayOutputStream bad = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bad)) {
@@ -308,6 +309,31 @@ public final class AllTests {
     catch (Exception expected) { }
     String hash = gg.tame.conduit.crypto.ServerHash.of("", secret, keys.getPublic());
     require(hash.equals(gg.tame.conduit.crypto.ServerHash.of("", secret, keys.getPublic())), "server hash must be deterministic");
+  }
+  private static void encryptionHelloLayout() throws Exception {
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    ProtocolDefinition v776 = ProtocolDefinition.forVersion(776);
+    require(!v765.loginShouldAuthenticate() && v776.loginShouldAuthenticate(), "should-authenticate is 26.2-only");
+    require(v776.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST) == 1, "776 hello id");
+    require(v765.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST) == 1, "765 hello id");
+    require(!v776.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, 1, PacketKind.LOGIN_ENCRYPTION_REQUEST), "play id 1 is not hello");
+    java.security.KeyPair keys = gg.tame.conduit.crypto.RsaKeys.generate();
+    byte[] token = {9, 8, 7, 6};
+    gg.tame.conduit.login.EncryptionRequest fixture = new gg.tame.conduit.login.EncryptionRequest("", keys.getPublic().getEncoded(), token, true);
+    byte[] encoded765 = new gg.tame.conduit.login.EncryptionRequest("", keys.getPublic().getEncoded(), token, false).encode(v765);
+    byte[] encoded776 = fixture.encode(v776);
+    require(encoded776[0] == 1 && encoded765[0] == 1, "packet id first");
+    require(encoded776.length == encoded765.length + 1, "776 adds should-authenticate boolean");
+    require(encoded776[encoded776.length - 1] == 1, "should-authenticate true");
+    gg.tame.conduit.login.EncryptionRequest decoded776 = gg.tame.conduit.login.EncryptionRequest.decode(v776, encoded776);
+    require(decoded776.shouldAuthenticate() && java.util.Arrays.equals(decoded776.verifyToken(), token), "776 field order");
+    gg.tame.conduit.login.EncryptionRequest decoded765 = gg.tame.conduit.login.EncryptionRequest.decode(v765, encoded765);
+    require(!decoded765.shouldAuthenticate() && java.util.Arrays.equals(decoded765.verifyToken(), token), "765 has no boolean");
+    try { gg.tame.conduit.login.EncryptionRequest.decode(v765, encoded776); throw new AssertionError("765 accepted 776 trailing boolean"); }
+    catch (java.io.IOException expected) { }
+    byte[] truncated = java.util.Arrays.copyOf(encoded776, encoded776.length - 1);
+    try { gg.tame.conduit.login.EncryptionRequest.decode(v776, truncated); throw new AssertionError("truncated 776 hello accepted"); }
+    catch (java.io.IOException expected) { }
   }
   private static void sessionAuthentication() throws Exception {
     HasJoinedResponse.Result parsed = HasJoinedResponse.parse("{\"id\":\"11111111222233334444555555555555\",\"name\":\"Notch\",\"properties\":[{\"name\":\"textures\",\"value\":\"val\",\"signature\":\"sig\"}]}");
