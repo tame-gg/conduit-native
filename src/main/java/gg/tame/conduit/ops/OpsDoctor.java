@@ -75,6 +75,17 @@ public final class OpsDoctor {
         "Channel guard: " + (security.channelGuard().enabled() ? "Enabled" : "Disabled")));
     findings.add(new Finding(runtime.security().attackMode().isActive() ? Severity.WARNING : Severity.OK, "attack-mode",
         "Attack mode: " + (runtime.security().attackMode().isActive() ? "On (runtime only)" : "Off")));
+    var modded = runtime.modded().settings();
+    findings.add(new Finding(Severity.OK, "modded",
+        "Mod compatibility: " + (modded.enabled() ? "Enabled" : "Disabled")));
+    findings.add(new Finding(Severity.OK, "modded-forge",
+        "Forge: " + (modded.forgeCompat() ? "supported" : "disabled")));
+    findings.add(new Finding(Severity.OK, "modded-neoforge",
+        "NeoForge: " + (modded.neoForgeCompat() ? "supported" : "disabled")));
+    findings.add(new Finding(Severity.OK, "modded-fabric",
+        "Fabric: " + (modded.fabricCompat() ? "supported" : "disabled")));
+    findings.add(new Finding(Severity.OK, "known-packs",
+        "Known-packs limit: " + modded.knownPacksLimit()));
     findings.add(new Finding(Severity.OK, "plugins", runtime.pluginCatalog().size() + " proxy plugin(s)."));
     findings.add(new Finding(Severity.OK, "auth", "Authentication mode: " + config.authentication().mode().name().toLowerCase()));
     if (config.forwardingMode() == ForwardingMode.MODERN) {

@@ -29,6 +29,11 @@ import gg.tame.conduit.protocol.ProtocolSession;
 import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
 import gg.tame.conduit.metrics.ConduitMetrics;
+import gg.tame.conduit.modded.HandshakeClassifier;
+import gg.tame.conduit.modded.KnownPacksValidator;
+import gg.tame.conduit.modded.ModLoaderFamily;
+import gg.tame.conduit.modded.PluginPayloadValidator;
+import gg.tame.conduit.modded.SwitchPacketQueue;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -57,6 +62,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final byte[] originalHandshake;
   private final byte[] originalLoginStart;
   private final InetAddress address;
+  private final HandshakeClassifier modClassifier;
+  private final SwitchPacketQueue switchQueue;
   private final Object lock = new Object();
   private final AtomicReference<SessionLifecycle> lifecycle = new AtomicReference<>(SessionLifecycle.CONNECTING);
   private final BlockingQueue<Boolean> configurationAck = new ArrayBlockingQueue<>(1);
@@ -91,7 +98,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.runtime = runtime;
     this.commands = runtime.commandManager(); this.players = runtime.playerManager(); this.selector = runtime.selector();
     this.handshake = handshake; this.originalHandshake = originalHandshake; this.originalLoginStart = originalLoginStart; this.address = address;
+    this.modClassifier = runtime.modded().classifyHandshake(handshake.requestedHost(), address, this.clientProtocol);
+    this.switchQueue = runtime.modded().settings().packetQueueEnabled()
+        ? runtime.modded().newSwitchQueue()
+        : new SwitchPacketQueue(1);
+    runtime.modded().remember(address, this.clientProtocol, this.modClassifier);
   }
+  public ModLoaderFamily modLoaderFamily() { return modClassifier.family(); }
+  public HandshakeClassifier modClassifier() { return modClassifier; }
   public PlayerProfile profile() { return AuthenticatedPlayerProfile.require(loginPipeline.player()); }
   /** Same object as {@link #profile()}; the session never recreates identity on {@code /server}. */
   public PlayerProfile authenticatedProfile() { return profile(); }
@@ -129,12 +143,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (!protocol.defines(state, dir, kind)) return true;
       if (!protocol.is(state, dir, PlayPackets.peekId(packet), kind)) return true;
       var decoded = gg.tame.conduit.protocol.PluginMessage.decodeBody(PlayPackets.body(packet), configuration.maxFrameBytes());
+      PluginPayloadValidator.validateChannel(decoded.channel());
+      PluginPayloadValidator.validatePayload(decoded.data(), configuration.maxFrameBytes());
       if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY) {
+        modClassifier.observeChannel(decoded.channel());
         var outcome = runtime.security().channelGuard().inspect(decoded.channel(), username());
         if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.DROP) return false;
         if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.KICK) {
           disconnect("Blocked plugin channel.");
           return false;
+        }
+        if ("minecraft:brand".equalsIgnoreCase(decoded.channel()) || "MC|Brand".equals(decoded.channel())) {
+          try { modClassifier.observeBrand(decoded.brandText()); } catch (IOException ignored) { }
         }
       }
       var event = new gg.tame.conduit.api.event.messaging.PluginMessageEvent(this, decoded.channel(), decoded.data(), direction);
@@ -172,7 +192,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
   private BackendConnection connectInitial() throws IOException {
     IOException last = null;
-    for (BackendServer server : selector.candidatesFor(protocol.version().number())) {
+    for (BackendServer server : selector.candidatesFor(protocol.version().number(), modClassifier.family(), false)) {
       try {
         Socket socket = BackendConnection.open(server);
         MinecraftFrames.write(socket.getOutputStream(), originalHandshake);
@@ -211,7 +231,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (handleClientPacket(packet)) continue;
         if (lifecycle.get() == SessionLifecycle.SWITCHING) {
           BackendConnection target = switchingTarget;
-          if (target != null && clientState.state() == ConnectionState.CONFIGURATION) target.writeUncompressed(packet);
+          if (target != null && clientState.state() == ConnectionState.CONFIGURATION) {
+            target.writeUncompressed(packet);
+          } else if (configuration.modded().packetQueueEnabled() && target != null) {
+            try {
+              switchQueue.enqueue(SwitchPacketQueue.Destination.NEW_BACKEND, packet,
+                  clientState.state() == ConnectionState.PLAY ? SwitchPacketQueue.ConnectionPhase.PLAY
+                      : SwitchPacketQueue.ConnectionPhase.CONFIGURATION);
+            } catch (SwitchPacketQueue.OverflowException overflow) {
+              throw new IOException(overflow.getMessage(), overflow);
+            }
+          }
           continue;
         }
         BackendConnection target = switchingTarget != null ? switchingTarget : backend;
@@ -265,6 +295,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     if (clientState.state() == ConnectionState.CONFIGURATION && protocol.knownPacks()
         && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_KNOWN_PACKS)) {
+      KnownPacksValidator.validate(PlayPackets.body(packet), runtime.modded().knownPacksLimit());
       BackendConnection target = switchingTarget != null ? switchingTarget : backend;
       if (target != null) target.writeUncompressed(packet);
       knownPacksAck.offer(Boolean.TRUE);
@@ -403,6 +434,19 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       for (byte[] packet : rest) writeClient(maybeMergeCommands(packet));
     }
   }
+  private void flushSwitchQueue(BackendConnection target) throws IOException {
+    if (target == null || !configuration.modded().packetQueueEnabled()) {
+      switchQueue.clear();
+      return;
+    }
+    for (SwitchPacketQueue.QueuedPacket queued : switchQueue.flush(SwitchPacketQueue.Destination.NEW_BACKEND)) {
+      // Only flush configuration-phase packets after commit; play packets after join are unsafe here.
+      if (queued.phase() == SwitchPacketQueue.ConnectionPhase.CONFIGURATION) {
+        target.writeUncompressed(queued.packet());
+      }
+    }
+    switchQueue.clear();
+  }
   private void handleBackendLoss(BackendConnection lost) {
     synchronized (lock) {
       if (backend != lost || lifecycle.get() != SessionLifecycle.CONNECTED) return;
@@ -414,7 +458,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     failed.add(ServerRegistry.normalize(lost.server().name()));
     sendMessage(Text.of(lost.server().name() + " is unavailable.").color(TextColor.RED));
     ConduitMetrics.current().fallbackEvent();
-    for (BackendServer server : selector.fallback(lost.server().name(), failed, clientProtocol, false)) {
+    for (BackendServer server : selector.fallback(lost.server().name(), failed, clientProtocol, modClassifier.family(), false)) {
       try {
         Messages.connecting(this, server.name());
         switchTo(server, true);
@@ -475,7 +519,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // PREPARE: open + login against the target while the current backend remains active.
       socket = BackendConnection.open(server);
       enforceDeadline(deadline, "connect");
-      BackendConnection.handshake(socket, handshake, server, profile());
+      BackendConnection.handshake(socket, handshake, server, profile(), modClassifier.marker(), modClassifier.family());
       next = new BackendConnection(server, socket, protocol, forwarder, profile(), address, configuration, true);
       next.setReadTimeoutMillis(remainingMillis(deadline));
       completeBackendLogin(next, false);
@@ -487,6 +531,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
         if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
         lifecycle.set(SessionLifecycle.SWITCHING);
+        switchQueue.clear();
         lock.notifyAll();
       }
       gg.tame.conduit.protocol.ProfileTrace.beginSequence("switch to " + server.name(), 60);
@@ -554,6 +599,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         lifecycle.set(SessionLifecycle.CONNECTED);
         lock.notifyAll();
       }
+      flushSwitchQueue(backend);
       replayClientInformation(backend, ConnectionState.PLAY);
       if (previous != null) previous.close();
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
@@ -563,6 +609,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
     } catch (Exception exception) {
       switchingTarget = null;
+      switchQueue.clear();
       if (next != null) next.close();
       else if (socket != null) try { socket.close(); } catch (IOException ignored) { }
       gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception.getMessage());

@@ -79,6 +79,19 @@ public final class ConfigMigrator {
     appendMissingSection(appendix, present, added, "security.attack-mode", List.of(
         entry("security.attack-mode.throttle-max-attempts", "throttle-max-attempts = 8"),
         entry("security.attack-mode.bot-strike-threshold", "bot-strike-threshold = 3")));
+    appendMissingSection(appendix, present, added, "modded", List.of(
+        entry("modded.enabled", "enabled = true"),
+        entry("modded.known-packs-limit", "known-packs-limit = 1024"),
+        entry("modded.handshake-cache", "handshake-cache = true"),
+        entry("modded.handshake-cache-capacity", "handshake-cache-capacity = 4096"),
+        entry("modded.handshake-cache-ttl-ms", "handshake-cache-ttl-ms = 300000"),
+        entry("modded.forge-compat", "forge-compat = true"),
+        entry("modded.neoforge-compat", "neoforge-compat = true"),
+        entry("modded.fabric-compat", "fabric-compat = true"),
+        entry("modded.unknown-policy", "unknown-policy = \"allow\""),
+        entry("modded.packet-queue-enabled", "packet-queue-enabled = true"),
+        entry("modded.packet-queue-max-depth", "packet-queue-max-depth = 512"),
+        entry("modded.log-mod-handshakes", "log-mod-handshakes = false")));
     if (!present.contains("ops.schema-version")) {
       if (!appendix.isEmpty()) appendix.append('\n');
       appendix.append("# Conduit Ops schema\n");

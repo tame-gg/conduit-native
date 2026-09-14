@@ -133,7 +133,9 @@ public final class MinecraftProxy implements AutoCloseable {
       Handshake handshake;
       try {
         handshake = Handshake.decode(firstPacket);
-      } catch (RuntimeException | IOException malformed) {
+        // Reject pathological FML host markers early without treating them as bots.
+        gg.tame.conduit.modded.FmlAddressMarkers.parse(handshake.requestedHost());
+      } catch (IllegalArgumentException | IOException malformed) {
         runtime.security().botFilter().recordSuspicious(remote, "malformed-handshake");
         ConduitMetrics.current().malformedProtocol();
         return;

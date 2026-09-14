@@ -164,7 +164,7 @@ Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.playe
 | Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
 | Metrics HTTP endpoint | UNSUPPORTED (command diagnostics only) |
 | Security (throttle / bot filter / channel guard / attack mode) | IMPLEMENTED (application-level; not DDoS protection) |
-| Modded (known-packs / Forge / NeoForge / packet queue) | UNSUPPORTED (Phase 3) |
+| Modded (known-packs / detection / Forge / NeoForge / Fabric routing / packet queue) | IMPLEMENTED (protocol-level; **NOT REAL-CLIENT VERIFIED** for Forge/NeoForge) |
 
 ### Security (Phase 2)
 
@@ -201,6 +201,58 @@ log-list = ["schematica"]
 [security.attack-mode]
 throttle-max-attempts = 8
 bot-strike-threshold = 3
+```
+
+### Modded / Forge / NeoForge (Phase 3)
+
+Protocol-level mod compatibility — not a claim of “all Forge versions”.
+
+| Area | Status |
+|------|--------|
+| Known-packs limit (default 1024) + validation | IMPLEMENTED |
+| Mod loader detection (Vanilla / Fabric / Forge / NeoForge / Unknown) | IMPLEMENTED |
+| FML1 / FML2 / FML3 address-marker strip/preserve | IMPLEMENTED |
+| Handshake classification cache (bounded + TTL) | IMPLEMENTED |
+| Per-server `mod-loaders` routing | IMPLEMENTED |
+| Switch packet queue (bounded) | IMPLEMENTED |
+| Forge / NeoForge real-client join | **NOT REAL-CLIENT VERIFIED** |
+| Full Forge handshake proxying for every FML version | PARTIAL (markers + channels + routing; not every handshake payload rewritten) |
+
+* Unknown clients default to **allow** (`modded.unknown-policy = "allow"`).
+* Backends without `mod-loaders` accept all families (vanilla-friendly).
+* Modded clients are not treated as bots merely for Forge/Fabric channels.
+* `/conduit cache invalidate <source>` clears handshake-cache entries for a source IP.
+* Permissions: `conduit.cache`.
+
+```toml
+[modded]
+enabled = true
+known-packs-limit = 1024
+handshake-cache = true
+handshake-cache-capacity = 4096
+handshake-cache-ttl-ms = 300000
+forge-compat = true
+neoforge-compat = true
+fabric-compat = true
+unknown-policy = "allow"
+packet-queue-enabled = true
+packet-queue-max-depth = 512
+log-mod-handshakes = false
+
+# Optional alias:
+# [protocol]
+# known-packs-limit = 1024
+
+[servers.lobby]
+host = "127.0.0.1"
+port = 25566
+# omit mod-loaders = accept all
+# mod-loaders = ["vanilla", "fabric"]
+
+[servers.forge]
+host = "127.0.0.1"
+port = 25567
+mod-loaders = ["forge", "neoforge"]
 ```
 
 Unhealthy backends are excluded from **new** routing only. Existing players are not kicked by a failed probe.

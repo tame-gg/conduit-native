@@ -12,6 +12,7 @@ import gg.tame.conduit.session.PlayerManager;
 import gg.tame.conduit.session.TrackedPlayer;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
+import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -255,6 +256,7 @@ public final class CoreCommands {
       case "doctor" -> doctor(source, runtime);
       case "diagnostics" -> diagnostics(source, runtime, registry);
       case "attack", "attackmode" -> attack(source, runtime, arguments.subList(1, arguments.size()));
+      case "cache" -> cache(source, runtime, arguments.subList(1, arguments.size()));
       case "help" -> help(source);
       default -> Messages.info(source, "Unknown /conduit subcommand. Try /conduit help");
     }
@@ -349,6 +351,9 @@ public final class CoreCommands {
     }
     if (source.hasPermission(Permissions.ATTACK) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       source.sendMessage(Text.of("/conduit attack <on|off|status>").color(Messages.BODY));
+    }
+    if (source.hasPermission(Permissions.CACHE) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of("/conduit cache invalidate <source>").color(Messages.BODY));
     }
     if (source.hasPermission(Permissions.RELOAD) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       source.sendMessage(Text.of("/conduit reload").color(Messages.BODY));
@@ -457,6 +462,33 @@ public final class CoreCommands {
     Messages.info(source, "Usage: /conduit attack <on|off|status>");
   }
 
+  private static void cache(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
+    if (!source.hasPermission(Permissions.CACHE) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      Messages.permission(source);
+      return;
+    }
+    if (runtime == null) {
+      Messages.failure(source, "Runtime unavailable.");
+      return;
+    }
+    if (arguments.isEmpty() || !arguments.getFirst().equalsIgnoreCase("invalidate")) {
+      Messages.info(source, "Usage: /conduit cache invalidate <source>");
+      return;
+    }
+    if (arguments.size() < 2) {
+      Messages.info(source, "Usage: /conduit cache invalidate <source>");
+      return;
+    }
+    try {
+      InetAddress address = InetAddress.getByName(arguments.get(1));
+      boolean removed = runtime.modded().invalidateCache(address);
+      if (removed) Messages.success(source, "Mod handshake cache invalidated for source.");
+      else Messages.info(source, "No cache entries for that source.");
+    } catch (Exception exception) {
+      Messages.failure(source, "Invalid source address.");
+    }
+  }
+
   private static void drain(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments, boolean enable) {
     if (!source.hasPermission(Permissions.DRAIN) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       Messages.permission(source);
@@ -540,6 +572,13 @@ public final class CoreCommands {
         .append(Text.of(String.valueOf(ConduitMetrics.current().botFilterBlocks())).color(Messages.BODY)));
     source.sendMessage(Text.of("Channel-guard actions: ").color(Messages.LABEL)
         .append(Text.of(String.valueOf(ConduitMetrics.current().channelGuardActions())).color(Messages.BODY)));
+    var modded = runtime.modded().settings();
+    source.sendMessage(Text.of("Mod compatibility: ").color(Messages.LABEL)
+        .append(Text.of(modded.enabled() ? "Enabled" : "Disabled").color(Messages.BODY)));
+    source.sendMessage(Text.of("Known-packs limit: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(modded.knownPacksLimit())).color(Messages.BODY)));
+    source.sendMessage(Text.of("Handshake cache entries: ").color(Messages.LABEL)
+        .append(Text.of(String.valueOf(runtime.modded().cache().size())).color(Messages.BODY)));
     source.sendMessage(Text.of("Plugins: ").color(Messages.LABEL)
         .append(Text.of(String.valueOf(runtime.pluginCatalog().size())).color(Messages.BODY)));
   }
@@ -751,7 +790,7 @@ public final class CoreCommands {
   private static List<String> completeConduit(List<String> arguments) {
     if (arguments.size() > 1) return List.of();
     return prefix(List.of("info", "plugins", "servers", "uptime", "dump", "heap", "reload", "metrics",
-            "health", "maintenance", "drain", "undrain", "doctor", "diagnostics", "attack", "help"),
+            "health", "maintenance", "drain", "undrain", "doctor", "diagnostics", "attack", "cache", "help"),
         arguments.isEmpty() ? "" : arguments.getFirst());
   }
 

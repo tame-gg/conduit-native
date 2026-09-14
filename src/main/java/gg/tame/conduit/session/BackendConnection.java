@@ -13,6 +13,8 @@ import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.protocol.PacketCompression;
 import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.modded.FmlAddressMarkers;
+import gg.tame.conduit.modded.ModLoaderFamily;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -46,7 +48,28 @@ public final class BackendConnection implements AutoCloseable {
     return socket;
   }
   public static void handshake(Socket socket, Handshake clientHandshake, BackendServer server, PlayerProfile player) throws IOException {
-    Handshake backendHandshake = new Handshake(clientHandshake.protocolVersion(), server.address().getHostString(), server.address().getPort(), 2);
+    handshake(socket, clientHandshake, server, player, FmlAddressMarkers.MarkerKind.NONE, ModLoaderFamily.UNKNOWN);
+  }
+
+  public static void handshake(Socket socket, Handshake clientHandshake, BackendServer server, PlayerProfile player,
+                               FmlAddressMarkers.MarkerKind clientMarker, ModLoaderFamily clientFamily) throws IOException {
+    String host = server.address().getHostString();
+    boolean wantsForge = server.accepts(ModLoaderFamily.FORGE) && !server.supportedModLoaders().isEmpty()
+        && server.supportedModLoaders().contains(ModLoaderFamily.FORGE)
+        && !server.supportedModLoaders().contains(ModLoaderFamily.VANILLA);
+    boolean wantsNeo = server.accepts(ModLoaderFamily.NEOFORGE) && !server.supportedModLoaders().isEmpty()
+        && server.supportedModLoaders().contains(ModLoaderFamily.NEOFORGE)
+        && !server.supportedModLoaders().contains(ModLoaderFamily.VANILLA);
+    // When backend is unrestricted, preserve observed client marker so Forge/NeoForge backends keep working.
+    FmlAddressMarkers.MarkerKind marker = clientMarker;
+    if (marker == FmlAddressMarkers.MarkerKind.NONE) {
+      if (wantsNeo) marker = FmlAddressMarkers.MarkerKind.FML3;
+      else if (wantsForge) marker = FmlAddressMarkers.MarkerKind.FML2;
+    }
+    if (marker != FmlAddressMarkers.MarkerKind.NONE) {
+      host = FmlAddressMarkers.append(host, marker);
+    }
+    Handshake backendHandshake = new Handshake(clientHandshake.protocolVersion(), host, server.address().getPort(), 2);
     MinecraftFrames.write(socket.getOutputStream(), backendHandshake.encode());
     MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(player));
   }

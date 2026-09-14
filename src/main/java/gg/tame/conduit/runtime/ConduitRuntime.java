@@ -26,6 +26,7 @@ import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
 import gg.tame.conduit.scheduler.ConduitScheduler;
 import gg.tame.conduit.security.SecurityService;
+import gg.tame.conduit.modded.ModdedService;
 import gg.tame.conduit.session.PlayerManager;
 import gg.tame.conduit.session.TrackedPlayer;
 import gg.tame.conduit.version.VersionGate;
@@ -50,6 +51,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final VersionGate versionGate;
   private final GracefulShutdown gracefulShutdown;
   private final SecurityService security;
+  private final ModdedService modded;
   private final ConduitEventManager events = new ConduitEventManager();
   private final ConduitScheduler scheduler = new ConduitScheduler();
   private final PermissionProvider permissions = new PermissivePermissionProvider();
@@ -77,6 +79,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.versionGate = new VersionGate(configuration.versions());
     this.gracefulShutdown = new GracefulShutdown(configuration.shutdown());
     this.security = new SecurityService(configuration.security());
+    this.modded = new ModdedService(configuration.modded());
     this.commands = new CommandManager();
     this.players = new PlayerManager();
     this.servers = new ServerViews(selector.registry(), selector);
@@ -94,6 +97,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   public VersionGate versionGate() { return versionGate; }
   public GracefulShutdown gracefulShutdown() { return gracefulShutdown; }
   public SecurityService security() { return security; }
+  public ModdedService modded() { return modded; }
   public PluginCatalog pluginCatalog() { return pluginCatalog; }
   public long uptimeMillis() { return Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000L); }
   public CommandManager commandManager() { return commands; }
@@ -149,6 +153,8 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       live.add("shutdown.*");
       security.applySettings(next.security());
       live.add("security.*");
+      modded.applySettings(next.modded());
+      live.add("modded.*");
       this.configuration = current.withOps(next.ops());
       if (!restart.isEmpty()) {
         return new ReloadResult(true, restart, live, null);
@@ -165,6 +171,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     for (int i = 0; i < a.size(); i++) {
       if (!a.get(i).name().equals(b.get(i).name())) return false;
       if (!a.get(i).address().equals(b.get(i).address())) return false;
+      if (!a.get(i).supportedModLoaders().equals(b.get(i).supportedModLoaders())) return false;
     }
     return true;
   }

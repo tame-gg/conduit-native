@@ -54,8 +54,12 @@ public final class ConfigurationLoader {
       String addressKey = "servers." + name + ".address";
       String hostKey = "servers." + name + ".host";
       if (values.containsKey(addressKey) && values.containsKey(hostKey)) throw new IllegalArgumentException("backend " + name + " has both address and host");
-      if (values.containsKey(addressKey)) servers.add(new BackendServer(name, parseAddress(values.get(addressKey))));
-      else servers.add(new BackendServer(name, new InetSocketAddress(values.get(hostKey), integer(values, "servers." + name + ".port"))));
+      InetSocketAddress address = values.containsKey(addressKey)
+          ? parseAddress(values.get(addressKey))
+          : new InetSocketAddress(values.get(hostKey), integer(values, "servers." + name + ".port"));
+      var loaders = gg.tame.conduit.modded.ModCompatibility.parseList(
+          optionalList(values, "servers." + name + ".mod-loaders"));
+      servers.add(new BackendServer(name, address, loaders));
     }
     return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
@@ -64,7 +68,26 @@ public final class ConfigurationLoader {
 
   private static OpsSettings ops(Map<String, String> values) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
-    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values));
+    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values));
+  }
+
+  private static ModdedSettings modded(Map<String, String> values) {
+    int knownPacks = optionalInteger(values, "protocol.known-packs-limit",
+        optionalInteger(values, "modded.known-packs-limit", ModdedSettings.defaults().knownPacksLimit()));
+    return new ModdedSettings(
+        optionalBoolean(values, "modded.enabled", true),
+        knownPacks,
+        optionalBoolean(values, "modded.handshake-cache", true),
+        optionalInteger(values, "modded.handshake-cache-capacity", 4096),
+        optionalInteger(values, "modded.handshake-cache-ttl-ms", 300_000),
+        optionalBoolean(values, "modded.forge-compat", true),
+        optionalBoolean(values, "modded.neoforge-compat", true),
+        optionalBoolean(values, "modded.fabric-compat", true),
+        gg.tame.conduit.modded.UnknownModdedPolicy.parse(
+            optionalString(values, "modded.unknown-policy", "allow")),
+        optionalBoolean(values, "modded.packet-queue-enabled", true),
+        optionalInteger(values, "modded.packet-queue-max-depth", 512),
+        optionalBoolean(values, "modded.log-mod-handshakes", false));
   }
 
   private static SecuritySettings security(Map<String, String> values) {

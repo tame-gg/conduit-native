@@ -6,6 +6,9 @@ import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.health.BackendHealth;
 import gg.tame.conduit.health.BackendHealthService;
+import gg.tame.conduit.modded.ModCompatibility;
+import gg.tame.conduit.modded.ModLoaderFamily;
+import gg.tame.conduit.modded.UnknownModdedPolicy;
 import gg.tame.conduit.protocol.BackendStatusProbe;
 import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.ProtocolDefinition;
@@ -133,13 +136,29 @@ public final class BackendSelector {
   }
 
   public boolean isEligible(String name, int clientProtocol, boolean allowDrainingBypass) {
-    if (registry.get(name).isEmpty()) return false;
+    return isEligible(name, clientProtocol, ModLoaderFamily.UNKNOWN, allowDrainingBypass);
+  }
+
+  public boolean isEligible(String name, int clientProtocol, ModLoaderFamily clientFamily, boolean allowDrainingBypass) {
+    Optional<BackendServer> server = registry.get(name);
+    if (server.isEmpty()) return false;
     if (!ProtocolDefinition.hasCodec(clientProtocol)) return false;
     if (health != null) {
       if (health.snapshot(name).health() == BackendHealth.UNHEALTHY) return false;
       if (health.isDraining(name) && !allowDrainingBypass) return false;
     } else if (status(name).availability() == ServerAvailability.OFFLINE) {
       return false;
+    }
+    if (configuration.modded().enabled()) {
+      UnknownModdedPolicy policy = configuration.modded().unknownPolicy();
+      if (!ModCompatibility.isEligible(clientFamily == null ? ModLoaderFamily.UNKNOWN : clientFamily, server.get(), policy)) {
+        return false;
+      }
+      // Feature flags: disable entire families when compat toggles are off.
+      ModLoaderFamily family = clientFamily == null ? ModLoaderFamily.UNKNOWN : clientFamily;
+      if (family == ModLoaderFamily.FORGE && !configuration.modded().forgeCompat()) return false;
+      if (family == ModLoaderFamily.NEOFORGE && !configuration.modded().neoForgeCompat()) return false;
+      if (family == ModLoaderFamily.FABRIC && !configuration.modded().fabricCompat()) return false;
     }
     // Protocol translation honesty is separate: Via-style backends may accept the client wire
     // protocol even when status advertises a different native version.
@@ -150,33 +169,41 @@ public final class BackendSelector {
 
   /** First hop follows routing.initial, then fallback, then any other configured servers. */
   public List<BackendServer> candidatesFor(int clientProtocol) {
-    return candidatesFor(clientProtocol, false);
+    return candidatesFor(clientProtocol, ModLoaderFamily.UNKNOWN, false);
   }
 
   public List<BackendServer> candidatesFor(int clientProtocol, boolean allowDrainingBypass) {
+    return candidatesFor(clientProtocol, ModLoaderFamily.UNKNOWN, allowDrainingBypass);
+  }
+
+  public List<BackendServer> candidatesFor(int clientProtocol, ModLoaderFamily clientFamily, boolean allowDrainingBypass) {
     LinkedHashSet<String> orderedNames = new LinkedHashSet<>();
     orderedNames.addAll(configuration.initialBackends());
     orderedNames.addAll(configuration.fallbackBackends());
     for (BackendServer server : registry.all()) orderedNames.add(server.name());
     List<BackendServer> ordered = new ArrayList<>();
     for (String name : orderedNames) {
-      if (!isEligible(name, clientProtocol, allowDrainingBypass)) continue;
+      if (!isEligible(name, clientProtocol, clientFamily, allowDrainingBypass)) continue;
       registry.get(name).ifPresent(ordered::add);
     }
     return ordered.isEmpty() ? candidates() : ordered;
   }
 
   public List<BackendServer> fallback(String current, Set<String> failed) {
-    return fallback(current, failed, -1, false);
+    return fallback(current, failed, -1, ModLoaderFamily.UNKNOWN, false);
   }
 
   public List<BackendServer> fallback(String current, Set<String> failed, int clientProtocol, boolean allowDrainingBypass) {
+    return fallback(current, failed, clientProtocol, ModLoaderFamily.UNKNOWN, allowDrainingBypass);
+  }
+
+  public List<BackendServer> fallback(String current, Set<String> failed, int clientProtocol, ModLoaderFamily clientFamily, boolean allowDrainingBypass) {
     List<String> names = new ArrayList<>(configuration.fallbackBackends());
     names.removeIf(name -> ServerRegistry.normalize(name).equals(ServerRegistry.normalize(current)));
     names.removeIf(name -> failed.contains(ServerRegistry.normalize(name)));
     List<BackendServer> result = new ArrayList<>();
     for (String name : names) {
-      if (clientProtocol >= 0 && !isEligible(name, clientProtocol, allowDrainingBypass)) continue;
+      if (clientProtocol >= 0 && !isEligible(name, clientProtocol, clientFamily, allowDrainingBypass)) continue;
       if (clientProtocol < 0 && health != null) {
         if (health.snapshot(name).health() == BackendHealth.UNHEALTHY) continue;
         if (health.isDraining(name) && !allowDrainingBypass) continue;
