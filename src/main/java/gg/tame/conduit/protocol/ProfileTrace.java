@@ -49,7 +49,11 @@ public final class ProfileTrace {
       UUID uuid = GameProfiles.readUuid(input);
       String name = MinecraftInput.string(input, 16);
       List<ProfileProperty> properties = GameProfiles.readProperties(input);
-      System.out.println(line(where, state, id, "LOGIN_SUCCESS") + " " + who(uuid, self) + " name=" + name + " " + properties(properties));
+      // Whatever follows the profile is 26.2's trailer, which Conduit copies but does not decode.
+      int trailing = input.available();
+      System.out.println(line(where, state, id, "LOGIN_SUCCESS") + " " + who(uuid, self) + " name=" + name + " "
+          + properties(properties) + " trailingBytes=" + trailing);
+      hex(packet);
     }
   }
   private static void playerInfoRemove(String where, ConnectionState state, int id, byte[] packet, PlayerProfile self) throws Exception {
@@ -61,7 +65,22 @@ public final class ProfileTrace {
       System.out.println(line(where, state, id, "PLAYER_INFO_REMOVE") + " count=" + count + targets);
     }
   }
+  /**
+   * Raw bytes of the first few player-info packets. The decoder and {@code selfAdd} share their
+   * assumptions about the 26.2 layout, so a decoded trace cannot disprove those assumptions; the
+   * bytes can. Bounded, and the textures blob is public profile data rather than a secret.
+   */
+  private static int hexBudget = 5;
+  private static synchronized void hex(byte[] packet) {
+    if (hexBudget <= 0) return;
+    hexBudget--;
+    StringBuilder out = new StringBuilder("    raw[" + packet.length + "] ");
+    for (int index = 0; index < Math.min(packet.length, 96); index++) out.append(String.format("%02x", packet[index]));
+    if (packet.length > 96) out.append("...(truncated)");
+    System.out.println(out);
+  }
   private static void playerInfoUpdate(String where, ConnectionState state, int id, byte[] packet, PlayerProfile self) throws Exception {
+    hex(packet);
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
       int actions = input.readUnsignedByte();
