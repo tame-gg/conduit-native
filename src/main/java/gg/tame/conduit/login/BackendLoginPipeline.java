@@ -55,7 +55,7 @@ public final class BackendLoginPipeline {
     }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_SET_COMPRESSION)) {
       compression.enable(MinecraftInput.varInt(new DataInputStream(new ByteArrayInputStream(body))));
-      if (hideLoginSuccess) forwardToClient = false;
+      forwardToClient = false;
       return null;
     }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_SUCCESS)) {

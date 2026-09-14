@@ -51,6 +51,8 @@ or `host` + `port`. Commands never print those addresses. At startup Conduit sta
 
 Lobby and survival are Paper 1.20.4 with **ViaVersion 5.11.0**, so a 26.2 client can join them on the **client's** protocol (776). Status ping still reports 765; that is the native server version, not a Conduit translator.
 
+Backend Set Compression is consumed by Conduit and never forwarded to the client. Client↔Conduit stays uncompressed; Conduit unwraps compressed backend frames. Forwarding Set Compression caused 26.2 vanilla `DataFormatException: incorrect header check`.
+
 ## Authentication
 
 ```toml

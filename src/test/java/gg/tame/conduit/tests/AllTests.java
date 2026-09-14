@@ -57,6 +57,7 @@ public final class AllTests {
     createAuthenticatedModernForwardingPayload();
     answerStatusAndPing();
     completeModernBackendExchange();
+    keepSetCompressionOffTheClient();
     rejectInvalidLoginPluginRequests();
     mockBackendModernForwardingWireExchange();
     encryptionAndServerHash();
@@ -214,6 +215,22 @@ public final class AllTests {
       input.readNBytes(32);
       require(MinecraftInput.varInt(input) == 4, "Paper lazy-session version must be echoed");
     }
+  }
+  private static void keepSetCompressionOffTheClient() throws Exception {
+    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
+    BackendLoginPipeline pipeline = pipeline(secret);
+    ByteArrayOutputStream setCompression = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(setCompression)) {
+      MinecraftOutput.varInt(output, 3);
+      MinecraftOutput.varInt(output, 256);
+    }
+    require(pipeline.onBackendPacket(setCompression.toByteArray(), 1024) == null, "set compression has no plugin response");
+    require(!pipeline.shouldForward(), "set compression must not reach the client");
+    require(pipeline.compression().enabled(), "backend compression enabled");
+    byte[] tiny = {9, 8, 7};
+    byte[] wrapped = pipeline.compression().wrap(tiny);
+    require(wrapped[0] == 0 && wrapped[1] == 9, "below-threshold packets stay uncompressed with a 0 prefix");
+    require(java.util.Arrays.equals(pipeline.compression().unwrap(wrapped), tiny), "unwrap round trip");
   }
   private static void rejectInvalidLoginPluginRequests() throws Exception {
     Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
