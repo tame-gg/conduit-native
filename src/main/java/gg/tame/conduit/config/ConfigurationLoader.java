@@ -1,5 +1,6 @@
 package gg.tame.conduit.config;
 
+import gg.tame.conduit.protocol.ProtocolCatalog;
 import gg.tame.conduit.protocol.ProtocolVersion;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -175,6 +176,8 @@ public final class ConfigurationLoader {
     if (raw == null || raw.isBlank()) throw new IllegalArgumentException("empty version token");
     String token = raw.strip();
     if (token.chars().allMatch(Character::isDigit)) return Integer.parseInt(token);
+    var release = ProtocolCatalog.findRelease(token);
+    if (release.isPresent()) return release.get().protocol();
     String normalized = token.toLowerCase(Locale.ROOT);
     for (ProtocolVersion version : ProtocolVersion.CATALOG) {
       if (version.displayName().equalsIgnoreCase(token)) return version.number();
