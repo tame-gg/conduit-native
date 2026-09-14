@@ -54,6 +54,7 @@ final class ProfileTests {
     playerInfoForwardsUntouchedWhenNothingSubstituted();
     playerInfoRoundTripsEveryAction776();
     switchHandoffNeverDropsBackendPlayPackets();
+    mergeProxyCommandsIntoReal26_2Tree();
     mojangVerifyStoresTextures();
     protocolIds();
   }
@@ -366,6 +367,64 @@ final class ProfileTests {
     require(gg.tame.conduit.session.PlayerSession.handoff(ConnectionState.CONFIGURATION, ConnectionState.PLAY)
         == gg.tame.conduit.session.PlayerSession.Handoff.FORWARD_CONFIGURATION, "late configuration still forwarded");
   }
+  /**
+   * A real 2338-node Declare Commands tree captured from a 26.2 backend. The old decoder died on
+   * it with EOFException because 26.2 shifted every brigadier parser id down by one; the merge must
+   * now append without decoding argument properties, leaving every other node byte-identical.
+   */
+  private static void mergeProxyCommandsIntoReal26_2Tree() throws Exception {
+    java.io.InputStream stream = ProfileTests.class.getResourceAsStream("/command-tree-776.bin");
+    if (stream == null) { System.out.println("command-tree-776.bin fixture absent, skipping"); return; }
+    byte[] original;
+    try (stream) { original = stream.readAllBytes(); }
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    List<String> servers = List.of("lobby", "survival", "smp", "mctt", "hub3");
+    byte[] merged = gg.tame.conduit.command.CommandGraphs.mergeProxyCommands(protocol, original, servers);
+
+    int[] before = header(original);
+    int[] after = header(merged);
+    require(before[0] == 0x10 && after[0] == 0x10, "packet id preserved");
+    // conduit + server(5) + send(6) = 1 + 1+5 + 1+6 = 14 new nodes.
+    require(after[1] == before[1] + 14, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
+    require(after[3] == before[3] + 3, "root gained exactly three children");
+    for (int index = 0; index < before[3]; index++) {
+      require(rootChild(original, index) == rootChild(merged, index), "existing root child " + index + " unchanged");
+    }
+    require(rootChild(merged, before[3]) == before[1], "first proxy node appended after the original nodes");
+    require(merged[merged.length - 1] == 0, "root index still 0");
+    // The untouched middle must survive byte for byte.
+    int originalTail = original.length - 1 - rootNodeEnd(original);
+    require(java.util.Arrays.equals(
+        java.util.Arrays.copyOfRange(original, rootNodeEnd(original), original.length - 1),
+        java.util.Arrays.copyOfRange(merged, rootNodeEnd(merged), rootNodeEnd(merged) + originalTail)),
+        "backend nodes copied verbatim");
+    require(new String(merged, java.nio.charset.StandardCharsets.UTF_8).contains("survival"), "server names present");
+  }
+  /** {packetId, nodeCount, rootNodeOffset, rootChildCount} */
+  private static int[] header(byte[] packet) throws Exception {
+    DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet));
+    int id = MinecraftInput.varInt(input);
+    int count = MinecraftInput.varInt(input);
+    int offset = packet.length - input.available();
+    input.readByte();
+    int children = MinecraftInput.varInt(input);
+    return new int[] {id, count, offset, children};
+  }
+  private static int rootChild(byte[] packet, int index) throws Exception {
+    DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet));
+    MinecraftInput.varInt(input); MinecraftInput.varInt(input); input.readByte();
+    int count = MinecraftInput.varInt(input);
+    int value = 0;
+    for (int position = 0; position <= index && position < count; position++) value = MinecraftInput.varInt(input);
+    return value;
+  }
+  private static int rootNodeEnd(byte[] packet) throws Exception {
+    DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet));
+    MinecraftInput.varInt(input); MinecraftInput.varInt(input); input.readByte();
+    int count = MinecraftInput.varInt(input);
+    for (int index = 0; index < count; index++) MinecraftInput.varInt(input);
+    return packet.length - input.available();
+  }
   private static void mojangVerifyStoresTextures() throws Exception {
     com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     http.createContext("/ok", exchange -> {
@@ -380,7 +439,10 @@ final class ProfileTests {
   }
   private static void protocolIds() {
     require(ProtocolDefinition.forVersion(776).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE) == 0x46, "776 player info");
-    require(ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE) == 0x3E, "765 player info");
+    // Cross-checked against ViaVersion's ClientboundPackets1_20_3 / ClientboundPackets26_1.
+    require(ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE) == 0x3C, "765 player info");
+    require(ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_REMOVE) == 0x3B, "765 player info remove");
+    require(ProtocolDefinition.forVersion(776).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_REMOVE) == 0x45, "776 player info remove");
   }
   private static PlayerProfile sample() {
     return new PlayerProfile(UUID.fromString("80c43b34-0c58-478b-a0ae-71b844970446"), "Koels",

@@ -193,10 +193,17 @@ Conduit rewrites backend ADD_PLAYER for the local UUID to the canonical properti
 Other players' properties are forwarded unchanged. Conduit does not invent skins or capes.
 
 On 776 the new backend reaches Play before the client finishes reconfiguring, because 776 waits on
-Known Packs. Backend Play packets read during that wait are forwarded, not discarded. Dropping them
-lost the backend's own `player_info_update` ADD_PLAYER — the packet that refills the player list
-reconfiguration just cleared — so the TAB head, skin layer and cape went missing after a switch
-depending on timing. 765 never hit this, because it does not read the backend while waiting.
+Known Packs. Backend Play packets read during that wait are forwarded rather than silently dropped.
+Tracing a real switch showed this window does not open in practice, so it was not the cause of the
+lost skin layers; it is still a correctness hole and the drop path now logs. 765 does not read the
+backend while waiting, so it never had it.
+
+Skin layers and capes survive a switch because Conduit replays the client's cached **Client
+Information** packet to each new backend. The client sends it once, during its initial
+configuration; it carries Displayed Skin Parts (cape, jacket, sleeves, pants, hat). A backend that
+never receives it broadcasts defaults, and a 26.2 backend sends a full `player_info_update`
+including `hat=false`, which lands after Conduit's entry and overwrites it. The textures property is
+intact throughout — it was never the profile that was lost.
 
 The clientbound profile rewrites are scoped to the client's connection state. Packet ids are only
 unique within a state: Login Success is id `2`, and id `2` in Configuration is Configuration
