@@ -1,15 +1,14 @@
 package gg.tame.conduit.protocol;
 
-import java.util.HashMap;
 import java.util.Map;
 
 /** Packet-id registry for one supported protocol version. Add versions here, not to sessions. */
 public final class ProtocolDefinition {
   private final ProtocolVersion version;
   private final ProtocolCapabilities capabilities;
-  private final Map<Key, Integer> ids;
-  private ProtocolDefinition(ProtocolVersion version, ProtocolCapabilities capabilities, Map<Key, Integer> ids) {
-    this.version = version; this.capabilities = capabilities; this.ids = Map.copyOf(ids);
+  private final int[][][] ids;
+  private ProtocolDefinition(ProtocolVersion version, ProtocolCapabilities capabilities, int[][][] ids) {
+    this.version = version; this.capabilities = capabilities; this.ids = ids;
   }
   public ProtocolVersion version() { return version; }
   public ProtocolCapabilities capabilities() { return capabilities; }
@@ -17,16 +16,19 @@ public final class ProtocolDefinition {
   public boolean loginShouldAuthenticate() { return capabilities.loginShouldAuthenticate(); }
   public boolean knownPacks() { return capabilities.knownPacks(); }
   public int id(ConnectionState state, PacketDirection direction, PacketKind kind) {
-    Integer id = ids.get(new Key(state, direction, kind));
-    if (id == null) throw new IllegalArgumentException("packet is not defined for " + version.displayName() + " " + state + "/" + direction + ": " + kind);
+    int id = lookup(state, direction, kind);
+    if (id < 0) throw new IllegalArgumentException("packet is not defined for " + version.displayName() + " " + state + "/" + direction + ": " + kind);
     return id;
   }
   public boolean defines(ConnectionState state, PacketDirection direction, PacketKind kind) {
-    return ids.containsKey(new Key(state, direction, kind));
+    return lookup(state, direction, kind) >= 0;
   }
   public boolean is(ConnectionState state, PacketDirection direction, int id, PacketKind kind) {
-    Integer expected = ids.get(new Key(state, direction, kind));
-    return expected != null && expected == id;
+    int expected = lookup(state, direction, kind);
+    return expected >= 0 && expected == id;
+  }
+  private int lookup(ConnectionState state, PacketDirection direction, PacketKind kind) {
+    return ids[state.ordinal()][direction.ordinal()][kind.ordinal()];
   }
   public static ProtocolDefinition forVersion(int number) {
     ProtocolDefinition definition = BY_NUMBER.get(number);
@@ -38,9 +40,15 @@ public final class ProtocolDefinition {
   }
   public static boolean hasCodec(int number) { return BY_NUMBER.containsKey(number); }
   private static ProtocolDefinition define(ProtocolVersion version, ProtocolCapabilities capabilities, Object... entries) {
-    Map<Key, Integer> ids = new HashMap<>();
+    int[][][] ids = new int[ConnectionState.values().length][PacketDirection.values().length][PacketKind.values().length];
+    for (int[][] byDirection : ids) {
+      for (int[] byKind : byDirection) java.util.Arrays.fill(byKind, -1);
+    }
     for (int index = 0; index < entries.length; index += 4) {
-      ids.put(new Key((ConnectionState) entries[index], (PacketDirection) entries[index + 1], (PacketKind) entries[index + 2]), (Integer) entries[index + 3]);
+      ConnectionState state = (ConnectionState) entries[index];
+      PacketDirection direction = (PacketDirection) entries[index + 1];
+      PacketKind kind = (PacketKind) entries[index + 2];
+      ids[state.ordinal()][direction.ordinal()][kind.ordinal()] = (Integer) entries[index + 3];
     }
     return new ProtocolDefinition(version, capabilities, ids);
   }
@@ -146,5 +154,4 @@ public final class ProtocolDefinition {
       ProtocolVersion.MINECRAFT_1_20_1.number(), V1_20_1,
       ProtocolVersion.MINECRAFT_1_20_4.number(), V1_20_4,
       ProtocolVersion.MINECRAFT_26_2.number(), V26_2);
-  private record Key(ConnectionState state, PacketDirection direction, PacketKind kind) { }
 }

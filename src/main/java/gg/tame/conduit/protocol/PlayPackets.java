@@ -75,7 +75,19 @@ public final class PlayPackets {
     }
   }
   public static int packetId(byte[] packet) throws IOException {
-    return MinecraftInput.varInt(new DataInputStream(new ByteArrayInputStream(packet)));
+    return peekId(packet);
+  }
+  /** Reads a packet id without allocating streams. */
+  public static int peekId(byte[] packet) throws IOException {
+    int value = 0;
+    int index = 0;
+    for (int shift = 0; shift < 5; shift++) {
+      if (index >= packet.length) throw new IOException("truncated packet id");
+      int current = packet[index++] & 0xff;
+      value |= (current & 0x7f) << (shift * 7);
+      if ((current & 0x80) == 0) return value;
+    }
+    throw new IOException("VarInt exceeds five bytes");
   }
   /** The packet without its leading varint id. */
   public static byte[] body(byte[] packet) throws IOException {

@@ -1,6 +1,7 @@
 package gg.tame.conduit.protocol;
 
 import gg.tame.conduit.login.PlayerProfile;
+import gg.tame.conduit.metrics.ConduitMetrics;
 import java.io.IOException;
 
 /**
@@ -17,9 +18,17 @@ public final class ProtocolProfileAdapter {
     try {
       if (state == ConnectionState.LOGIN) return LoginSuccess.replaceProfile(protocol, packet, profile);
       if (state == ConnectionState.PLAY) {
-        return PlayerInfoUpdate.ensureOwnTextures(protocol, JoinGame.markOnlineMode(protocol, packet, profile), profile);
+        int id = PlayPackets.peekId(packet);
+        if (protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_LOGIN)) {
+          return JoinGame.markOnlineMode(protocol, packet, profile);
+        }
+        if (protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_PLAYER_INFO_UPDATE)) {
+          return PlayerInfoUpdate.ensureOwnTextures(protocol, packet, profile);
+        }
       }
-    } catch (IOException ignored) { }
+    } catch (IOException exception) {
+      ConduitMetrics.current().decodeFailure();
+    }
     return packet;
   }
 }

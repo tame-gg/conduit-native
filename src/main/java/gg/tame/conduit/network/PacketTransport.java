@@ -2,7 +2,9 @@ package gg.tame.conduit.network;
 
 import gg.tame.conduit.crypto.AesCfb8;
 import gg.tame.conduit.crypto.CipherStreams;
+import gg.tame.conduit.metrics.ConduitMetrics;
 import gg.tame.conduit.protocol.MinecraftFrames;
+import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -14,14 +16,33 @@ public final class PacketTransport {
   private InputStream input;
   private OutputStream output;
   private EncryptionState state = EncryptionState.PLAINTEXT;
+  private final Object writeLock = new Object();
   public PacketTransport(Socket socket) throws IOException {
+    socket.setTcpNoDelay(true);
     this.input = socket.getInputStream();
-    this.output = socket.getOutputStream();
+    this.output = new BufferedOutputStream(socket.getOutputStream(), 8192);
   }
   public PacketTransport(InputStream input, OutputStream output) { this.input = input; this.output = output; }
   public EncryptionState state() { return state; }
-  public byte[] read(int maximumFrameBytes) throws IOException { return MinecraftFrames.read(input, maximumFrameBytes); }
-  public void write(byte[] packet) throws IOException { MinecraftFrames.write(output, packet); }
+  public byte[] read(int maximumFrameBytes) throws IOException {
+    byte[] packet = MinecraftFrames.read(input, maximumFrameBytes);
+    ConduitMetrics.current().inbound(packet.length);
+    return packet;
+  }
+  public void write(byte[] packet) throws IOException {
+    writeUnflushed(packet);
+    flush();
+  }
+  public void writeUnflushed(byte[] packet) throws IOException {
+    synchronized (writeLock) {
+      MinecraftFrames.writeUnflushed(output, packet);
+      ConduitMetrics.current().outbound(packet.length);
+    }
+  }
+  public void flush() throws IOException {
+    synchronized (writeLock) { output.flush(); }
+  }
+  public int available() throws IOException { return input.available(); }
   public void beginNegotiation() {
     if (state != EncryptionState.PLAINTEXT) throw new IllegalStateException("encryption negotiation is not valid in " + state);
     state = EncryptionState.ENCRYPTION_NEGOTIATING;

@@ -4,6 +4,7 @@ import gg.tame.conduit.protocol.ConnectionState;
 import gg.tame.conduit.protocol.MinecraftInput;
 import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
+import gg.tame.conduit.protocol.PlayPackets;
 import gg.tame.conduit.protocol.PluginMessage;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import java.io.ByteArrayInputStream;
@@ -14,10 +15,11 @@ import java.util.Optional;
 public final class BrandRewriter {
   private BrandRewriter() {}
   public static Optional<byte[]> rewrite(ProtocolDefinition protocol, ConnectionState state, byte[] packet, int maximumBytes) throws IOException {
+    int id = PlayPackets.peekId(packet);
+    PacketKind kind = kindFor(protocol, state, id);
+    if (kind == null) return Optional.empty();
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
-      int id = MinecraftInput.varInt(input);
-      PacketKind kind = kindFor(protocol, state, id);
-      if (kind == null) return Optional.empty();
+      MinecraftInput.varInt(input);
       PluginMessage message = PluginMessage.decodeBody(input.readAllBytes(), maximumBytes);
       if (!ServerBrand.CHANNEL.equals(message.channel())) return Optional.empty();
       String rewritten = ServerBrand.display(message.brandText());

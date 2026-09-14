@@ -28,7 +28,7 @@ public final class JoinGame {
     if (!protocol.capabilities().joinGameOnlineMode()) return packet;
     if (!profile.authenticated()) return packet;
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN)) return packet;
-    if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.PLAY_LOGIN)) return packet;
+    if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.peekId(packet), PacketKind.PLAY_LOGIN)) return packet;
     int onlineMode = packet.length - 2;
     if (onlineMode < 1) return packet;
     if (!isBoolean(packet[onlineMode]) || !isBoolean(packet[packet.length - 1])) return packet;
