@@ -15,19 +15,20 @@ public record ProtocolVersion(int number, String displayName, ProtocolEra era) {
   public static final ProtocolVersion MINECRAFT_1_20_1 = new ProtocolVersion(763, "1.20.1", ProtocolEra.FLATTENING);
   public static final ProtocolVersion MINECRAFT_1_20_2 = new ProtocolVersion(764, "1.20.2", ProtocolEra.CONFIGURATION);
   public static final ProtocolVersion MINECRAFT_1_20_4 = new ProtocolVersion(765, "1.20.4", ProtocolEra.CONFIGURATION);
+  public static final ProtocolVersion MINECRAFT_1_20_5 = new ProtocolVersion(766, "1.20.5", ProtocolEra.CONFIGURATION);
   public static final ProtocolVersion MINECRAFT_1_21 = new ProtocolVersion(767, "1.21", ProtocolEra.CURRENT);
   public static final ProtocolVersion MINECRAFT_1_21_4 = new ProtocolVersion(769, "1.21.4", ProtocolEra.CURRENT);
   public static final ProtocolVersion MINECRAFT_1_21_8 = new ProtocolVersion(772, "1.21.8", ProtocolEra.CURRENT);
   public static final ProtocolVersion MINECRAFT_26_2 = new ProtocolVersion(776, "26.2", ProtocolEra.CURRENT);
   public static final List<ProtocolVersion> CATALOG = List.of(
       MINECRAFT_1_7_10, MINECRAFT_1_8_9, MINECRAFT_1_12_2, MINECRAFT_1_16_5, MINECRAFT_1_19_4,
-      MINECRAFT_1_20_1, MINECRAFT_1_20_2, MINECRAFT_1_20_4, MINECRAFT_1_21, MINECRAFT_1_21_4,
+      MINECRAFT_1_20_1, MINECRAFT_1_20_2, MINECRAFT_1_20_4, MINECRAFT_1_20_5, MINECRAFT_1_21, MINECRAFT_1_21_4,
       MINECRAFT_1_21_8, MINECRAFT_26_2);
   public static ProtocolEra eraOf(int number) {
     if (number <= 47) return ProtocolEra.LEGACY;
     if (number <= 340) return ProtocolEra.CLASSIC_MODERN;
     if (number <= 763) return ProtocolEra.FLATTENING;
-    if (number <= 765) return ProtocolEra.CONFIGURATION;
+    if (number <= 766) return ProtocolEra.CONFIGURATION;
     return ProtocolEra.CURRENT;
   }
   public static String display(int number) {

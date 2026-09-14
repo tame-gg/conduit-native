@@ -36,7 +36,7 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 
 **Direct:** same codec version only (`765→765`, `763→763`, `776→776`).
 
-**Translated:** none. `1.20.4 → 26.2` and `26.2 → 1.20.4` are UNSUPPORTED.
+**Translated (PARTIAL):** `765 ↔ 766` (1.20.4 ↔ 1.20.5/1.20.6) for Conduit-known login/configuration/control packets. Join Game / Player Info Update / registry blobs are intentionally unsupported until dedicated field codecs exist. `1.20.4 → 26.2` remains UNSUPPORTED.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 
@@ -276,12 +276,27 @@ Once the client has entered Minecraft's configuration phase for a switch, some f
 | Client | Backend | Mode | Status |
 |--------|---------|------|--------|
 | 1.20.4 (765) | 1.20.4 (765) | DIRECT | Tested |
+| 1.20.5 (766) | 1.20.5 (766) | DIRECT | Codec present; unit-tested |
 | 26.2 (776) | 26.2 (776) | DIRECT | Tested |
 | 1.20.1 (763) | 1.20.1 (763) | DIRECT | Codec present; limited testing |
+| 765 ↔ 766 | login/config/control | TRANSLATED (PARTIAL) | Semantic codec + golden unit tests; **NOT REAL-CLIENT VERIFIED** |
 | 765 ↔ 776 | — | UNSUPPORTED in Conduit | Needs backend ViaVersion or a future translator |
-| 1.7.10–1.19.x | — | UNSUPPORTED | Not implemented |
+| 1.7.10–1.19.x | — | UNSUPPORTED | Catalog identities only — no codecs |
 
-Do **not** read this as “supports 1.7.10–26.2”. Only DIRECT same-version codecs above are real. Cross-version **TRANSLATED** mode is planned, not implemented.
+Do **not** read this as “supports 1.7.10–26.2”. Only listed DIRECT codecs and the PARTIAL 765↔766 translator are real.
+
+### Protocol translation architecture (Phase 4)
+
+Pipeline (already framed / decompressed / decrypted):
+
+`wire packet → SemanticCodec.decode → ProtocolTranslator → SemanticCodec.encode → wire packet`
+
+* Client and backend protocol versions are tracked independently on `PlayerSession`.
+* `ProtocolCompatibility`: `DIRECT` | `TRANSLATED` | `UNSUPPORTED`.
+* Semantic packets live under `gg.tame.conduit.protocol.semantic.*`.
+* Pair translator: `gg.tame.conduit.protocol.translate.Protocol765To766Translator`.
+* Trace: `-Dconduit.trace=true` (no secrets).
+* Unknown / unsafe packets fail closed with `TranslationException` — never blind ID forwarding.
 
 `PlayerSession` tracks `clientProtocol` and `backendProtocol` independently for that future work.
 
@@ -492,7 +507,7 @@ See `docs/VELOCITY_COMPATIBILITY.md` for the support matrix. Unsupported APIs th
 
 ## Protocol translation
 
-**NOT IMPLEMENTED.** `765→776` remains `UNSUPPORTED`. `Protocol765To776Translator` throws rather than rewriting packet ids. Identity forwarding is same-codec only.
+**PARTIAL.** `765↔766` semantic translation exists for known control packets. `765→776` remains `UNSUPPORTED`. `Protocol765To776Translator` still throws. Identity forwarding is same-codec only. Join Game / full play remapping is not claimed.
 
 ## Out of scope here
 

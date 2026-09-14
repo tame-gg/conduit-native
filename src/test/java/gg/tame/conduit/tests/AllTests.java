@@ -72,6 +72,7 @@ public final class AllTests {
     Phase11OpsTests.run();
     Phase12SecurityTests.run();
     Phase13ModdedTests.run();
+    Phase14ProtocolTranslationTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {
@@ -115,6 +116,8 @@ public final class AllTests {
     require(current.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x76, "26.2 start configuration");
     require(gg.tame.conduit.protocol.ProtocolCompatibility.between(776, 776) == gg.tame.conduit.protocol.TranslationSupport.DIRECT, "26.2 direct");
     require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 776) == gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED, "no fake 1.20.4 to 26.2 translation");
+    require(gg.tame.conduit.protocol.ProtocolDefinition.hasCodec(766), "1.20.5 codec");
+    require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 766) == gg.tame.conduit.protocol.TranslationSupport.TRANSLATED, "765↔766 translated");
     var parsed = gg.tame.conduit.protocol.BackendStatusProbe.parse("{\"version\":{\"name\":\"Paper 26.2\",\"protocol\":776}}");
     require(parsed.orElseThrow().protocol() == 776, "status protocol parse");
     require(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x67, "start configuration id");

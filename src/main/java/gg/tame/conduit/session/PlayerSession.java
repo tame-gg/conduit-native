@@ -26,6 +26,13 @@ import gg.tame.conduit.protocol.PlayPackets;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.ProtocolProfileAdapter;
 import gg.tame.conduit.protocol.ProtocolSession;
+import gg.tame.conduit.protocol.ProtocolTrace;
+import gg.tame.conduit.protocol.ProtocolTranslator;
+import gg.tame.conduit.protocol.IdentityTranslator;
+import gg.tame.conduit.protocol.ProtocolCompatibility;
+import gg.tame.conduit.protocol.TranslationSupport;
+import gg.tame.conduit.protocol.Translators;
+import gg.tame.conduit.protocol.translate.TranslationException;
 import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
 import gg.tame.conduit.metrics.ConduitMetrics;
@@ -51,6 +58,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final ProtocolDefinition protocol;
   private final int clientProtocol;
   private volatile int backendProtocol;
+  private volatile ProtocolDefinition backendDefinition;
+  private volatile ProtocolTranslator translator = IdentityTranslator.INSTANCE;
+  private volatile TranslationSupport translationSupport = TranslationSupport.DIRECT;
   private final ProtocolSession clientState;
   private final LoginPipeline loginPipeline;
   private final PlayerInfoForwarder forwarder;
@@ -95,6 +105,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     this.configuration = configuration; this.client = client; this.protocol = protocol; this.clientState = clientState;
     this.clientProtocol = protocol.version().number();
     this.backendProtocol = this.clientProtocol;
+    this.backendDefinition = protocol;
     this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.runtime = runtime;
     this.commands = runtime.commandManager(); this.players = runtime.playerManager(); this.selector = runtime.selector();
     this.handshake = handshake; this.originalHandshake = originalHandshake; this.originalLoginStart = originalLoginStart; this.address = address;
@@ -106,6 +117,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
   public ModLoaderFamily modLoaderFamily() { return modClassifier.family(); }
   public HandshakeClassifier modClassifier() { return modClassifier; }
+  public TranslationSupport translationSupport() { return translationSupport; }
+  public ProtocolDefinition backendDefinition() { return backendDefinition; }
   public PlayerProfile profile() { return AuthenticatedPlayerProfile.require(loginPipeline.player()); }
   /** Same object as {@link #profile()}; the session never recreates identity on {@code /server}. */
   public PlayerProfile authenticatedProfile() { return profile(); }
@@ -194,10 +207,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     IOException last = null;
     for (BackendServer server : selector.candidatesFor(protocol.version().number(), modClassifier.family(), false)) {
       try {
+        prepareTranslation(server);
         Socket socket = BackendConnection.open(server);
-        MinecraftFrames.write(socket.getOutputStream(), originalHandshake);
+        writeBackendHandshake(socket, server);
         MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile()));
-        BackendConnection connection = new BackendConnection(server, socket, protocol, forwarder, profile(), address, configuration, false);
+        BackendConnection connection = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false);
         if (forwarder.mode() == ForwardingMode.MODERN) completeBackendLogin(connection, true);
         return connection;
       } catch (IOException exception) {
@@ -206,6 +220,51 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
     }
     throw last == null ? new IOException("all configured backends refused the connection") : last;
+  }
+
+  private void prepareTranslation(BackendServer server) {
+    int advertised = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(clientProtocol);
+    TranslationSupport support = ProtocolCompatibility.between(clientProtocol, advertised);
+    if (support == TranslationSupport.TRANSLATED) {
+      this.translationSupport = support;
+      this.backendProtocol = advertised;
+      this.backendDefinition = ProtocolDefinition.forVersion(advertised);
+      this.translator = Translators.forPair(clientProtocol, advertised);
+      ProtocolTrace.note("session translation " + clientProtocol + "→" + advertised + " TRANSLATED");
+    } else {
+      // DIRECT, or UNSUPPORTED Via-style backends that accept the client wire protocol.
+      this.translationSupport = TranslationSupport.DIRECT;
+      this.backendProtocol = clientProtocol;
+      this.backendDefinition = protocol;
+      this.translator = IdentityTranslator.INSTANCE;
+    }
+  }
+
+  private void writeBackendHandshake(Socket socket, BackendServer server) throws IOException {
+    if (translationSupport == TranslationSupport.TRANSLATED) {
+      String host = server.address().getHostString();
+      var marker = gg.tame.conduit.modded.FmlAddressMarkers.markerFor(modClassifier.family(), modClassifier.marker());
+      if (marker != gg.tame.conduit.modded.FmlAddressMarkers.MarkerKind.NONE) {
+        host = gg.tame.conduit.modded.FmlAddressMarkers.append(host, marker);
+      } else if (modClassifier.marker() != gg.tame.conduit.modded.FmlAddressMarkers.MarkerKind.NONE) {
+        host = gg.tame.conduit.modded.FmlAddressMarkers.append(host, modClassifier.marker());
+      }
+      Handshake backendHandshake = new Handshake(backendProtocol, host, server.address().getPort(), 2);
+      MinecraftFrames.write(socket.getOutputStream(), backendHandshake.encode());
+    } else {
+      MinecraftFrames.write(socket.getOutputStream(), originalHandshake);
+    }
+  }
+
+  private byte[] towardBackend(ConnectionState state, byte[] packet) {
+    if (translator == IdentityTranslator.INSTANCE) return packet;
+    byte[] translated = translator.clientToBackend(state, packet);
+    return translated;
+  }
+
+  private byte[] towardClient(ConnectionState state, byte[] packet) {
+    if (translator == IdentityTranslator.INSTANCE) return packet;
+    return translator.backendToClient(state, packet);
   }
   private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess) throws IOException {
     while (connection.state() == ConnectionState.LOGIN) {
@@ -232,7 +291,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (lifecycle.get() == SessionLifecycle.SWITCHING) {
           BackendConnection target = switchingTarget;
           if (target != null && clientState.state() == ConnectionState.CONFIGURATION) {
-            target.writeUncompressed(packet);
+            byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
+            if (outbound != null) target.writeUncompressed(outbound);
           } else if (configuration.modded().packetQueueEnabled() && target != null) {
             try {
               switchQueue.enqueue(SwitchPacketQueue.Destination.NEW_BACKEND, packet,
@@ -249,7 +309,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY, target)) {
             continue;
           }
-          target.writeUncompressed(packet);
+          byte[] outbound = towardBackend(clientState.state(), packet);
+          if (outbound != null) target.writeUncompressed(outbound);
         }
       }
     } catch (IOException ignored) { }
@@ -297,13 +358,19 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_KNOWN_PACKS)) {
       KnownPacksValidator.validate(PlayPackets.body(packet), runtime.modded().knownPacksLimit());
       BackendConnection target = switchingTarget != null ? switchingTarget : backend;
-      if (target != null) target.writeUncompressed(packet);
+      if (target != null) {
+        byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
+        if (outbound != null) target.writeUncompressed(outbound);
+      }
       knownPacksAck.offer(Boolean.TRUE);
       return true;
     }
     if (clientState.state() == ConnectionState.CONFIGURATION && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_FINISH)) {
       BackendConnection target = switchingTarget != null ? switchingTarget : backend;
-      if (target != null) target.writeUncompressed(packet);
+      if (target != null) {
+        byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
+        if (outbound != null) target.writeUncompressed(outbound);
+      }
       clientState.beginPlay();
       configurationAck.offer(Boolean.TRUE);
       flushDeferredPlay();
@@ -355,22 +422,38 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         }
         ConnectionState backendState = current.state();
         if (backendState == ConnectionState.CONFIGURATION) current.login().onBackendPacket(packet, configuration.maxFrameBytes());
-        if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
-        byte[] outbound = current.rewriteBrand(brandState(backendState), packet);
-        if (clientState.state() == ConnectionState.CONFIGURATION && isFinishConfiguration(packet) && !current.brandSeen()) {
+        byte[] translated;
+        try {
+          translated = towardClient(backendState, packet);
+        } catch (TranslationException translation) {
+          gg.tame.conduit.log.ConduitLog.warn("Translation failed: " + translation.getMessage());
+          close();
+          return;
+        }
+        if (translated == null) continue;
+        if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
+        var brand = BrandRewriter.rewrite(protocol, brandState(backendState), translated, configuration.maxFrameBytes());
+        byte[] outbound;
+        if (brand.isPresent()) {
+          current.markBrandSeen();
+          outbound = brand.get();
+        } else {
+          outbound = translated;
+        }
+        if (clientState.state() == ConnectionState.CONFIGURATION && isFinishConfiguration(translated) && !current.brandSeen()) {
           writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""), true);
           current.markBrandSeen();
         }
         outbound = maybeMergeCommands(outbound);
-        if (deferPlayUntilReady(packet, outbound, current.state())) {
+        if (deferPlayUntilReady(translated, outbound, current.state())) {
           flushDeferredPlay();
           continue;
         }
         writeClient(outbound, true);
-        if (clientState.state() == ConnectionState.PLAY && isPlayLogin(packet)) {
+        if (clientState.state() == ConnectionState.PLAY && isPlayLogin(translated)) {
           emitSelfPlayerInfoIfNeeded();
         }
-        if (isPlayDisconnect(packet)) { close(); return; }
+        if (isPlayDisconnect(translated)) { close(); return; }
       } catch (IOException exception) {
         if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return;
         handleBackendLoss(current);
@@ -440,9 +523,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return;
     }
     for (SwitchPacketQueue.QueuedPacket queued : switchQueue.flush(SwitchPacketQueue.Destination.NEW_BACKEND)) {
-      // Only flush configuration-phase packets after commit; play packets after join are unsafe here.
       if (queued.phase() == SwitchPacketQueue.ConnectionPhase.CONFIGURATION) {
-        target.writeUncompressed(queued.packet());
+        byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, queued.packet());
+        if (outbound != null) target.writeUncompressed(outbound);
       }
     }
     switchQueue.clear();
@@ -517,10 +600,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     boolean clientEnteredConfiguration = false;
     try {
       // PREPARE: open + login against the target while the current backend remains active.
+      prepareTranslation(server);
       socket = BackendConnection.open(server);
       enforceDeadline(deadline, "connect");
-      BackendConnection.handshake(socket, handshake, server, profile(), modClassifier.marker(), modClassifier.family());
-      next = new BackendConnection(server, socket, protocol, forwarder, profile(), address, configuration, true);
+      Handshake switchHandshake = translationSupport == TranslationSupport.TRANSLATED
+          ? new Handshake(backendProtocol, handshake.requestedHost(), handshake.requestedPort(), 2)
+          : handshake;
+      BackendConnection.handshake(socket, switchHandshake, server, profile(), modClassifier.marker(), modClassifier.family());
+      next = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, true);
       next.setReadTimeoutMillis(remainingMillis(deadline));
       completeBackendLogin(next, false);
       enforceDeadline(deadline, "login");
@@ -554,8 +641,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           byte[] packet = next.readUncompressed();
           int id = PlayPackets.packetId(packet);
           next.login().onBackendPacket(packet, configuration.maxFrameBytes());
-          byte[] outbound = next.rewriteBrand(ConnectionState.CONFIGURATION, packet);
-          if (protocol.knownPacks() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_KNOWN_PACKS)) {
+          byte[] translated = towardClient(ConnectionState.CONFIGURATION, packet);
+          if (translated == null) continue;
+          var brand = BrandRewriter.rewrite(protocol, ConnectionState.CONFIGURATION, translated, configuration.maxFrameBytes());
+          byte[] outbound;
+          if (brand.isPresent()) {
+            next.markBrandSeen();
+            outbound = brand.get();
+          } else {
+            outbound = translated;
+          }
+          if (protocol.knownPacks() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(translated), PacketKind.CONFIGURATION_KNOWN_PACKS)) {
             writeClient(outbound);
             if (knownPacksAck.poll(Math.max(1, remainingMillis(deadline) / 1000), TimeUnit.SECONDS) == null) {
               throw new IOException("client did not reply to known packs");
@@ -563,11 +659,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
             knownPacksDone = true;
             continue;
           }
-          if (protocol.knownPacks() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_REGISTRY)) {
+          if (protocol.knownPacks() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(translated), PacketKind.CONFIGURATION_REGISTRY)) {
             registrySeen = true;
           }
-          if (isFinishConfiguration(packet)) {
-            if (packet.length > 2) continue;
+          if (isFinishConfiguration(translated)) {
+            if (translated.length > 2) continue;
             if (protocol.knownPacks() && !knownPacksDone) {
               throw new IOException("backend finished configuration before known packs");
             }
@@ -702,17 +798,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     var advertisement = selector.advertisement(server.name());
     if (advertisement.isEmpty()) return;
     int targetProtocol = advertisement.get().protocol();
-    var support = gg.tame.conduit.protocol.ProtocolCompatibility.between(clientProtocol, targetProtocol);
-    if (support == gg.tame.conduit.protocol.TranslationSupport.DIRECT) return;
-    if (support == gg.tame.conduit.protocol.TranslationSupport.TRANSLATED) {
-      System.out.println("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED)");
+    var support = ProtocolCompatibility.between(clientProtocol, targetProtocol);
+    if (support == TranslationSupport.DIRECT) return;
+    if (support == TranslationSupport.TRANSLATED) {
+      ProtocolTrace.note("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED)");
       return;
     }
     if (ProtocolDefinition.hasCodec(targetProtocol) && targetProtocol != clientProtocol
-        && support == gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED
+        && support == TranslationSupport.UNSUPPORTED
         && runtime.versionGate().settings().strictBackendMatch()) {
       throw new IOException(server.name() + " is not compatible with your Minecraft version.");
     }
+    // Unsupported pair: keep current backend eligibility for Via-style backends; do not disconnect.
     System.out.println("Client protocol " + clientProtocol + " connecting to " + server.name()
         + " advertised as " + targetProtocol + " (no Conduit translator; backend must accept the client protocol).");
   }

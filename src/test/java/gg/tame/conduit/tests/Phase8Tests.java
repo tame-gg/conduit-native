@@ -126,6 +126,7 @@ public final class Phase8Tests {
   private static void translationFoundation() {
     require(TranslationPipeline.support(765, 765) == TranslationSupport.DIRECT, "direct");
     require(ProtocolCompatibility.between(765, 776) == TranslationSupport.UNSUPPORTED, "no fake 765-776");
+    require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "765-766 translated");
     try { new Protocol765To776Translator().clientToBackend(gg.tame.conduit.protocol.ConnectionState.PLAY, new byte[] {0}); throw new AssertionError("fake translation"); }
     catch (UnsupportedOperationException expected) { }
   }

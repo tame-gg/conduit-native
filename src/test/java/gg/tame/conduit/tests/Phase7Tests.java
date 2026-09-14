@@ -127,7 +127,11 @@ public final class Phase7Tests {
     require(ProtocolCompatibility.between(765, 763) == TranslationSupport.UNSUPPORTED, "no fake translation");
     require(ProtocolCompatibility.between(776, 776) == TranslationSupport.DIRECT, "26.2 direct");
     require(ProtocolCompatibility.between(765, 776) == TranslationSupport.UNSUPPORTED, "no fake translation");
+    require(ProtocolCompatibility.between(766, 766) == TranslationSupport.DIRECT, "1.20.5 direct");
+    require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "765↔766 translated");
+    require(ProtocolCompatibility.between(766, 765) == TranslationSupport.TRANSLATED, "766↔765 translated");
     require(Translators.forPair(765, 765) == IdentityTranslator.INSTANCE, "identity");
+    require(Translators.forPair(765, 766) != IdentityTranslator.INSTANCE, "pair translator");
     byte[] packet = {1, 2, 3};
     require(IdentityTranslator.INSTANCE.clientToBackend(ConnectionState.PLAY, packet) == packet, "no copy identity");
     try { Translators.forPair(5, 765); throw new AssertionError("translator claimed"); }
