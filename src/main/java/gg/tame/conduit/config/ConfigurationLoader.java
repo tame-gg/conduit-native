@@ -16,13 +16,21 @@ public final class ConfigurationLoader {
 
   public static ConduitConfiguration load(Path path) throws IOException {
     Map<String, String> values = new HashMap<>();
+    List<String> serverOrder = new ArrayList<>();
     String section = "";
     int lineNumber = 0;
     for (String raw : Files.readAllLines(path)) {
       lineNumber++;
       String line = raw.strip();
       if (line.isEmpty() || line.startsWith("#")) continue;
-      if (line.startsWith("[") && line.endsWith("]")) { section = line.substring(1, line.length() - 1); continue; }
+      if (line.startsWith("[") && line.endsWith("]")) {
+        section = line.substring(1, line.length() - 1);
+        if (section.startsWith("servers.")) {
+          String name = section.substring("servers.".length());
+          if (!serverOrder.contains(name)) serverOrder.add(name);
+        }
+        continue;
+      }
       int equals = line.indexOf('=');
       if (equals < 1 || section.isEmpty()) throw new IllegalArgumentException("invalid configuration at line " + lineNumber);
       String key = section + "." + line.substring(0, equals).strip();
@@ -36,10 +44,12 @@ public final class ConfigurationLoader {
     ForwardingMode mode = ForwardingMode.parse(required(values, "forwarding.mode"));
     Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file")).map(value -> path.getParent().resolve(value).normalize());
     List<BackendServer> servers = new ArrayList<>();
-    for (String key : values.keySet()) {
-      if (!key.startsWith("servers.") || !key.endsWith(".host")) continue;
-      String name = key.substring("servers.".length(), key.length() - ".host".length());
-      servers.add(new BackendServer(name, new InetSocketAddress(values.get(key), integer(values, "servers." + name + ".port"))));
+    for (String name : serverOrder) {
+      String addressKey = "servers." + name + ".address";
+      String hostKey = "servers." + name + ".host";
+      if (values.containsKey(addressKey) && values.containsKey(hostKey)) throw new IllegalArgumentException("backend " + name + " has both address and host");
+      if (values.containsKey(addressKey)) servers.add(new BackendServer(name, parseAddress(values.get(addressKey))));
+      else servers.add(new BackendServer(name, new InetSocketAddress(values.get(hostKey), integer(values, "servers." + name + ".port"))));
     }
     return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values));
@@ -54,6 +64,13 @@ public final class ConfigurationLoader {
     return new AuthenticationSettings(authMode, url, timeout);
   }
 
+  private static InetSocketAddress parseAddress(String raw) {
+    int colon = raw.lastIndexOf(':');
+    if (colon < 1 || colon == raw.length() - 1) throw new IllegalArgumentException("backend address must be host:port");
+    String host = raw.substring(0, colon);
+    try { return new InetSocketAddress(host, Integer.parseInt(raw.substring(colon + 1))); }
+    catch (NumberFormatException exception) { throw new IllegalArgumentException("backend address port must be an integer", exception); }
+  }
   private static String required(Map<String, String> values, String key) {
     String value = values.get(key);
     if (value == null || value.isBlank()) throw new IllegalArgumentException("missing required setting: " + key);

@@ -51,6 +51,7 @@ public final class MinecraftProxy implements AutoCloseable {
     this.players = new PlayerManager();
     CoreCommands.register(commands, selector.registry(), players);
   }
+  public void probeBackends() { selector.probeAll(); }
   public int port() throws IOException { return ((java.net.InetSocketAddress) listener.getLocalAddress()).getPort(); }
   public void serve() throws IOException {
     running = true;

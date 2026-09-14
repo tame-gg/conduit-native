@@ -20,20 +20,34 @@ Requires a JDK capable of compiling Java 21 source. On Windows:
 
 ## Supported Minecraft versions
 
-Protocol implementations (packet IDs + capabilities) exist for:
+Native intercept codecs (version + state + direction packet IDs) exist for:
 
-| Minecraft | Protocol | Configuration state | Real vanilla client |
+| Minecraft | Protocol | Configuration | Real vanilla client |
 |---|---|---|---|
-| 1.20.1 | 763 | no (`LOGIN` → `PLAY`) | not tested |
-| 1.20.3 / 1.20.4 | 765 | yes (`LOGIN` → `CONFIGURATION` → `PLAY`) | 1.20.4 login/Play previously verified; switching retest pending |
+| 1.20.1 | 763 | no | not tested |
+| 1.20.3 / 1.20.4 | 765 | yes | 1.20.4 login/Play previously verified; switching retest pending |
+| 26.2 | 776 | yes (Finish Configuration is id **3**, not 2) | **not tested** |
 
-Unknown handshake versions disconnect with `Unsupported Minecraft version.` They are not treated as 1.20.4.
+Catalog only (handshake known, **no codec**, cannot connect):
 
-Recognized protocol numbers for 1.7.10, 1.8.9, 1.12.2, 1.16.5, 1.19.4, and 1.21.4 exist only as catalog entries. They have **no codecs**, so those clients cannot connect.
+1.7.10 (5), 1.8.9 (47), 1.12.2 (340), 1.16.5 (754), 1.19.4 (762), 1.20.2 (764), 1.21/1.21.1 (767), 1.21.4 (769), 1.21.8 (772).
 
-There is **no** ViaVersion-style translation. `1.20.4 → 1.20.4` and `1.20.1 → 1.20.1` are DIRECT. Every other pairing is UNSUPPORTED, including `1.7.10 → 1.20.4` and `1.20.4 → 1.20.1`. Minecraft 26.2 is a goal, not an implemented protocol.
+Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 
-Client and backend protocol versions must match.
+**Direct:** same codec version only (`765→765`, `763→763`, `776→776`).
+
+**Translated:** none. `1.20.4 → 26.2` and `1.7.10 → 26.2` are UNSUPPORTED until a translator exists.
+
+Do not read “26.2 codec registered” as “26.2 gameplay works through Conduit.”
+
+Backends may be configured as:
+
+```toml
+[servers.smp]
+address = "203.0.113.10:25921"
+```
+
+or `host` + `port`. Commands never print those addresses. At startup Conduit status-pings each backend and logs its advertised protocol.
 
 ## Authentication
 

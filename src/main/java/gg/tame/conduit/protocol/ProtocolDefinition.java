@@ -26,10 +26,14 @@ public final class ProtocolDefinition {
     return expected != null && expected == id;
   }
   public static ProtocolDefinition forVersion(int number) {
-    if (number == ProtocolVersion.MINECRAFT_1_20_1.number()) return V1_20_1;
-    if (number == ProtocolVersion.MINECRAFT_1_20_4.number()) return V1_20_4;
-    throw new IllegalArgumentException("unsupported Minecraft protocol: " + number + "; supported: 763 (1.20.1), 765 (1.20.4)");
+    ProtocolDefinition definition = BY_NUMBER.get(number);
+    if (definition == null) {
+      throw new IllegalArgumentException("unsupported Minecraft protocol: " + number
+          + "; codecs: 763 (1.20.1), 765 (1.20.4), 776 (26.2)");
+    }
+    return definition;
   }
+  public static boolean hasCodec(int number) { return BY_NUMBER.containsKey(number); }
   private static ProtocolDefinition define(ProtocolVersion version, boolean configuration, Object... entries) {
     Map<Key, Integer> ids = new HashMap<>();
     for (int index = 0; index < entries.length; index += 4) {
@@ -89,5 +93,38 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09
   );
+  private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2, true,
+      ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
+      ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
+      ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,
+      ConnectionState.STATUS, PacketDirection.SERVER_TO_CLIENT, PacketKind.STATUS_REQUEST, 0,
+      ConnectionState.STATUS, PacketDirection.SERVER_TO_CLIENT, PacketKind.STATUS_PING, 1,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_START, 0,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_DISCONNECT, 0,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST, 1,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ENCRYPTION_RESPONSE, 1,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SUCCESS, 2,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SET_COMPRESSION, 3,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE, 2,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED, 3,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_PLUGIN_REQUEST, 4,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_PLUGIN_MESSAGE, 1,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH, 3,
+      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_FINISH, 3,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN, 0x31,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE, 0x18,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION, 0x76,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT, 0x79,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TAB_COMPLETE, 0x0F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT, 0x20,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS, 0x10,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x07,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0F,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x10
+  );
+  private static final Map<Integer, ProtocolDefinition> BY_NUMBER = Map.of(
+      ProtocolVersion.MINECRAFT_1_20_1.number(), V1_20_1,
+      ProtocolVersion.MINECRAFT_1_20_4.number(), V1_20_4,
+      ProtocolVersion.MINECRAFT_26_2.number(), V26_2);
   private record Key(ConnectionState state, PacketDirection direction, PacketKind kind) { }
 }

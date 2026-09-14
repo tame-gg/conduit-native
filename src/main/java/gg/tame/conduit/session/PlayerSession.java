@@ -16,9 +16,12 @@ import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
+import gg.tame.conduit.protocol.PacketTrace;
 import gg.tame.conduit.protocol.PlayPackets;
+import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.ProtocolSession;
+import gg.tame.conduit.protocol.TranslationSupport;
 import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
 import java.io.IOException;
@@ -94,6 +97,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess) throws IOException {
     while (connection.state() == ConnectionState.LOGIN) {
       byte[] packet = connection.readUncompressed();
+      PacketTrace.packet("backend-login", connection.state(), PacketDirection.SERVER_TO_CLIENT, protocol, packet);
       byte[] response = connection.login().onBackendPacket(packet, configuration.maxFrameBytes());
       if (response != null) { connection.writeUncompressed(response); continue; }
       if (!connection.login().shouldForward()) continue;
@@ -234,10 +238,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       switchTo(server, false);
       return true;
     } catch (Exception exception) {
+      String message = exception.getMessage();
+      if (message != null && message.startsWith("Backend ")) sendMessage(message);
       return false;
     }
   }
   private void switchTo(BackendServer server, boolean fallback) throws Exception {
+    ensureCompatible(server);
     synchronized (lock) {
       if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
       if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
@@ -285,6 +292,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
         if (lifecycle.get() == SessionLifecycle.SWITCHING) lifecycle.set(previous != null ? SessionLifecycle.CONNECTED : SessionLifecycle.CLOSED);
       }
       throw exception;
+    }
+  }
+  private void ensureCompatible(BackendServer server) throws IOException {
+    var advertisement = selector.advertisement(server.name());
+    if (advertisement.isEmpty()) return;
+    int backendProtocol = advertisement.get().protocol();
+    if (ProtocolCompatibility.between(protocol.version().number(), backendProtocol) != TranslationSupport.DIRECT) {
+      throw new IOException("Backend " + server.name() + " is running protocol " + backendProtocol + ", which Conduit does not yet support.");
     }
   }
   private void writeClient(byte[] packet) throws IOException { synchronized (lock) { client.write(packet); } }

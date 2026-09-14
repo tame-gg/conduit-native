@@ -99,6 +99,13 @@ public final class AllTests {
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_PLUGIN_REQUEST) == 4, "1.20.4 login plugin request id");
     require(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE) == 2, "1.20.4 login plugin response id");
     require(protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH) == 2, "1.20.4 finish configuration id");
+    ProtocolDefinition current = ProtocolDefinition.forVersion(776);
+    require(current.hasConfiguration() && current.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH) == 3, "26.2 finish configuration is not id 2");
+    require(current.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x76, "26.2 start configuration");
+    require(gg.tame.conduit.protocol.ProtocolCompatibility.between(776, 776) == gg.tame.conduit.protocol.TranslationSupport.DIRECT, "26.2 direct");
+    require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 776) == gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED, "no fake 1.20.4 to 26.2 translation");
+    var parsed = gg.tame.conduit.protocol.BackendStatusProbe.parse("{\"version\":{\"name\":\"Paper 26.2\",\"protocol\":776}}");
+    require(parsed.orElseThrow().protocol() == 776, "status protocol parse");
     require(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x67, "start configuration id");
     ProtocolSession reconfigure = new ProtocolSession();
     reconfigure.acceptHandshake(2); reconfigure.beginConfiguration(); reconfigure.beginPlay(); reconfigure.beginReconfiguration();
@@ -106,8 +113,10 @@ public final class AllTests {
   }
   private static void validateIndependentConfiguration() throws Exception {
     Path config = Files.createTempFile("conduit", ".toml");
-    Files.writeString(config, configuration("none"));
+    Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=25566\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     require(ConfigurationLoader.load(config).maxFrameBytes() == 64, "configuration did not load");
+    Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.smp]\naddress=\"127.0.0.1:25921\"\n[routing]\ninitial=[\"smp\"]\nfallback=[\"smp\"]\n");
+    require(ConfigurationLoader.load(config).backends().getFirst().address().getPort() == 25921, "address form");
     require(ConfigurationLoader.load(config).authentication().mode() == gg.tame.conduit.config.AuthenticationMode.OFFLINE, "missing authentication must default to offline");
     Files.writeString(config, configuration("modern"));
     try { ConfigurationLoader.load(config); throw new AssertionError("modern mode accepted without secret"); }

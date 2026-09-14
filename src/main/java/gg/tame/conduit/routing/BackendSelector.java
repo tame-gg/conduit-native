@@ -2,20 +2,50 @@ package gg.tame.conduit.routing;
 
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
+import gg.tame.conduit.protocol.BackendStatusProbe;
+import gg.tame.conduit.protocol.ProtocolCompatibility;
+import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.protocol.TranslationSupport;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /** Selects configured initial and fallback backends without transport coupling. */
 public final class BackendSelector {
   private final ConduitConfiguration configuration;
   private final ServerRegistry registry;
+  private final ConcurrentHashMap<String, BackendStatusProbe.Advertisement> advertisements = new ConcurrentHashMap<>();
   public BackendSelector(ConduitConfiguration configuration) {
     this.configuration = configuration;
     this.registry = new ServerRegistry(configuration);
   }
   public ServerRegistry registry() { return registry; }
+  public void probeAll() {
+    for (BackendServer server : registry.all()) {
+      Optional<BackendStatusProbe.Advertisement> advertisement = BackendStatusProbe.probe(server.address(), 2000);
+      if (advertisement.isEmpty()) {
+        System.out.println("Backend " + server.name() + " did not answer a status ping.");
+        continue;
+      }
+      advertisements.put(ServerRegistry.normalize(server.name()), advertisement.get());
+      System.out.println("Backend " + server.name() + ": " + BackendStatusProbe.describe(advertisement.get()));
+      int protocol = advertisement.get().protocol();
+      if (!ProtocolDefinition.hasCodec(protocol)) {
+        System.out.println("Backend " + server.name() + " is running protocol " + protocol + ", which Conduit does not yet support.");
+      }
+    }
+  }
+  public Optional<BackendStatusProbe.Advertisement> advertisement(String name) {
+    return Optional.ofNullable(advertisements.get(ServerRegistry.normalize(name)));
+  }
+  public TranslationSupport compatibility(int clientProtocol, String backendName) {
+    return advertisement(backendName)
+        .map(advertisement -> ProtocolCompatibility.between(clientProtocol, advertisement.protocol()))
+        .orElse(ProtocolCompatibility.between(clientProtocol, clientProtocol));
+  }
   public List<BackendServer> candidates() { return named(configuration.initialBackends(), configuration.fallbackBackends()); }
   public List<BackendServer> fallback(String current, Set<String> failed) {
     List<String> names = new ArrayList<>(configuration.fallbackBackends());

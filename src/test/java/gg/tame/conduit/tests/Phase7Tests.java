@@ -98,7 +98,8 @@ public final class Phase7Tests {
     require(ProtocolCompatibility.between(765, 765) == TranslationSupport.DIRECT, "1.20.4 direct");
     require(ProtocolCompatibility.between(763, 763) == TranslationSupport.DIRECT, "1.20.1 direct");
     require(ProtocolCompatibility.between(765, 763) == TranslationSupport.UNSUPPORTED, "no fake translation");
-    require(ProtocolCompatibility.between(5, 765) == TranslationSupport.UNSUPPORTED, "1.7.10 not claimed");
+    require(ProtocolCompatibility.between(776, 776) == TranslationSupport.DIRECT, "26.2 direct");
+    require(ProtocolCompatibility.between(765, 776) == TranslationSupport.UNSUPPORTED, "no fake translation");
     require(Translators.forPair(765, 765) == IdentityTranslator.INSTANCE, "identity");
     byte[] packet = {1, 2, 3};
     require(IdentityTranslator.INSTANCE.clientToBackend(ConnectionState.PLAY, packet) == packet, "no copy identity");
