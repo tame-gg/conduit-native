@@ -144,6 +144,7 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/conduit maintenance <on|off|status>` — native maintenance mode
 * `/conduit drain|undrain <server>` — rolling-restart drain
 * `/conduit doctor` / `/conduit diagnostics` — operator checks (no secrets)
+* `/conduit attack <on|off|status>` — runtime attack-mode tightening
 * `/conduit reload` — live-safe reload; lists exact restart-required keys
 * `/conduit plugins` — proxy plugins only (does not shadow Paper `/plugins`)
 * `/conduit help` — short permission-filtered list
@@ -162,8 +163,45 @@ Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.playe
 | Graceful shutdown (bounded transfer then disconnect) | IMPLEMENTED |
 | Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
 | Metrics HTTP endpoint | UNSUPPORTED (command diagnostics only) |
-| Security (throttle / bot filter / channel guard / attack mode) | UNSUPPORTED (Phase 2) |
+| Security (throttle / bot filter / channel guard / attack mode) | IMPLEMENTED (application-level; not DDoS protection) |
 | Modded (known-packs / Forge / NeoForge / packet queue) | UNSUPPORTED (Phase 3) |
+
+### Security (Phase 2)
+
+Application-level abuse mitigation only — not upstream DDoS protection.
+
+* **Connection throttle** — early accept-path limits per IPv4 /32 or IPv6 /64 (NAT-friendly defaults: 40 attempts / 1s window, 32 concurrent). Aggregate drop logs.
+* **Bot filter** — strikes for idle/malformed TCP; status/list pings are legitimate; temporary blocks after threshold. Handshake read timeout cancels once Minecraft data arrives.
+* **Channel guard** — configurable plugin-message channel rules (`log` / `drop` / `kick`); unknown channels allowed; `minecraft:brand` and `velocity:*` never blocked by default. Disabled by default.
+* **Attack mode** — `/conduit attack on|off|status` tightens live throttle/bot thresholds. **Runtime only** (reset on restart).
+
+Permissions: `conduit.attack`.
+
+```toml
+[security.throttle]
+enabled = true
+max-attempts = 40
+window-ms = 1000
+max-concurrent = 32
+ipv4-prefix = 32
+ipv6-prefix = 64
+
+[security.bot-filter]
+enabled = true
+strike-threshold = 10
+handshake-timeout-ms = 3000
+block-duration-ms = 60000
+
+[security.channel-guard]
+enabled = false
+default-action = "log"
+block-list = ["wdl:init", "wdl:control"]
+log-list = ["schematica"]
+
+[security.attack-mode]
+throttle-max-attempts = 8
+bot-strike-threshold = 3
+```
 
 Unhealthy backends are excluded from **new** routing only. Existing players are not kicked by a failed probe.
 

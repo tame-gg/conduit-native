@@ -24,9 +24,12 @@ import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.ProtocolSession;
 import gg.tame.conduit.protocol.StatusResponder;
 import gg.tame.conduit.runtime.ConduitRuntime;
+import gg.tame.conduit.security.ConnectionThrottle;
 import gg.tame.conduit.session.PlayerSession;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
@@ -100,10 +103,42 @@ public final class MinecraftProxy implements AutoCloseable {
     }
   }
   private void handle(SocketChannel channel) {
+    ConnectionThrottle.LeaseHolder leaseHolder = new ConnectionThrottle.LeaseHolder();
+    InetAddress remote = null;
     try (Socket client = channel.socket()) {
+      remote = client.getInetAddress();
+      if (runtime.security().botFilter().isBlocked(remote)) {
+        return;
+      }
+      ConnectionThrottle.Decision decision = runtime.security().throttle().tryAdmit(remote, leaseHolder);
+      if (decision == ConnectionThrottle.Decision.THROTTLED) {
+        return;
+      }
+      int handshakeTimeout = runtime.security().botFilter().settings().handshakeTimeoutMs();
+      client.setSoTimeout(handshakeTimeout);
       PacketTransport transport = new PacketTransport(client);
-      byte[] firstPacket = transport.read(configuration.maxFrameBytes());
-      Handshake handshake = Handshake.decode(firstPacket);
+      byte[] firstPacket;
+      try {
+        firstPacket = transport.read(configuration.maxFrameBytes());
+      } catch (SocketTimeoutException timeout) {
+        runtime.security().botFilter().recordSuspicious(remote, "idle");
+        ConduitMetrics.current().malformedProtocol();
+        return;
+      } catch (IOException io) {
+        runtime.security().botFilter().recordSuspicious(remote, "read-fail");
+        ConduitMetrics.current().malformedProtocol();
+        return;
+      }
+      client.setSoTimeout(0);
+      Handshake handshake;
+      try {
+        handshake = Handshake.decode(firstPacket);
+      } catch (RuntimeException | IOException malformed) {
+        runtime.security().botFilter().recordSuspicious(remote, "malformed-handshake");
+        ConduitMetrics.current().malformedProtocol();
+        return;
+      }
+      runtime.security().botFilter().recordValidHandshake(remote);
       ProtocolSession session = new ProtocolSession(); session.acceptHandshake(handshake.nextState());
       ProtocolDefinition protocol;
       try { protocol = ProtocolDefinition.forVersion(handshake.protocolVersion()); }
@@ -113,7 +148,11 @@ public final class MinecraftProxy implements AutoCloseable {
         }
         throw new IOException(unsupported.getMessage(), unsupported);
       }
-      if (handshake.nextState() == 1) { serveStatus(transport, protocol, handshake.protocolVersion()); return; }
+      if (handshake.nextState() == 1) {
+        runtime.security().botFilter().recordStatusPing(remote);
+        serveStatus(transport, protocol, handshake.protocolVersion());
+        return;
+      }
       if (!runtime.versionGate().allows(handshake.protocolVersion())) {
         try { transport.write(LoginDisconnect.encode(protocol, runtime.versionGate().kickMessage())); } catch (IOException ignored) { }
         return;
@@ -122,14 +161,14 @@ public final class MinecraftProxy implements AutoCloseable {
       LoginPipeline pipeline = new LoginPipeline(session, protocol); pipeline.observe(gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER, loginStart);
       if (authenticator.mode() == AuthenticationMode.ONLINE) {
         try {
-          authenticateOnline(transport, protocol, pipeline, client.getInetAddress().getHostAddress());
+          authenticateOnline(transport, protocol, pipeline, remote.getHostAddress());
         } catch (AuthenticationException exception) {
           try { transport.write(LoginDisconnect.encode(protocol, "Failed to verify username!")); } catch (IOException ignored) { }
           throw new IOException(exception.getMessage(), exception);
         }
       }
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
-          handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(client.getInetAddress()))) {
+          handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(remote))) {
         if (runtime.maintenance().isActive() && !maintenanceBypass(player)) {
           try { transport.write(LoginDisconnect.encode(protocol, runtime.maintenance().kickMessage())); } catch (IOException ignored) { }
           return;
@@ -139,11 +178,13 @@ public final class MinecraftProxy implements AutoCloseable {
         player.play();
       }
     } catch (IOException exception) { ConduitLog.warn("Connection closed: " + exception.getMessage()); }
-    finally { connections.decrementAndGet(); }
+    finally {
+      runtime.security().throttle().release(leaseHolder.lease);
+      connections.decrementAndGet();
+    }
   }
   private boolean maintenanceBypass(PlayerSession player) {
     if (runtime.maintenance().settings().allowsUsername(player.username())) return true;
-    // Built-in permissive provider would otherwise make maintenance meaningless.
     if (runtime.permissions() instanceof gg.tame.conduit.permission.PermissivePermissionProvider) return false;
     return player.hasPermission(gg.tame.conduit.command.Permissions.MAINTENANCE_BYPASS)
         || player.hasPermission(gg.tame.conduit.command.Permissions.CONDUIT_ADMIN);

@@ -129,6 +129,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (!protocol.defines(state, dir, kind)) return true;
       if (!protocol.is(state, dir, PlayPackets.peekId(packet), kind)) return true;
       var decoded = gg.tame.conduit.protocol.PluginMessage.decodeBody(PlayPackets.body(packet), configuration.maxFrameBytes());
+      if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY) {
+        var outcome = runtime.security().channelGuard().inspect(decoded.channel(), username());
+        if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.DROP) return false;
+        if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.KICK) {
+          disconnect("Blocked plugin channel.");
+          return false;
+        }
+      }
       var event = new gg.tame.conduit.api.event.messaging.PluginMessageEvent(this, decoded.channel(), decoded.data(), direction);
       runtime.events().fire(event);
       return !event.cancelled();

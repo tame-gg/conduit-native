@@ -66,6 +66,15 @@ public final class OpsDoctor {
     } else {
       findings.add(new Finding(Severity.OK, "maintenance", "Maintenance mode off."));
     }
+    var security = runtime.security().settings();
+    findings.add(new Finding(Severity.OK, "throttle",
+        "Connection throttle: " + (security.throttle().enabled() ? "Enabled" : "Disabled")));
+    findings.add(new Finding(Severity.OK, "bot-filter",
+        "Bot filter: " + (security.botFilter().enabled() ? "Enabled" : "Disabled")));
+    findings.add(new Finding(Severity.OK, "channel-guard",
+        "Channel guard: " + (security.channelGuard().enabled() ? "Enabled" : "Disabled")));
+    findings.add(new Finding(runtime.security().attackMode().isActive() ? Severity.WARNING : Severity.OK, "attack-mode",
+        "Attack mode: " + (runtime.security().attackMode().isActive() ? "On (runtime only)" : "Off")));
     findings.add(new Finding(Severity.OK, "plugins", runtime.pluginCatalog().size() + " proxy plugin(s)."));
     findings.add(new Finding(Severity.OK, "auth", "Authentication mode: " + config.authentication().mode().name().toLowerCase()));
     if (config.forwardingMode() == ForwardingMode.MODERN) {

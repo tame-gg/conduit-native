@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -63,7 +64,43 @@ public final class ConfigurationLoader {
 
   private static OpsSettings ops(Map<String, String> values) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
-    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values));
+    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values));
+  }
+
+  private static SecuritySettings security(Map<String, String> values) {
+    SecuritySettings.ThrottleSettings throttle = new SecuritySettings.ThrottleSettings(
+        optionalBoolean(values, "security.throttle.enabled", true),
+        optionalInteger(values, "security.throttle.max-attempts", 40),
+        optionalInteger(values, "security.throttle.window-ms", 1_000),
+        optionalInteger(values, "security.throttle.max-concurrent", 32),
+        optionalInteger(values, "security.throttle.ipv4-prefix", 32),
+        optionalInteger(values, "security.throttle.ipv6-prefix", 64),
+        optionalInteger(values, "security.throttle.log-interval-ms", 5_000));
+    SecuritySettings.BotFilterSettings bot = new SecuritySettings.BotFilterSettings(
+        optionalBoolean(values, "security.bot-filter.enabled", true),
+        optionalInteger(values, "security.bot-filter.strike-threshold", 10),
+        optionalInteger(values, "security.bot-filter.handshake-timeout-ms", 3_000),
+        optionalInteger(values, "security.bot-filter.block-duration-ms", 60_000),
+        optionalInteger(values, "security.bot-filter.strike-window-ms", 60_000));
+    Map<String, SecuritySettings.ChannelAction> channels = new LinkedHashMap<>();
+    for (String entry : optionalList(values, "security.channel-guard.block-list")) {
+      channels.put(SecuritySettings.ChannelGuardSettings.normalizeChannel(entry), SecuritySettings.ChannelAction.DROP);
+    }
+    for (String entry : optionalList(values, "security.channel-guard.log-list")) {
+      channels.put(SecuritySettings.ChannelGuardSettings.normalizeChannel(entry), SecuritySettings.ChannelAction.LOG);
+    }
+    for (String entry : optionalList(values, "security.channel-guard.kick-list")) {
+      channels.put(SecuritySettings.ChannelGuardSettings.normalizeChannel(entry), SecuritySettings.ChannelAction.KICK);
+    }
+    if (channels.isEmpty()) channels.putAll(SecuritySettings.ChannelGuardSettings.defaults().channels());
+    SecuritySettings.ChannelGuardSettings guard = new SecuritySettings.ChannelGuardSettings(
+        optionalBoolean(values, "security.channel-guard.enabled", false),
+        SecuritySettings.ChannelAction.parse(optionalString(values, "security.channel-guard.default-action", "log")),
+        channels);
+    SecuritySettings.AttackModeSettings attack = new SecuritySettings.AttackModeSettings(
+        optionalInteger(values, "security.attack-mode.throttle-max-attempts", 8),
+        optionalInteger(values, "security.attack-mode.bot-strike-threshold", 3));
+    return new SecuritySettings(throttle, bot, guard, attack);
   }
 
   private static MaintenanceSettings maintenance(Map<String, String> values) {

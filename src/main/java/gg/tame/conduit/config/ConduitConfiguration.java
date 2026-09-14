@@ -58,6 +58,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
   public HealthSettings health() { return ops.health(); }
   public VersionGateSettings versions() { return ops.versions(); }
   public ShutdownSettings shutdown() { return ops.shutdown(); }
+  public SecuritySettings security() { return ops.security(); }
 
   public ConduitConfiguration withOps(OpsSettings replacement) {
     return new ConduitConfiguration(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends,

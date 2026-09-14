@@ -6,9 +6,10 @@ public record OpsSettings(
     MaintenanceSettings maintenance,
     HealthSettings health,
     VersionGateSettings versions,
-    ShutdownSettings shutdown
+    ShutdownSettings shutdown,
+    SecuritySettings security
 ) {
-  public static final int CURRENT_SCHEMA = 1;
+  public static final int CURRENT_SCHEMA = 2;
 
   public OpsSettings {
     if (schemaVersion < 0) throw new IllegalArgumentException("ops.schema-version must be >= 0");
@@ -16,6 +17,7 @@ public record OpsSettings(
     if (health == null) health = HealthSettings.defaults();
     if (versions == null) versions = VersionGateSettings.defaults();
     if (shutdown == null) shutdown = ShutdownSettings.defaults();
+    if (security == null) security = SecuritySettings.defaults();
   }
 
   public static OpsSettings defaults() {
@@ -23,6 +25,7 @@ public record OpsSettings(
         MaintenanceSettings.defaults(),
         HealthSettings.defaults(),
         VersionGateSettings.defaults(),
-        ShutdownSettings.defaults());
+        ShutdownSettings.defaults(),
+        SecuritySettings.defaults());
   }
 }

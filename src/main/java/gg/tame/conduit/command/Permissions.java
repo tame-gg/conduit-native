@@ -28,4 +28,5 @@ public final class Permissions {
   public static final String HEALTH = "conduit.command.health";
   public static final String DOCTOR = "conduit.command.doctor";
   public static final String DIAGNOSTICS = "conduit.command.diagnostics";
+  public static final String ATTACK = "conduit.attack";
 }

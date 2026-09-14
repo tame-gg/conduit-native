@@ -56,6 +56,29 @@ public final class ConfigMigrator {
         entry("shutdown.graceful-enabled", "graceful-enabled = true"),
         entry("shutdown.timeout-ms", "timeout-ms = 5000"),
         entry("shutdown.message", "message = \"" + ShutdownSettings.DEFAULT_MESSAGE + "\"")));
+    appendMissingSection(appendix, present, added, "security.throttle", List.of(
+        entry("security.throttle.enabled", "enabled = true"),
+        entry("security.throttle.max-attempts", "max-attempts = 40"),
+        entry("security.throttle.window-ms", "window-ms = 1000"),
+        entry("security.throttle.max-concurrent", "max-concurrent = 32"),
+        entry("security.throttle.ipv4-prefix", "ipv4-prefix = 32"),
+        entry("security.throttle.ipv6-prefix", "ipv6-prefix = 64"),
+        entry("security.throttle.log-interval-ms", "log-interval-ms = 5000")));
+    appendMissingSection(appendix, present, added, "security.bot-filter", List.of(
+        entry("security.bot-filter.enabled", "enabled = true"),
+        entry("security.bot-filter.strike-threshold", "strike-threshold = 10"),
+        entry("security.bot-filter.handshake-timeout-ms", "handshake-timeout-ms = 3000"),
+        entry("security.bot-filter.block-duration-ms", "block-duration-ms = 60000"),
+        entry("security.bot-filter.strike-window-ms", "strike-window-ms = 60000")));
+    appendMissingSection(appendix, present, added, "security.channel-guard", List.of(
+        entry("security.channel-guard.enabled", "enabled = false"),
+        entry("security.channel-guard.default-action", "default-action = \"log\""),
+        entry("security.channel-guard.block-list", "block-list = [\"wdl:init\", \"wdl:control\"]"),
+        entry("security.channel-guard.log-list", "log-list = [\"schematica\"]"),
+        entry("security.channel-guard.kick-list", "kick-list = []")));
+    appendMissingSection(appendix, present, added, "security.attack-mode", List.of(
+        entry("security.attack-mode.throttle-max-attempts", "throttle-max-attempts = 8"),
+        entry("security.attack-mode.bot-strike-threshold", "bot-strike-threshold = 3")));
     if (!present.contains("ops.schema-version")) {
       if (!appendix.isEmpty()) appendix.append('\n');
       appendix.append("# Conduit Ops schema\n");

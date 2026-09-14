@@ -24,6 +24,13 @@ public final class ConduitMetrics {
   private final LongAdder failedSwitches = new LongAdder();
   private final LongAdder fallbackEvents = new LongAdder();
   private final LongAdder unhealthyTransitions = new LongAdder();
+  private final LongAdder connectionAccepted = new LongAdder();
+  private final LongAdder connectionThrottled = new LongAdder();
+  private final LongAdder botFilterStrikes = new LongAdder();
+  private final LongAdder botFilterBlocks = new LongAdder();
+  private final LongAdder channelGuardActions = new LongAdder();
+  private final LongAdder attackModeActivations = new LongAdder();
+  private final LongAdder malformedProtocol = new LongAdder();
   private final AtomicLong windowStart = new AtomicLong(System.nanoTime());
   private final AtomicLong lastInboundPackets = new AtomicLong();
   private final AtomicLong lastOutboundPackets = new AtomicLong();
@@ -44,10 +51,24 @@ public final class ConduitMetrics {
   public void failedSwitch() { failedSwitches.increment(); }
   public void fallbackEvent() { fallbackEvents.increment(); }
   public void backendUnhealthy() { unhealthyTransitions.increment(); }
+  public void connectionAccepted() { connectionAccepted.increment(); }
+  public void connectionThrottled() { connectionThrottled.increment(); }
+  public void botFilterStrike() { botFilterStrikes.increment(); }
+  public void botFilterBlock() { botFilterBlocks.increment(); }
+  public void channelGuardAction() { channelGuardActions.increment(); }
+  public void attackModeActivation() { attackModeActivations.increment(); }
+  public void malformedProtocol() { malformedProtocol.increment(); }
   public long switches() { return switches.sum(); }
   public long failedSwitches() { return failedSwitches.sum(); }
   public long fallbackEvents() { return fallbackEvents.sum(); }
   public long unhealthyTransitions() { return unhealthyTransitions.sum(); }
+  public long connectionsAccepted() { return connectionAccepted.sum(); }
+  public long connectionsThrottled() { return connectionThrottled.sum(); }
+  public long botFilterStrikes() { return botFilterStrikes.sum(); }
+  public long botFilterBlocks() { return botFilterBlocks.sum(); }
+  public long channelGuardActions() { return channelGuardActions.sum(); }
+  public long attackModeActivations() { return attackModeActivations.sum(); }
+  public long malformedProtocols() { return malformedProtocol.sum(); }
   public int activePlayers() { return players.get(); }
   public int activeBackends() { return backends.get(); }
   public long authentications() { return authentications.sum(); }
