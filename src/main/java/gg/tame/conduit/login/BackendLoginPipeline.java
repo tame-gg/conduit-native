@@ -71,8 +71,14 @@ public final class BackendLoginPipeline {
     if (forwarder.mode() != ForwardingMode.MODERN) throw new IOException("backend requested modern forwarding but Conduit is not configured for it");
     if (request.data().length != 1) throw new IOException("malformed modern forwarding request payload");
     int version = Byte.toUnsignedInt(request.data()[0]);
+    PlayerProfile canonical = AuthenticatedPlayerProfile.require(player);
+    System.out.println("BACKEND LOGIN forwarding=" + forwarder.mode()
+        + " forwardingVersion=" + version
+        + " clientProtocol=" + protocol.version().number()
+        + " hideLoginSuccess=" + hideLoginSuccess
+        + " " + canonical.summary());
     byte[] data;
-    try { data = forwarder.payload(new ForwardingRequest(player, clientAddress, protocol.version().number(), version)); }
+    try { data = forwarder.payload(new ForwardingRequest(canonical, clientAddress, protocol.version().number(), version)); }
     catch (IllegalArgumentException exception) { throw new IOException("unsupported modern forwarding version", exception); }
     if (data.length < 32) throw new IOException("invalid authentication material");
     return new LoginPluginResponse(request.messageId(), true, data).encode(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE));

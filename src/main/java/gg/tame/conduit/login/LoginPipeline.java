@@ -19,7 +19,7 @@ public final class LoginPipeline {
   public PlayerProfile player() { if (player == null) throw new IllegalStateException("Login Start has not arrived"); return player; }
   public void adopt(PlayerProfile authenticated) {
     if (player == null) throw new IllegalStateException("Login Start has not arrived");
-    this.player = authenticated;
+    this.player = AuthenticatedPlayerProfile.freeze(player, authenticated);
   }
   public void observe(PacketDirection direction, byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {

@@ -19,7 +19,7 @@ public final class ModernForwarder implements PlayerInfoForwarder {
   @Override public ForwardingMode mode() { return ForwardingMode.MODERN; }
   @Override public byte[] payload(ForwardingRequest request) {
     try {
-      if (request.forwardingVersion() < MIN_FORWARDING_FORMAT_VERSION || request.forwardingVersion() > MAX_FORWARDING_FORMAT_VERSION) {
+      if (!ModernForwardingVersion.supported(request.forwardingVersion())) {
         throw new IllegalArgumentException("unsupported modern forwarding version: " + request.forwardingVersion());
       }
       ByteArrayOutputStream raw = new ByteArrayOutputStream();

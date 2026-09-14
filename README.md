@@ -161,17 +161,36 @@ On protocol 765, Conduit merges `/server`, `/conduit`, and `/send` into the back
 tree (brigadier node indexes are rewritten). If a backend tree cannot be decoded, the original
 backend packet is forwarded unchanged (those proxy commands may still execute but can appear red).
 
-## Switching (protocol 765)
+## Canonical authenticated profile
+
+After `hasJoined`, `LoginPipeline` holds one `PlayerProfile` (`AuthenticatedPlayerProfile.freeze`
+keeps UUID, username, and signed `textures`). `PlayerSession.authenticatedProfile()` is that object.
+Every `BackendConnection` receives the same reference for Login Start and modern forwarding.
+Switching does not call Mojang again and does not allocate an empty profile.
+
+Modern forwarding (`velocity:player_info`) is versioned with `ModernForwardingVersion` (1–4),
+independent of Minecraft protocol 765/776. The body is: forwarding version, client IP, UUID,
+username, property list (HMAC-SHA-256 prefix). 26.2 Paper still uses that layout; extra Velocity
+key fields for versions 2–3 are omitted because Conduit terminates the client chat key separately.
+
+## Switching (protocol 765 and 776)
 
 The client TCP connection stays on Conduit.
 
 1. New backend: handshake, Login Start (authenticated profile), modern forwarding
-2. Login Success is **not** sent to the client
+2. Login Success is **not** sent to the client (same as Velocity; the client already left Login)
 3. Conduit sends **Login Acknowledged** to the backend (the client ack is dropped as a duplicate)
 4. Client: Start Configuration → Configuration Acknowledged
 5. Forward configuration packets (registry, tags, brand) then Finish Configuration
 6. Client Finish Configuration ack is forwarded to the new backend (this is what enters Play)
-7. Swap session backend; close the old backend
+7. After Join Game, Conduit writes `player_info_update` ADD_PLAYER for the local UUID with the
+   canonical properties (including signed `textures` and, on 26.2, listed + hat). Reconfiguration
+   clears TAB; hiding Login Success means the client would otherwise wait for a backend ADD_PLAYER
+   that ViaVersion/1.20.4 often omits or sends without textures.
+8. Swap session backend; close the old backend
+
+Conduit rewrites backend ADD_PLAYER for the local UUID to the canonical properties when present.
+Other players' properties are forwarded unchanged. Conduit does not invent skins or capes.
 
 Client protocol state and backend protocol state are tracked separately.
 

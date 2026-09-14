@@ -42,8 +42,8 @@ public final class GameProfiles {
       String name = MinecraftInput.string(input, 64);
       String value = MinecraftInput.string(input, 32767);
       Optional<String> signature = Optional.empty();
-      if (input.readBoolean()) signature = Optional.of(MinecraftInput.string(input, 1024));
-      if (name.isBlank() || value.isEmpty()) throw new IOException("malformed profile property");
+      if (input.readBoolean()) signature = Optional.of(MinecraftInput.string(input, 8192));
+      if (name.isBlank()) throw new IOException("malformed profile property");
       properties.add(new ProfileProperty(name, value, signature));
     }
     return List.copyOf(properties);

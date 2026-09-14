@@ -21,6 +21,35 @@ public final class PlayerInfoUpdate {
   public static final int UPDATE_LIST_PRIORITY = 0x40;
   public static final int UPDATE_HAT = 0x80;
   private PlayerInfoUpdate() {}
+  /**
+   * 26.2 reconfiguration clears TAB. Login Success is hidden on switch, so the client only
+   * learns textures again from ADD_PLAYER. Synthesize that entry from the session profile
+   * after Join Game rather than reconstructing from UUID+name with empty properties.
+   */
+  public static byte[] selfAdd(ProtocolDefinition protocol, PlayerProfile profile) {
+    if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE)) {
+      throw new IllegalArgumentException("protocol has no player-info update packet");
+    }
+    int id = protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE);
+    int actions = ADD_PLAYER | UPDATE_GAME_MODE | UPDATE_LISTED | UPDATE_LATENCY;
+    if (protocol.version().number() >= 768) actions |= UPDATE_HAT;
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, id);
+      output.writeByte(actions);
+      MinecraftOutput.varInt(output, 1);
+      GameProfiles.writeUuid(output, profile.uniqueId());
+      MinecraftOutput.string(output, profile.username());
+      GameProfiles.writeProperties(output, profile.properties());
+      MinecraftOutput.varInt(output, 0);
+      output.writeBoolean(true);
+      MinecraftOutput.varInt(output, -1);
+      if ((actions & UPDATE_HAT) != 0) output.writeBoolean(true);
+    } catch (IOException exception) {
+      throw new IllegalStateException("cannot encode player-info ADD_PLAYER", exception);
+    }
+    return bytes.toByteArray();
+  }
   public static byte[] ensureOwnTextures(ProtocolDefinition protocol, byte[] packet, PlayerProfile profile) {
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE)) return packet;
     if (!profile.hasTextures()) return packet;
@@ -35,10 +64,11 @@ public final class PlayerInfoUpdate {
         output.writeByte(actions);
         MinecraftOutput.varInt(output, count);
         for (int index = 0; index < count; index++) copyPlayer(input, output, actions, profile);
-        if (input.available() != 0) return packet;
+        output.write(input.readAllBytes());
       }
       return bytes.toByteArray();
     } catch (IOException exception) {
+      System.err.println("player-info profile rewrite skipped: " + exception.getMessage());
       return packet;
     }
   }
@@ -48,7 +78,7 @@ public final class PlayerInfoUpdate {
     if ((actions & ADD_PLAYER) != 0) {
       String name = MinecraftInput.string(input, 16);
       List<ProfileProperty> properties = GameProfiles.readProperties(input);
-      if (uuid.equals(profile.uniqueId()) && !GameProfiles.hasTextures(properties)) properties = profile.properties();
+      if (uuid.equals(profile.uniqueId()) && profile.hasTextures()) properties = profile.properties();
       MinecraftOutput.string(output, name);
       GameProfiles.writeProperties(output, properties);
     }
@@ -67,8 +97,8 @@ public final class PlayerInfoUpdate {
     if (!present) return;
     GameProfiles.writeUuid(output, GameProfiles.readUuid(input));
     output.writeLong(input.readLong());
-    writePrefixedBytes(output, MinecraftInput.bytes(input, 512));
-    writePrefixedBytes(output, MinecraftInput.bytes(input, 4096));
+    writePrefixedBytes(output, MinecraftInput.bytes(input, 8192));
+    writePrefixedBytes(output, MinecraftInput.bytes(input, 8192));
   }
   private static void writePrefixedBytes(DataOutputStream output, byte[] data) throws IOException {
     MinecraftOutput.varInt(output, data.length);

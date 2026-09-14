@@ -8,6 +8,7 @@ import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ForwardingMode;
 import gg.tame.conduit.forwarding.PlayerInfoForwarder;
+import gg.tame.conduit.login.AuthenticatedPlayerProfile;
 import gg.tame.conduit.login.LoginPipeline;
 import gg.tame.conduit.login.LoginStart;
 import gg.tame.conduit.login.PlayerProfile;
@@ -60,6 +61,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
   private volatile boolean commandsDeclared;
   private final List<byte[]> deferredPlay = new java.util.ArrayList<>();
   private boolean playLoginSent;
+  private boolean needSelfPlayerInfo = true;
   private volatile Thread clientReader;
   public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
       LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, CommandManager commands, PlayerManager players, BackendSelector selector,
@@ -68,7 +70,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
     this.loginPipeline = loginPipeline; this.forwarder = forwarder; this.commands = commands; this.players = players; this.selector = selector;
     this.handshake = handshake; this.originalHandshake = originalHandshake; this.originalLoginStart = originalLoginStart; this.address = address;
   }
-  public PlayerProfile profile() { return loginPipeline.player(); }
+  public PlayerProfile profile() { return AuthenticatedPlayerProfile.require(loginPipeline.player()); }
+  /** Same object as {@link #profile()}; the session never recreates identity on {@code /server}. */
+  public PlayerProfile authenticatedProfile() { return profile(); }
   @Override public java.util.UUID uniqueId() { return profile().uniqueId(); }
   public SessionLifecycle lifecycle() { return lifecycle.get(); }
   public BackendConnection backend() { return backend; }
@@ -198,6 +202,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
           continue;
         }
         writeClient(outbound);
+        if (clientState.state() == ConnectionState.PLAY && isPlayLogin(packet)) {
+          emitSelfPlayerInfoIfNeeded();
+        }
         if (isPlayDisconnect(packet)) { close(); return; }
       } catch (IOException exception) {
         if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return;
@@ -256,6 +263,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       deferredPlay.clear();
       for (byte[] packet : logins) writeClient(packet);
       playLoginSent = true;
+      emitSelfPlayerInfoIfNeeded();
       for (byte[] packet : rest) writeClient(maybeMergeCommands(packet));
     }
   }
@@ -314,7 +322,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       switchingTarget = next;
       if (protocol.hasConfiguration()) {
         configurationAck.clear();
-        synchronized (lock) { deferredPlay.clear(); playLoginSent = false; }
+        synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
         writeClient(PlayPackets.startConfiguration(protocol));
         clientEnteredConfiguration = true;
         if (configurationAck.poll(10, TimeUnit.SECONDS) == null) throw new IOException("client did not acknowledge reconfiguration");
@@ -430,6 +438,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, AutoCl
       System.out.println("Client protocol " + protocol.version().number() + " connecting to " + server.name()
           + " advertised as " + backendProtocol + " (backend must accept the client protocol, e.g. ViaVersion).");
     }
+  }
+  private void emitSelfPlayerInfoIfNeeded() throws IOException {
+    if (!needSelfPlayerInfo) return;
+    if (clientState.state() != ConnectionState.PLAY) return;
+    if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE)) {
+      needSelfPlayerInfo = false;
+      return;
+    }
+    writeClient(gg.tame.conduit.protocol.PlayerInfoUpdate.selfAdd(protocol, profile()));
+    needSelfPlayerInfo = false;
   }
   private void writeClient(byte[] packet) throws IOException {
     synchronized (lock) {

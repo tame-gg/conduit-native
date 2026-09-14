@@ -8,8 +8,8 @@ public final class ProtocolProfileAdapter {
   private ProtocolProfileAdapter() {}
   public static byte[] backendToClient(ProtocolDefinition protocol, ConnectionState state, byte[] packet, PlayerProfile profile) {
     try {
-      if (state == ConnectionState.LOGIN) return LoginSuccess.replaceProfile(protocol, packet, profile);
-      if (state == ConnectionState.PLAY) return PlayerInfoUpdate.ensureOwnTextures(protocol, packet, profile);
+      packet = LoginSuccess.replaceProfile(protocol, packet, profile);
+      packet = PlayerInfoUpdate.ensureOwnTextures(protocol, packet, profile);
     } catch (IOException ignored) { }
     return packet;
   }

@@ -45,6 +45,9 @@ final class ProfileTests {
     loginSuccessReplaceKeepsTrailer();
     playerInfoInjectsTextures();
     playerInfoLeavesForeignPlayers();
+    selfAddCarriesSignedTextures();
+    forwardingPayloadIdenticalOnRepeatedSwitch();
+    freezeKeepsAuthenticatedProperties();
     adapterIgnoresUnrelatedPackets();
     mojangVerifyStoresTextures();
     protocolIds();
@@ -146,7 +149,7 @@ final class ProfileTests {
       MinecraftOutput.varInt(output, 1);
       GameProfiles.writeUuid(output, profile.uniqueId());
       MinecraftOutput.string(output, profile.username());
-      GameProfiles.writeProperties(output, List.of());
+      GameProfiles.writeProperties(output, List.of(new gg.tame.conduit.login.ProfileProperty("textures", "stale", java.util.Optional.empty())));
       MinecraftOutput.varInt(output, 42);
     }
     byte[] rewritten = PlayerInfoUpdate.ensureOwnTextures(protocol, original.toByteArray(), profile);
@@ -155,7 +158,8 @@ final class ProfileTests {
       require(MinecraftInput.varInt(input) == 1, "count");
       require(GameProfiles.readUuid(input).equals(profile.uniqueId()), "uuid");
       MinecraftInput.string(input, 16);
-      require(GameProfiles.hasTextures(GameProfiles.readProperties(input)), "injected");
+      var properties = GameProfiles.readProperties(input);
+      require(properties.size() == 1 && properties.getFirst().value().equals("c2tpbg=="), "replaced stale textures");
       require(MinecraftInput.varInt(input) == 42, "latency");
     }
   }
@@ -178,6 +182,48 @@ final class ProfileTests {
       GameProfiles.readUuid(input); MinecraftInput.string(input, 16);
       require(!GameProfiles.hasTextures(GameProfiles.readProperties(input)), "did not invent foreign textures");
     }
+  }
+  private static void selfAddCarriesSignedTextures() throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    PlayerProfile profile = sample();
+    byte[] packet = PlayerInfoUpdate.selfAdd(protocol, profile);
+    byte[] preserved = PlayerInfoUpdate.ensureOwnTextures(protocol, packet, profile);
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(preserved))) {
+      require(MinecraftInput.varInt(input) == 0x46, "776 player-info id");
+      int actions = input.readUnsignedByte();
+      require((actions & PlayerInfoUpdate.ADD_PLAYER) != 0, "ADD_PLAYER");
+      require((actions & PlayerInfoUpdate.UPDATE_HAT) != 0, "hat layer");
+      require(MinecraftInput.varInt(input) == 1, "count");
+      require(GameProfiles.readUuid(input).equals(profile.uniqueId()), "uuid");
+      require(MinecraftInput.string(input, 16).equals("Koels"), "name");
+      var properties = GameProfiles.readProperties(input);
+      require(properties.size() == 1 && properties.getFirst().signature().orElseThrow().equals("c2ln"), "signed textures");
+      MinecraftInput.varInt(input);
+      require(input.readBoolean(), "listed");
+    }
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayerInfoUpdate.selfAdd(v765, profile)))) {
+      MinecraftInput.varInt(input);
+      require((input.readUnsignedByte() & PlayerInfoUpdate.UPDATE_HAT) == 0, "765 has no hat action");
+    }
+  }
+  private static void forwardingPayloadIdenticalOnRepeatedSwitch() throws Exception {
+    var secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
+    ModernForwarder forwarder = new ModernForwarder(ForwardingSecret.load(secret));
+    PlayerProfile profile = sample();
+    ForwardingRequest initial = new ForwardingRequest(profile, InetAddress.getByName("127.0.0.1"), 776, 1);
+    ForwardingRequest switched = new ForwardingRequest(profile, InetAddress.getByName("127.0.0.1"), 776, 1);
+    byte[] a = forwarder.payload(initial);
+    byte[] b = forwarder.payload(switched);
+    require(java.util.Arrays.equals(java.util.Arrays.copyOfRange(a, 32, a.length), java.util.Arrays.copyOfRange(b, 32, b.length)), "switch reuses same forwarding body");
+    require(profile.uniqueId().equals(sample().uniqueId()) && profile.username().equals("Koels"), "uuid/name unchanged");
+    require(profile.property("textures").orElseThrow().signature().isPresent(), "textures signature survives");
+  }
+  private static void freezeKeepsAuthenticatedProperties() {
+    PlayerProfile authed = sample();
+    PlayerProfile empty = new PlayerProfile(authed.uniqueId(), authed.username(), List.of(), true);
+    PlayerProfile frozen = gg.tame.conduit.login.AuthenticatedPlayerProfile.freeze(authed, empty);
+    require(frozen.hasTextures() && frozen == authed, "canonical profile not replaced");
   }
   private static void adapterIgnoresUnrelatedPackets() {
     ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
