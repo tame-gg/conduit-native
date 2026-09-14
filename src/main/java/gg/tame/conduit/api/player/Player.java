@@ -12,6 +12,9 @@ public interface Player extends PermissionSubject {
   String connectionState();
   OptionalServer currentServer();
   void sendMessage(String message);
+  default void sendMessage(gg.tame.conduit.api.text.Text text) {
+    sendMessage(text == null ? "" : text.plain());
+  }
   CompletableFuture<Boolean> connect(RegisteredServer server);
   void disconnect(String reason);
   void sendPluginMessage(String channel, byte[] data);

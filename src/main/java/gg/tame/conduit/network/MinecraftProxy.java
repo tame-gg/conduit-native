@@ -59,7 +59,7 @@ public final class MinecraftProxy implements AutoCloseable {
     this.configuration = configuration; this.authenticator = authenticator; this.rsaKeys = rsaKeys;
     this.forwarder = Forwarders.create(configuration); this.listener = ServerSocketChannel.open(); listener.bind(configuration.listener());
     this.runtime = new ConduitRuntime(configuration, pluginsDirectory);
-    CoreCommands.register(runtime.commandManager(), runtime.selector().registry(), runtime.playerManager());
+    CoreCommands.register(runtime);
     try {
       Class.forName("gg.tame.conduit.compat.velocity.VelocityBoot")
           .getMethod("install", ConduitRuntime.class)

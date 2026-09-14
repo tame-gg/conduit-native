@@ -26,6 +26,16 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
     for (Task task : new ArrayList<>(tasks)) if (task.plugin == plugin) task.cancel();
   }
   @Override public void close() { executor.shutdownNow(); }
+
+  /** Internal Conduit tasks (status refresh). Not owned by a plugin. */
+  public void scheduleSystem(Runnable work, Duration delay, Duration period) {
+    long delayMs = Math.max(0, delay.toMillis());
+    long periodMs = Math.max(1, period.toMillis());
+    executor.scheduleAtFixedRate(() -> {
+      try { work.run(); }
+      catch (RuntimeException exception) { ConduitLog.error("system task failed", exception); }
+    }, delayMs, periodMs, TimeUnit.MILLISECONDS);
+  }
   private final class Builder implements TaskBuilder {
     private final Plugin plugin;
     private final Runnable work;

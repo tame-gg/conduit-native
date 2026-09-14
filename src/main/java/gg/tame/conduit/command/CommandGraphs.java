@@ -124,10 +124,28 @@ public final class CommandGraphs {
     List<String> sendChildren = new ArrayList<>();
     sendChildren.add("current");
     sendChildren.addAll(serverNames);
-    return List.of(
-        new CommandGraph.LiteralCommand("conduit", List.of()),
-        new CommandGraph.LiteralCommand("server", serverNames),
-        new CommandGraph.LiteralCommand("send", sendChildren));
+    List<String> conduitChildren = List.of("info", "plugins", "servers", "uptime", "dump", "heap", "reload", "metrics", "health", "help");
+    List<CommandGraph.LiteralCommand> literals = new ArrayList<>();
+    literals.add(new CommandGraph.LiteralCommand("conduit", conduitChildren));
+    literals.add(new CommandGraph.LiteralCommand("glist", List.of()));
+    literals.add(new CommandGraph.LiteralCommand("plist", serverNames));
+    literals.add(new CommandGraph.LiteralCommand("find", List.of()));
+    literals.add(new CommandGraph.LiteralCommand("alert", List.of()));
+    literals.add(new CommandGraph.LiteralCommand("ping", List.of()));
+    literals.add(new CommandGraph.LiteralCommand("hub", List.of()));
+    literals.add(new CommandGraph.LiteralCommand("gkick", List.of()));
+    literals.add(new CommandGraph.LiteralCommand("server", serverNames));
+    literals.add(new CommandGraph.LiteralCommand("send", sendChildren));
+    for (String name : serverNames) {
+      String key = name.toLowerCase(java.util.Locale.ROOT);
+      if (key.equals("server") || key.equals("send") || key.equals("conduit") || key.equals("glist")
+          || key.equals("plist") || key.equals("find") || key.equals("alert") || key.equals("ping")
+          || key.equals("hub") || key.equals("gkick")) {
+        continue;
+      }
+      literals.add(new CommandGraph.LiteralCommand(key, List.of()));
+    }
+    return List.copyOf(literals);
   }
   private static byte[] rootOnly() throws IOException {
     var bytes = new java.io.ByteArrayOutputStream();

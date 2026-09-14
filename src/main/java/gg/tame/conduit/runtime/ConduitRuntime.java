@@ -15,6 +15,7 @@ import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.event.ConduitEventManager;
 import gg.tame.conduit.permission.PermissivePermissionProvider;
 import gg.tame.conduit.plugin.ConduitPluginManager;
+import gg.tame.conduit.plugin.PluginCatalog;
 import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.routing.ServerRegistry;
 import gg.tame.conduit.scheduler.ConduitScheduler;
@@ -39,6 +40,8 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final ServerViews servers;
   private final PlayerViews playerViews;
   private final ConduitPluginManager plugins;
+  private final PluginCatalog pluginCatalog = new PluginCatalog();
+  private final long startedAtNanos = System.nanoTime();
   public ConduitRuntime(ConduitConfiguration configuration, Path pluginsDirectory) {
     this.selector = new BackendSelector(configuration);
     this.commands = new CommandManager();
@@ -46,7 +49,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.servers = new ServerViews(selector.registry(), selector);
     this.playerViews = new PlayerViews(players);
     this.plugins = new ConduitPluginManager(pluginsDirectory, this, events, scheduler, commands);
+    scheduler.scheduleSystem(selector::refreshStatusQuietly, java.time.Duration.ofSeconds(30), java.time.Duration.ofSeconds(30));
   }
+  public PluginCatalog pluginCatalog() { return pluginCatalog; }
+  public long uptimeMillis() { return Math.max(0, (System.nanoTime() - startedAtNanos) / 1_000_000L); }
   public CommandManager commandManager() { return commands; }
   public PlayerManager playerManager() { return players; }
   public BackendSelector selector() { return selector; }
@@ -113,6 +119,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     @Override public String getName() { return server.name(); }
     @Override public InetSocketAddress getAddress() { return server.address(); }
     @Override public boolean isOnline() { return selector.advertisement(server.name()).isPresent(); }
+    @Override public gg.tame.conduit.api.server.ServerStatus status() { return selector.status(server.name()); }
     @Override public CompletableFuture<Boolean> connect(Player player) { return player.connect(this); }
     BackendServer backend() { return server; }
   }

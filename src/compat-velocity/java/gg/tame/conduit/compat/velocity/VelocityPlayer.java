@@ -43,7 +43,7 @@ final class VelocityPlayer implements Player {
   @Override public Tristate getPermissionValue(String permission) {
     return nativePlayer.hasPermission(permission) ? Tristate.TRUE : Tristate.FALSE;
   }
-  @Override public void sendMessage(Component message) { nativePlayer.sendMessage(Texts.plain(message)); }
+  @Override public void sendMessage(Component message) { nativePlayer.sendMessage(Texts.toConduit(message)); }
   @Override public void disconnect(Component reason) { nativePlayer.disconnect(Texts.plain(reason)); }
   @Override public Optional<ServerConnection> getCurrentServer() {
     var current = nativePlayer.currentServer();

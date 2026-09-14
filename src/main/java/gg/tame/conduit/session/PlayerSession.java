@@ -396,8 +396,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     lost.close();
     Set<String> failed = new HashSet<>();
     failed.add(ServerRegistry.normalize(lost.server().name()));
+    sendMessage(gg.tame.conduit.api.text.Text.of("✕ ").color(gg.tame.conduit.api.text.TextColor.RED)
+        .append(gg.tame.conduit.api.text.Text.of(gg.tame.conduit.command.ConduitUi.titleCase(lost.server().name()) + " is unavailable.").color(gg.tame.conduit.api.text.TextColor.WHITE)));
     for (BackendServer server : selector.fallback(lost.server().name(), failed)) {
-      try { switchTo(server, true); return; }
+      try {
+        sendMessage(gg.tame.conduit.api.text.Text.of("Returning you to ")
+            .color(gg.tame.conduit.api.text.TextColor.GRAY)
+            .append(gg.tame.conduit.api.text.Text.of(gg.tame.conduit.command.ConduitUi.titleCase(server.name())).color(gg.tame.conduit.api.text.TextColor.AQUA).bold())
+            .append(gg.tame.conduit.api.text.Text.of("...").color(gg.tame.conduit.api.text.TextColor.GRAY)));
+        switchTo(server, true);
+        gg.tame.conduit.command.ConduitUi.connected(this, gg.tame.conduit.command.ConduitUi.titleCase(server.name()));
+        return;
+      }
       catch (Exception exception) { failed.add(ServerRegistry.normalize(server.name())); }
     }
     close();
@@ -406,21 +416,24 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public boolean transferTo(String name) {
     BackendServer server = selector.registry().get(name).orElse(null);
     if (server == null) return false;
+    String display = gg.tame.conduit.command.ConduitUi.titleCase(server.name());
     if (Thread.currentThread() == clientReader) {
       Thread.startVirtualThread(() -> {
-        if (!runSwitch(server)) sendMessage("Unable to connect to " + server.name() + ".");
+        if (runSwitch(server)) gg.tame.conduit.command.ConduitUi.connected(this, display);
+        else gg.tame.conduit.command.ConduitUi.failure(this, "Unable to connect to " + display + ".", "The server is currently unavailable.");
       });
       return true;
     }
-    return runSwitch(server);
+    boolean ok = runSwitch(server);
+    if (ok) gg.tame.conduit.command.ConduitUi.connected(this, display);
+    else gg.tame.conduit.command.ConduitUi.failure(this, "Unable to connect to " + display + ".", "The server is currently unavailable.");
+    return ok;
   }
   private boolean runSwitch(BackendServer server) {
     try {
       switchTo(server, false);
       return true;
     } catch (Exception exception) {
-      String message = exception.getMessage();
-      if (message != null && clientState.state() == ConnectionState.PLAY) sendMessage(message);
       return false;
     }
   }
@@ -635,8 +648,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return runtime.permissions().hasPermission(this, permission);
   }
   @Override public void sendMessage(String message) {
-    try { if (clientState.state() == ConnectionState.PLAY) writeClient(PlayPackets.systemChat(protocol, message)); }
-    catch (IOException ignored) { }
+    sendMessage(gg.tame.conduit.api.text.Text.of(message == null ? "" : message));
+  }
+  @Override public void sendMessage(gg.tame.conduit.api.text.Text text) {
+    try {
+      if (clientState.state() == ConnectionState.PLAY) writeClient(PlayPackets.systemChat(protocol, text));
+    } catch (IOException ignored) { }
   }
   @Override public String currentBackend() {
     BackendConnection current = backend;

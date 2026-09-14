@@ -12,7 +12,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.jar.JarFile;
 import java.util.logging.Logger;
-import javax.inject.Inject;
 
 final class VelocityPluginLoader implements ExternalJarHandler {
   private final VelocityEnvironment environment;
@@ -39,6 +38,11 @@ final class VelocityPluginLoader implements ExternalJarHandler {
     Object instance = construct(type, description);
     VelocityPluginHost.Container container = new VelocityPluginHost.Container(description, instance);
     environment.plugins().add(container);
+    environment.runtime().pluginCatalog().put(new gg.tame.conduit.plugin.PluginCatalog.Entry(
+        description.getId(),
+        description.getName().orElse(description.getId()),
+        description.getVersion().orElse(""),
+        gg.tame.conduit.plugin.PluginCatalog.Kind.VELOCITY));
     environment.events().register(instance, instance);
     ConduitLog.info("Enabled Velocity plugin " + description.getId() + " " + description.getVersion().orElse(""));
   }
@@ -57,19 +61,19 @@ final class VelocityPluginLoader implements ExternalJarHandler {
     for (int i = 0; i < types.length; i++) args[i] = inject(types[i], logger, pending);
     Object instance = chosen.newInstance(args);
     for (Field field : type.getDeclaredFields()) {
-      if (field.getAnnotation(Inject.class) == null) continue;
+      if (!isInject(field)) continue;
       field.setAccessible(true);
       field.set(instance, inject(field.getType(), logger, pending));
     }
     return instance;
   }
   private Object inject(Class<?> type, Logger logger, VelocityPluginHost.Container container) {
-    if (type.isAssignableFrom(environment.proxy().getClass())) return environment.proxy();
-    if (type == com.velocitypowered.api.proxy.ProxyServer.class) return environment.proxy();
+    if (type.isInstance(environment.proxy()) || type == com.velocitypowered.api.proxy.ProxyServer.class) {
+      return environment.proxy();
+    }
     if (type == Logger.class) return logger;
     if (type == org.slf4j.Logger.class) return org.slf4j.LoggerFactory.getLogger(logger.getName());
-    if (type == com.velocitypowered.api.plugin.PluginContainer.class) return container;
-    if (type.isAssignableFrom(VelocityPluginHost.Container.class)) return container;
+    if (type == com.velocitypowered.api.plugin.PluginContainer.class || type.isInstance(container)) return container;
     if (Path.class.isAssignableFrom(type)) {
       try {
         Path data = Path.of("plugins", container.getDescription().getId());
@@ -80,6 +84,15 @@ final class VelocityPluginLoader implements ExternalJarHandler {
       }
     }
     throw new IllegalArgumentException("cannot inject " + type.getName());
+  }
+  private static boolean isInject(java.lang.reflect.AnnotatedElement element) {
+    for (java.lang.annotation.Annotation annotation : element.getAnnotations()) {
+      String name = annotation.annotationType().getName();
+      if (name.equals("javax.inject.Inject") || name.equals("jakarta.inject.Inject") || name.equals("com.google.inject.Inject")) {
+        return true;
+      }
+    }
+    return false;
   }
   private static VelocityPluginHost.Description parseJson(String json, Path source) {
     return new VelocityPluginHost.Description(field(json, "id"), field(json, "name"), field(json, "version"), field(json, "main"), source);

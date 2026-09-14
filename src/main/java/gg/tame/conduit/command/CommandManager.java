@@ -9,7 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Small native command dispatcher. Not a Velocity clone. */
+/** Small native command dispatcher. */
 public final class CommandManager implements gg.tame.conduit.api.command.CommandManager {
   private final Map<String, RegisteredCommand> commands = new LinkedHashMap<>();
   private final Map<Plugin, List<RegisteredCommand>> owned = new ConcurrentHashMap<>();
@@ -43,7 +43,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     synchronized (this) { command = commands.get(parsed.name()); }
     if (command == null) return false;
     if (command.permission() != null && !command.permission().isBlank() && !source.hasPermission(command.permission())) {
-      source.sendMessage("You do not have permission to do that.");
+      source.sendMessage("You don't have permission to do that.");
       return true;
     }
     command.executor().execute(source, parsed.arguments());

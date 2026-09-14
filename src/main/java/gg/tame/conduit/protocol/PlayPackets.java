@@ -36,11 +36,13 @@ public final class PlayPackets {
     return bytes.toByteArray();
   }
   public static byte[] systemChat(ProtocolDefinition protocol, String message) throws IOException {
+    return systemChat(protocol, gg.tame.conduit.api.text.Text.of(message == null ? "" : message));
+  }
+  public static byte[] systemChat(ProtocolDefinition protocol, gg.tame.conduit.api.text.Text message) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT));
-      if (protocol.hasConfiguration()) NetworkNbt.stringComponent(output, message);
-      else MinecraftOutput.string(output, "{\"text\":\"" + message.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
+      gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
       output.writeBoolean(false);
     }
     return bytes.toByteArray();

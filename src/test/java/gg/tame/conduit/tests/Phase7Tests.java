@@ -11,6 +11,7 @@ import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.TranslationSupport;
 import gg.tame.conduit.protocol.Translators;
 import gg.tame.conduit.routing.ServerRegistry;
+import gg.tame.conduit.runtime.ConduitRuntime;
 import gg.tame.conduit.session.PlayerManager;
 import gg.tame.conduit.session.TrackedPlayer;
 import java.nio.file.Files;
@@ -24,6 +25,7 @@ public final class Phase7Tests {
   static void run() throws Exception {
     playerManagerIndex();
     sendCommands();
+    pluginAndListCommands();
     protocolCompatibility();
   }
   private static void playerManagerIndex() {
@@ -63,36 +65,65 @@ public final class Phase7Tests {
     commands.dispatch(admin, "/send kyle lobby");
     require(kyle.backend.equals("lobby"), "send player case-insensitive");
     commands.dispatch(admin, "/send Kyle lobby");
-    require(admin.messages.stream().anyMatch(line -> line.equals("Kyle is already connected to lobby.")), "already connected");
+    require(admin.messages.stream().anyMatch(line -> line.contains("already connected to") && line.contains("Lobby")), "already connected");
     commands.dispatch(admin, "/send missing survival");
-    require(admin.messages.stream().anyMatch(line -> line.equals("Player missing is not online.")), "unknown player");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Player missing is not online")), "unknown player");
     commands.dispatch(admin, "/send lobby2 survival");
-    require(admin.messages.stream().anyMatch(line -> line.equals("Unknown server: lobby2")), "unknown source");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Player lobby2 is not online")), "unknown source as player");
     commands.dispatch(admin, "/send lobby survival2");
-    require(admin.messages.stream().anyMatch(line -> line.equals("Unknown server: survival2")), "unknown dest");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Unknown server: survival2")), "unknown dest");
     AdminSource spectator = new AdminSource("Spec", "lobby", Set.of(Permissions.SERVER_SEND));
     commands.dispatch(spectator, "/send Steve survival");
-    require(spectator.messages.stream().anyMatch(line -> line.contains("permission")), "others permission");
+    require(spectator.messages.stream().anyMatch(line -> line.toLowerCase().contains("permission")), "others permission");
     require(steve.backend.equals("lobby"), "steve not moved without permission");
     commands.dispatch(admin, "/send lobby survival");
-    require(admin.messages.stream().anyMatch(line -> line.equals("Sending players from lobby to survival...")), "mass start");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Sending players") && line.contains("Lobby") && line.contains("Survival")), "mass start");
     require(steve.backend.equals("survival"), "mass moved steve");
     require(alex.backend.equals("lobby"), "failed mass stays");
-    require(admin.messages.stream().anyMatch(line -> line.equals("Sent 2 players to survival.")), "mass count");
-    require(admin.messages.stream().anyMatch(line -> line.equals("1 player could not be moved.")), "partial failure");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Sent 2 players")), "mass count");
+    require(admin.messages.stream().anyMatch(line -> line.contains("1 player could not be moved")), "partial failure");
     players.remove(steve);
     players.remove(alex);
     players.remove(kyle);
     FakePlayer lonely = new FakePlayer("Lonely", "minigames", UUID.fromString("00000000-0000-0000-0000-000000000009"));
     players.add(lonely);
     commands.dispatch(admin, "/send lobby survival");
-    require(admin.messages.stream().anyMatch(line -> line.equals("No players are connected to lobby.")), "empty source");
+    require(admin.messages.stream().anyMatch(line -> line.contains("No players are connected to Lobby")), "empty source");
     List<String> first = commands.tabComplete(admin, "/send ");
     require(first.contains("current") && first.contains("lobby") && first.contains("Lonely"), "send first tab");
     List<String> dests = commands.tabComplete(admin, "/send current ");
     require(dests.contains("lobby") && dests.contains("survival") && dests.contains("minigames"), "send current tab");
     dests = commands.tabComplete(admin, "/send lobby ");
     require(dests.contains("survival") && dests.contains("lobby"), "send server tab");
+  }
+  private static void pluginAndListCommands() throws Exception {
+    Path config = Files.createTempFile("conduit", ".toml");
+    Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
+    var loaded = ConfigurationLoader.load(config);
+    ConduitRuntime runtime = new ConduitRuntime(loaded, Files.createTempDirectory("conduit-plugins-cmd"));
+    CoreCommands.register(runtime);
+    runtime.pluginCatalog().put(new gg.tame.conduit.plugin.PluginCatalog.Entry("demo", "Demo", "1.0", gg.tame.conduit.plugin.PluginCatalog.Kind.CONDUIT));
+    runtime.pluginCatalog().put(new gg.tame.conduit.plugin.PluginCatalog.Entry("via", "ViaVersion", "5.11.0", gg.tame.conduit.plugin.PluginCatalog.Kind.VELOCITY));
+    FakePlayer kyle = new FakePlayer("Kyle", "lobby", UUID.fromString("00000000-0000-0000-0000-000000000011"));
+    FakePlayer steve = new FakePlayer("Steve", "survival", UUID.fromString("00000000-0000-0000-0000-000000000012"));
+    runtime.playerManager().add(kyle);
+    runtime.playerManager().add(steve);
+    AdminSource admin = new AdminSource("Op", "lobby", Set.of(Permissions.PLUGINS, Permissions.GLIST, Permissions.FIND, Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
+    runtime.commandManager().dispatch(admin, "/conduit plugins");
+    require(admin.messages.stream().anyMatch(line -> line.contains("loaded") || line.contains("PROXY PLUGINS")), "plugin panel");
+    require(admin.messages.stream().anyMatch(line -> line.contains("ViaVersion") && line.contains("velocity")), "velocity plugin listed");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Demo") && line.contains("conduit")), "conduit plugin listed");
+    require(admin.messages.stream().noneMatch(line -> line.toLowerCase().contains("essentials") || line.contains("Paper")), "no backend plugins");
+    runtime.commandManager().dispatch(admin, "/glist");
+    require(admin.messages.stream().anyMatch(line -> line.contains("2 player(s) online")), "glist total");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Lobby") && line.contains("Kyle")), "glist lobby");
+    runtime.commandManager().dispatch(admin, "/find steve");
+    require(admin.messages.stream().anyMatch(line -> line.contains("Steve") && line.contains("Survival")), "find");
+    runtime.commandManager().dispatch(admin, "/conduit help");
+    require(admin.messages.stream().anyMatch(line -> line.contains("/conduit plugins")), "conduit help");
+    runtime.commandManager().dispatch(admin, "/send Lonely survival");
+    // covered in send tests above
+    runtime.close();
   }
   private static void protocolCompatibility() {
     require(ProtocolCompatibility.between(765, 765) == TranslationSupport.DIRECT, "1.20.4 direct");

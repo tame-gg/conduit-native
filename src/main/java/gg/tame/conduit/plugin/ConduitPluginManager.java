@@ -11,6 +11,7 @@ import gg.tame.conduit.api.plugin.PluginManager;
 import gg.tame.conduit.command.CommandManager;
 import gg.tame.conduit.event.ConduitEventManager;
 import gg.tame.conduit.log.ConduitLog;
+import gg.tame.conduit.runtime.ConduitRuntime;
 import gg.tame.conduit.scheduler.ConduitScheduler;
 import java.io.IOException;
 import java.net.URL;
@@ -128,6 +129,10 @@ public final class ConduitPluginManager implements PluginManager {
       pending.plugin.onLoad();
       pending.plugin.onEnable();
       plugins.put(pending.description.id(), new LoadedPlugin(pending.plugin, pending.loader));
+      if (proxy instanceof ConduitRuntime runtime) {
+        runtime.pluginCatalog().put(new PluginCatalog.Entry(
+            pending.description.id(), pending.description.name(), pending.description.version(), PluginCatalog.Kind.CONDUIT));
+      }
       events.fire(new PluginEnableEvent(pending.plugin));
       ConduitLog.info("Enabled plugin " + pending.description.id() + " " + pending.description.version());
     } catch (Exception exception) {
@@ -140,6 +145,9 @@ public final class ConduitPluginManager implements PluginManager {
   @Override public void disable(Plugin plugin) {
     LoadedPlugin loaded = plugins.remove(plugin.description().id());
     if (loaded == null) return;
+    if (proxy instanceof ConduitRuntime runtime) {
+      runtime.pluginCatalog().remove(plugin.description().id());
+    }
     try { events.fire(new PluginDisableEvent(plugin)); } catch (RuntimeException ignored) { }
     try { plugin.onDisable(); } catch (RuntimeException exception) { ConduitLog.error("plugin disable failed: " + plugin.description().id(), exception); }
     events.unregister(plugin);

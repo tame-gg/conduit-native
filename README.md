@@ -131,19 +131,27 @@ Local Paper does not care. Lobby → survival on a 26.2 client failed because Pl
 
 ## Commands
 
-Native command framework (not Velocity's):
+Native Conduit commands use a polished chat UI (colors, panels, clickable server entries). They are not Velocity clones.
 
-* `/server` — `Current server: <name>` then available names
-* `/server <name>` — switch; exact match wins over prefix; ambiguous prefixes are rejected.
-  26.2 reconfiguration waits for Known Packs (same as Velocity #1302) before applying the new
-  backend's registry. ViaVersion on a 1.20.4 Paper box is a new handshake from Conduit; it can
-  work if that plugin translates configuration.
-* `/conduit` — version, API version, current server, player count, metrics snapshot
-* `/send current <server>` — same as `/server <server>` (player only)
-* `/send <player> <server>` — move that online player (`server.send.others`)
-* `/send <server> <server>` — move everyone on the source server (`server.send.mass`)
+* `/server` — Conduit server selector (status, hover, click-to-connect); `/server <name>` switches
+* `/lobby`, `/survival`, … — slash-server aliases for configured names (when they do not collide with reserved commands)
+* `/send` — current / player / mass moves with clear success and failure feedback
+* `/glist` — players online, grouped by backend
+* `/plist <server>` — players on one backend
+* `/find <player>` — which backend a player is on
+* `/alert <message>` — broadcast to all proxy players
+* `/ping` — Conduit connection note
+* `/hub` — connect to the first routing.initial backend
+* `/gkick <player> [reason]` — disconnect a player from the proxy
+* `/conduit` — polished proxy info panel
+* `/conduit servers` — detailed backend status (cached probes; player counts when known)
+* `/conduit plugins` — Conduit / Velocity proxy plugins only (does not shadow backend `/plugins`)
+* `/conduit help` — permission-filtered command discovery
+* `/conduit` also: `uptime|dump|heap|reload|metrics|health`
 
-Tab completion for `/send` offers `current`, backend names, and online players through CommandManager.
+Server status is cached from status pings (startup + periodic refresh). `/server` never performs a live connect to render the list.
+
+Native messaging uses `gg.tame.conduit.api.text.Text` components (color, bold, click, hover). Velocity Adventure components are converted into Conduit `Text` in the compatibility layer.
 
 Permission nodes (replaceable `PermissionProvider`; default is permissive):
 
@@ -152,6 +160,9 @@ Permission nodes (replaceable `PermissionProvider`; default is permissive):
 * `conduit.server.send.player`
 * `conduit.server.send.mass`
 * `conduit.info`
+* `conduit.admin`
+* `conduit.command.plugins` / `glist` / `find` / `alert` / `ping` / `hub` / `gkick` / `plist`
+* `conduit.command.dump` / `heap` / `reload` / `uptime`
 
 `/send` never lists backend addresses. Mass moves run with bounded concurrency; a failed player stays on the source backend.
 

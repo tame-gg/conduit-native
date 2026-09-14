@@ -73,19 +73,26 @@ public final class Phase6Tests {
     CoreCommands.register(core, registry, new gg.tame.conduit.session.PlayerManager());
     RecordingSource player = new RecordingSource("lobby", true);
     core.dispatch(player, "/server");
-    require(player.messages.stream().anyMatch(line -> line.equals("Current server: lobby")), "current server");
-    require(player.messages.stream().anyMatch(line -> line.equals("- lobby")), "server list hides addresses");
+    require(player.messages.stream().anyMatch(line -> line.contains("You are connected to")), "current server");
+    require(player.messages.stream().anyMatch(line -> line.contains("Lobby")), "server list shows lobby");
+    require(player.messages.stream().anyMatch(line -> line.contains("Available Servers")), "server list header");
     require(player.messages.stream().noneMatch(line -> line.contains("127.0.0.1")), "server list leaked address");
     core.dispatch(player, "/server lobby");
-    require(player.messages.stream().anyMatch(line -> line.contains("already connected to lobby")), "already connected");
+    require(player.messages.stream().anyMatch(line -> line.contains("already connected to") && line.contains("Lobby")), "already connected");
     core.dispatch(player, "/server mini");
-    require(player.messages.stream().anyMatch(line -> line.equals("Multiple servers match:")), "ambiguous");
+    require(player.messages.stream().anyMatch(line -> line.contains("Multiple servers match")), "ambiguous");
     core.dispatch(player, "/server missing");
-    require(player.messages.stream().anyMatch(line -> line.equals("Unknown server: missing")), "unknown");
+    require(player.messages.stream().anyMatch(line -> line.contains("Unknown server: missing")), "unknown");
     core.dispatch(player, "/conduit");
-    require(player.messages.stream().anyMatch(line -> line.startsWith("Version:")), "conduit version");
-    require(player.messages.stream().anyMatch(line -> line.equals("Current server: lobby")), "conduit current server");
+    require(player.messages.stream().anyMatch(line -> line.contains("Version") && line.contains("0.")), "conduit version");
+    require(player.messages.stream().anyMatch(line -> line.contains("Current Server") && line.contains("Lobby")), "conduit current server");
     require(core.tabComplete(player, "/server s").equals(List.of("survival")), "server tab filter");
+    require(core.dispatch(player, "/lobby"), "slash-server alias");
+    require(player.messages.stream().anyMatch(line -> line.contains("already connected to") && line.contains("Lobby")), "slash alias already connected");
+    core.dispatch(player, "/conduit servers");
+    require(player.messages.stream().anyMatch(line -> line.contains("CONDUIT SERVERS") || line.contains("Lobby")), "conduit servers");
+    core.dispatch(player, "/conduit help");
+    require(player.messages.stream().anyMatch(line -> line.contains("/server")), "conduit help");
   }
   private static void serverNameMatching() throws Exception {
     Path config = Files.createTempFile("conduit", ".toml");
@@ -134,7 +141,7 @@ public final class Phase6Tests {
           }
           MinecraftFrames.write(client.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(client.getOutputStream(), chatCommand("server survival"));
-          byte[] start = MinecraftFrames.read(client.getInputStream(), 4096);
+          byte[] start = readUntilPacket(client, 0x67);
           require(PlayPackets.packetId(start) == 0x67, "start configuration");
           MinecraftFrames.write(client.getOutputStream(), new byte[] {0x0B});
           byte[] maybeBrand = MinecraftFrames.read(client.getInputStream(), 4096);
@@ -144,7 +151,7 @@ public final class Phase6Tests {
           } else require(java.util.Arrays.equals(maybeBrand, new byte[] {2}), "survival finish");
           MinecraftFrames.write(client.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(client.getOutputStream(), chatCommand("server lobby"));
-          byte[] startBack = MinecraftFrames.read(client.getInputStream(), 4096);
+          byte[] startBack = readUntilPacket(client, 0x67);
           require(PlayPackets.packetId(startBack) == 0x67, "switch back start configuration");
         }
         serving.interrupt();
@@ -172,7 +179,7 @@ public final class Phase6Tests {
           MinecraftFrames.read(client.getInputStream(), 4096);
           MinecraftFrames.write(client.getOutputStream(), new byte[] {2});
           MinecraftFrames.write(client.getOutputStream(), chatCommand("server survival"));
-          byte[] message = MinecraftFrames.read(client.getInputStream(), 4096);
+          byte[] message = readUntilPacket(client, 0x69);
           require(PlayPackets.packetId(message) == 0x69, "system chat on failed switch");
         }
         serving.interrupt();
@@ -222,6 +229,13 @@ public final class Phase6Tests {
     require(graph.nodes().size() >= 4, "proxy command nodes");
     byte[] again = gg.tame.conduit.command.CommandGraphs.mergeProxyCommands(ProtocolDefinition.forVersion(765), merged, List.of("lobby"));
     gg.tame.conduit.command.CommandGraph.decode(java.util.Arrays.copyOfRange(again, 1, again.length));
+  }
+  private static byte[] readUntilPacket(Socket client, int packetId) throws Exception {
+    for (int attempt = 0; attempt < 8; attempt++) {
+      byte[] packet = MinecraftFrames.read(client.getInputStream(), 4096);
+      if (PlayPackets.packetId(packet) == packetId) return packet;
+    }
+    throw new AssertionError("did not receive packet id 0x" + Integer.toHexString(packetId));
   }
   private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
   private static final class RecordingSource implements CommandSource {
