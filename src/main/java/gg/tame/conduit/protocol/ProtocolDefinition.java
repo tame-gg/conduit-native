@@ -102,7 +102,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09
   );
-  private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2, new ProtocolCapabilities(true, true, true),
+  private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2, new ProtocolCapabilities(true, true, true, true),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,

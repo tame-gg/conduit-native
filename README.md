@@ -225,6 +225,23 @@ Client protocol state and backend protocol state are tracked separately.
 Brand rewrite and Finish Configuration detection are **state-scoped**. Packet id `2` in Play is
 not treated as Finish Configuration (that mismatch produced a vanilla decoder crash).
 
+## Online-mode flag and TAB faces
+
+26.2's Join Game (`ClientboundLoginPacket`) ends with `onlineMode` then `enforcesSecureChat`, both
+single-byte booleans. `PlayerTabOverlay.render` reads `ClientPacketListener.onlineMode()` and skips
+the player-list **face** when it is false, while still drawing the name and ping bars.
+
+Backends behind modern forwarding run `online-mode=false` and report false, so every TAB face
+disappeared on every server, initial join included. The player-info entry and its signed `textures`
+were correct throughout; the face was never drawn to begin with.
+
+Conduit performs the Mojang session handshake itself, so for an authenticated profile it sets that
+flag before forwarding Join Game. It is never set for an offline-mode session.
+
+The flag is the second-to-last byte, so `CommonPlayerSpawnInfo` (whose layout moves between
+versions) is never decoded. Both trailing bytes are validated as booleans first; anything else
+leaves the packet untouched. 765 has no such field and is not touched.
+
 ## Server brand
 
 Conduit intercepts only the `minecraft:brand` plugin message:

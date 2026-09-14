@@ -55,6 +55,7 @@ final class ProfileTests {
     playerInfoRoundTripsEveryAction776();
     switchHandoffNeverDropsBackendPlayPackets();
     mergeProxyCommandsIntoReal26_2Tree();
+    joinGameOnlineModeFlag();
     mojangVerifyStoresTextures();
     protocolIds();
   }
@@ -424,6 +425,64 @@ final class ProfileTests {
     int count = MinecraftInput.varInt(input);
     for (int index = 0; index < count; index++) MinecraftInput.varInt(input);
     return packet.length - input.available();
+  }
+  /**
+   * 26.2 Join Game ends with onlineMode then enforcesSecureChat, both single-byte booleans (from
+   * ClientboundLoginPacket.write in the 26.2 client). The client draws TAB faces only when
+   * onlineMode is set, and a modern-forwarding backend always reports false.
+   */
+  private static void joinGameOnlineModeFlag() throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    PlayerProfile authenticated = sample();
+    PlayerProfile offline = new PlayerProfile(authenticated.uniqueId(), authenticated.username(), List.of(), false);
+    byte[] backend = joinGame(protocol, false, true);
+
+    byte[] fixed = gg.tame.conduit.protocol.JoinGame.markOnlineMode(protocol, backend, authenticated);
+    require(fixed[fixed.length - 2] == 1, "onlineMode set for an authenticated session");
+    require(fixed[fixed.length - 1] == 1, "enforcesSecureChat untouched");
+    require(fixed.length == backend.length, "packet length unchanged");
+    require(java.util.Arrays.equals(
+        java.util.Arrays.copyOfRange(backend, 0, backend.length - 2),
+        java.util.Arrays.copyOfRange(fixed, 0, fixed.length - 2)), "everything before the flag is untouched");
+
+    require(java.util.Arrays.equals(backend, gg.tame.conduit.protocol.JoinGame.markOnlineMode(protocol, backend, offline)),
+        "offline sessions are never claimed to be online-mode");
+    byte[] already = joinGame(protocol, true, false);
+    require(java.util.Arrays.equals(already, gg.tame.conduit.protocol.JoinGame.markOnlineMode(protocol, already, authenticated)),
+        "a backend that already reports online-mode is left alone");
+    // A trailing byte that is not a boolean means the layout is not what we think it is.
+    byte[] malformed = joinGame(protocol, false, true);
+    malformed[malformed.length - 1] = 7;
+    require(java.util.Arrays.equals(malformed, gg.tame.conduit.protocol.JoinGame.markOnlineMode(protocol, malformed, authenticated)),
+        "a non-boolean trailer aborts the rewrite");
+    // 765 has no such field and must never be touched.
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    byte[] old = joinGame(v765, false, false);
+    require(java.util.Arrays.equals(old, gg.tame.conduit.protocol.JoinGame.markOnlineMode(v765, old, authenticated)), "765 untouched");
+    // Non-Join-Game Play packets are untouched even when their last bytes look like booleans.
+    byte[] other = {0x18, 0, 1, 0, 1};
+    require(java.util.Arrays.equals(other, gg.tame.conduit.protocol.JoinGame.markOnlineMode(protocol, other, authenticated)),
+        "only Join Game is rewritten");
+  }
+  private static byte[] joinGame(ProtocolDefinition protocol, boolean onlineMode, boolean secureChat) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN));
+      output.writeInt(7);                       // playerId
+      output.writeBoolean(false);               // hardcore
+      MinecraftOutput.varInt(output, 1);        // levels
+      MinecraftOutput.string(output, "minecraft:overworld");
+      MinecraftOutput.varInt(output, 20);       // maxPlayers
+      MinecraftOutput.varInt(output, 10);       // chunkRadius
+      MinecraftOutput.varInt(output, 10);       // simulationDistance
+      output.writeBoolean(false);               // reducedDebugInfo
+      output.writeBoolean(true);                // showDeathScreen
+      output.writeBoolean(false);               // doLimitedCrafting
+      output.write(new byte[] {0, 1, 2, 3});    // CommonPlayerSpawnInfo, never decoded
+      output.writeBoolean(onlineMode);
+      output.writeBoolean(secureChat);
+    }
+    return bytes.toByteArray();
   }
   private static void mojangVerifyStoresTextures() throws Exception {
     com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);

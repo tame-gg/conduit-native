@@ -16,7 +16,9 @@ public final class ProtocolProfileAdapter {
   public static byte[] backendToClient(ProtocolDefinition protocol, ConnectionState state, byte[] packet, PlayerProfile profile) {
     try {
       if (state == ConnectionState.LOGIN) return LoginSuccess.replaceProfile(protocol, packet, profile);
-      if (state == ConnectionState.PLAY) return PlayerInfoUpdate.ensureOwnTextures(protocol, packet, profile);
+      if (state == ConnectionState.PLAY) {
+        return PlayerInfoUpdate.ensureOwnTextures(protocol, JoinGame.markOnlineMode(protocol, packet, profile), profile);
+      }
     } catch (IOException ignored) { }
     return packet;
   }
