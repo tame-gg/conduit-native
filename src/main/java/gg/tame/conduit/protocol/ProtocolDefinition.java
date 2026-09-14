@@ -34,11 +34,12 @@ public final class ProtocolDefinition {
     ProtocolDefinition definition = BY_NUMBER.get(number);
     if (definition == null) {
       throw new IllegalArgumentException("unsupported Minecraft protocol: " + number
-          + "; codecs: 763 (1.20.1), 765 (1.20.4), 766 (1.20.5), 776 (26.2)");
+          + "; codecs: 393 (1.13), 763 (1.20.1), 765 (1.20.4), 766 (1.20.5), 776 (26.2)");
     }
     return definition;
   }
   public static boolean hasCodec(int number) { return BY_NUMBER.containsKey(number); }
+  public ProtocolFamily family() { return version.family(); }
   private static ProtocolDefinition define(ProtocolVersion version, ProtocolCapabilities capabilities, Object... entries) {
     int[][][] ids = new int[ConnectionState.values().length][PacketDirection.values().length][PacketKind.values().length];
     for (int[][] byDirection : ids) {
@@ -138,6 +139,46 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x0C,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x0A
   );
+  /**
+   * Protocol 393 = Minecraft 1.13. Packet IDs from PrismarineJS minecraft-data {@code 1.13/protocol.json}.
+   * States: HANDSHAKING / STATUS / LOGIN / PLAY — no CONFIGURATION.
+   */
+  private static final ProtocolDefinition V1_13 = define(ProtocolVersion.MINECRAFT_1_13, ProtocolCapabilities.flattening113(),
+      ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
+      ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
+      ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,
+      ConnectionState.STATUS, PacketDirection.SERVER_TO_CLIENT, PacketKind.STATUS_REQUEST, 0,
+      ConnectionState.STATUS, PacketDirection.SERVER_TO_CLIENT, PacketKind.STATUS_PING, 1,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_START, 0,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_DISCONNECT, 0,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST, 1,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ENCRYPTION_RESPONSE, 1,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SUCCESS, 2,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SET_COMPRESSION, 3,
+      ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE, 2,
+      ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_PLUGIN_REQUEST, 4,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN, 0x25,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE, 0x19,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE, 0x0A,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT, 0x0E,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT, 0x0E,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x02,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x02,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TAB_COMPLETE, 0x10,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x05,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT, 0x1B,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS, 0x11,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE, 0x30,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE, 0x21,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE, 0x0E,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_FLYING, 0x0F,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION, 0x10,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x11,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_LOOK, 0x12,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_SEND, 0x37,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x1D,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x04
+  );
   private static final ProtocolDefinition V1_20_1 = define(ProtocolVersion.MINECRAFT_1_20_1, ProtocolCapabilities.legacyPlay(),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
@@ -202,9 +243,10 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x0E,
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_CLIENT_INFORMATION, 0x00
   );
-  private static final Map<Integer, ProtocolDefinition> BY_NUMBER = Map.of(
-      ProtocolVersion.MINECRAFT_1_20_1.number(), V1_20_1,
-      ProtocolVersion.MINECRAFT_1_20_4.number(), V1_20_4,
-      ProtocolVersion.MINECRAFT_1_20_5.number(), V1_20_5,
-      ProtocolVersion.MINECRAFT_26_2.number(), V26_2);
+  private static final Map<Integer, ProtocolDefinition> BY_NUMBER = Map.ofEntries(
+      Map.entry(ProtocolVersion.MINECRAFT_1_13.number(), V1_13),
+      Map.entry(ProtocolVersion.MINECRAFT_1_20_1.number(), V1_20_1),
+      Map.entry(ProtocolVersion.MINECRAFT_1_20_4.number(), V1_20_4),
+      Map.entry(ProtocolVersion.MINECRAFT_1_20_5.number(), V1_20_5),
+      Map.entry(ProtocolVersion.MINECRAFT_26_2.number(), V26_2));
 }

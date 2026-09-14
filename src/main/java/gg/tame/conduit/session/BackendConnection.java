@@ -71,7 +71,10 @@ public final class BackendConnection implements AutoCloseable {
     }
     Handshake backendHandshake = new Handshake(clientHandshake.protocolVersion(), host, server.address().getPort(), 2);
     MinecraftFrames.write(socket.getOutputStream(), backendHandshake.encode());
-    MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(player));
+    ProtocolDefinition loginProtocol = ProtocolDefinition.hasCodec(clientHandshake.protocolVersion())
+        ? ProtocolDefinition.forVersion(clientHandshake.protocolVersion())
+        : null;
+    MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(player, loginProtocol));
   }
   public BackendServer server() { return server; }
   public ConnectionState state() { return login.state(); }

@@ -20,23 +20,50 @@ Requires a JDK capable of compiling Java 21 source. On Windows:
 
 ## Supported Minecraft versions
 
-Native intercept codecs (version + state + direction packet IDs) exist for:
+### Modern compatibility program (1.13 → 26.2)
 
-| Minecraft | Protocol | Configuration | Real vanilla client |
+Conduit's current roadmap targets the **modern Java protocol era**: Minecraft **1.13 through 26.2**.
+
+**Minecraft 1.12.2 and older are OUT OF SCOPE** for this program (catalog may list them as `LEGACY_UNSUPPORTED`). They will be a separate legacy project later.
+
+Three distinct concepts:
+
+| Concept | Meaning |
+|---|---|
+| **Catalog** | Version/protocol identity is known |
+| **DIRECT** | Client and backend share a Conduit codec |
+| **TRANSLATED** | A real translator exists between codecs |
+
+Do **not** read the catalog as "everything is supported."
+
+### Native intercept codecs (DIRECT)
+
+| Minecraft | Protocol | Configuration | Status |
 |---|---|---|---|
-| 1.20.1 | 763 | no | not tested |
-| 1.20.3 / 1.20.4 | 765 | yes | 1.20.4 login/Play previously verified; switching retest pending |
-| 26.2 | 776 | yes | **codec includes 26.2 `minecraft:hello` (Should Authenticate boolean); real vanilla PLAY verification pending** |
+| 1.13 | 393 | no | DIRECT / PARTIAL — login/play essentials codec; real-client verification pending |
+| 1.20.1 | 763 | no | DIRECT / codec |
+| 1.20.3 / 1.20.4 | 765 | yes | DIRECT; 1.20.4 login/Play previously verified |
+| 1.20.5 / 1.20.6 | 766 | yes | DIRECT codec; translated path from 765 is PARTIAL |
+| 26.2 | 776 | yes | DIRECT codec; real vanilla PLAY verification pending |
 
-Catalog only (handshake known, **no codec**, cannot connect):
+### Catalog releases (identity only unless codec listed above)
 
-1.7.10 (5), 1.8.9 (47), 1.12.2 (340), 1.16.5 (754), 1.19.4 (762), 1.20.2 (764), 1.21/1.21.1 (767), 1.21.4 (769), 1.21.8 (772).
+Modern named releases are mapped from public protocol data (Minecraft Wiki / PrismarineJS), including aliases that share a protocol number (e.g. 1.20 + 1.20.1 → 763, 1.16.4 + 1.16.5 → 754).
+
+Legacy catalog markers (no modern-program work): 1.7.10 (5), 1.8.9 (47), 1.12.2 (340).
 
 Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 
-**Direct:** same codec version only (`765→765`, `763→763`, `776→776`).
+### Translation matrix
 
-**Translated (PARTIAL):** `765 ↔ 766` (1.20.4 ↔ 1.20.5/1.20.6) for Conduit-known login/configuration/control packets. Join Game / Player Info Update / registry blobs are intentionally unsupported until dedicated field codecs exist. `1.20.4 → 26.2` remains UNSUPPORTED.
+| Client → Backend | Support | Completeness |
+|---|---|---|
+| same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
+| 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
+| 393 → 765 | UNSUPPORTED | not implemented yet (planned proof point) |
+| 765 → 776 | UNSUPPORTED | intentional until a real translator exists |
+
+**We do not claim "1.13–26.2 supported."** Correctness beats an inflated compatibility list.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 

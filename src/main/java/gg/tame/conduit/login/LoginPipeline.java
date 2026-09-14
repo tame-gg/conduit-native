@@ -25,7 +25,7 @@ public final class LoginPipeline {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       int id = MinecraftInput.varInt(input);
       byte[] body = input.readAllBytes();
-      if (direction == PacketDirection.CLIENT_TO_SERVER && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_START)) player = LoginStart.decode(body).unverifiedProfile();
+      if (direction == PacketDirection.CLIENT_TO_SERVER && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_START)) player = LoginStart.decode(body, protocol).unverifiedProfile();
       else if (direction == PacketDirection.SERVER_TO_CLIENT && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_SUCCESS)) {
         if (protocol.hasConfiguration()) session.beginConfiguration();
         else session.enterPlayFromLogin();

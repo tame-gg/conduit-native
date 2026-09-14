@@ -1,0 +1,217 @@
+package gg.tame.conduit.tests;
+
+import gg.tame.conduit.login.LoginStart;
+import gg.tame.conduit.login.PlayerProfile;
+import gg.tame.conduit.protocol.CompatibilityCompleteness;
+import gg.tame.conduit.protocol.CompatibilityEntry;
+import gg.tame.conduit.protocol.CompatibilityRegistry;
+import gg.tame.conduit.protocol.ConnectionState;
+import gg.tame.conduit.protocol.LoginSuccess;
+import gg.tame.conduit.protocol.PacketDirection;
+import gg.tame.conduit.protocol.PacketKind;
+import gg.tame.conduit.protocol.PlayPackets;
+import gg.tame.conduit.protocol.PluginMessage;
+import gg.tame.conduit.protocol.ProtocolCapabilities;
+import gg.tame.conduit.protocol.ProtocolCatalog;
+import gg.tame.conduit.protocol.ProtocolCompatibility;
+import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.protocol.ProtocolFamily;
+import gg.tame.conduit.protocol.ProtocolSession;
+import gg.tame.conduit.protocol.ProtocolVersion;
+import gg.tame.conduit.protocol.TranslationSupport;
+import gg.tame.conduit.protocol.codec.SemanticCodec;
+import gg.tame.conduit.protocol.diff.ProtocolDifferenceDatabase;
+import gg.tame.conduit.protocol.semantic.KeepAlivePacket;
+import gg.tame.conduit.protocol.semantic.PluginMessagePacket;
+import gg.tame.conduit.protocol.semantic.SemanticChat;
+import gg.tame.conduit.protocol.semantic.SemanticCommandNode;
+import gg.tame.conduit.protocol.semantic.SemanticEntityMetadata;
+import gg.tame.conduit.protocol.semantic.SemanticItemStack;
+import gg.tame.conduit.protocol.semantic.SemanticRegistry;
+import gg.tame.conduit.login.LoginPipeline;
+import java.util.List;
+import java.util.UUID;
+
+/** Modern protocol compatibility program — catalog, 1.13 codec, capabilities, registry. */
+public final class Phase16ModernProtocolTests {
+  private Phase16ModernProtocolTests() {}
+
+  public static void run() throws Exception {
+    catalogCoverage();
+    legacyOutOfScope();
+    families();
+    codecSupportBoundaries();
+    capabilities113();
+    states113();
+    packetIds113();
+    loginStart113();
+    loginSuccess113();
+    loginToPlayWithoutConfiguration();
+    semanticCodec113();
+    compatibilityRegistry();
+    differenceDatabase();
+    semanticFoundations();
+    systemChat113();
+    System.out.println("Phase16ModernProtocolTests passed.");
+  }
+
+  private static void catalogCoverage() {
+    require(ProtocolCatalog.findRelease("1.13").orElseThrow().protocol() == 393, "1.13=393");
+    require(ProtocolCatalog.findRelease("1.16.5").orElseThrow().protocol() == 754, "1.16.5=754");
+    require(ProtocolCatalog.findRelease("1.20").orElseThrow().protocol() == 763, "1.20=763");
+    require(ProtocolCatalog.findRelease("1.20.1").orElseThrow().protocol() == 763, "1.20.1 shares 763");
+    require(ProtocolCatalog.findRelease("1.20.4").orElseThrow().protocol() == 765, "1.20.4=765");
+    require(ProtocolCatalog.findRelease("1.20.6").orElseThrow().protocol() == 766, "1.20.6=766");
+    require(ProtocolCatalog.findRelease("1.21.11").orElseThrow().protocol() == 774, "1.21.11=774");
+    require(ProtocolCatalog.findRelease("26.2").orElseThrow().protocol() == 776, "26.2=776");
+    require(ProtocolCatalog.modernReleases().size() >= 40, "modern releases");
+    require(ProtocolCatalog.find(393).orElseThrow().displayName().equals("1.13"), "catalog 393");
+  }
+
+  private static void legacyOutOfScope() {
+    require(ProtocolCatalog.findRelease("1.12.2").orElseThrow().legacyOutOfScope(), "1.12.2 out of scope");
+    require(ProtocolFamily.ofProtocol(340) == ProtocolFamily.LEGACY_OUT_OF_SCOPE, "340 legacy family");
+    require(!ProtocolCatalog.inModernProgram(340), "340 not modern");
+    require(ProtocolCatalog.inModernProgram(393), "393 modern");
+    require(!ProtocolDefinition.hasCodec(340), "no 1.12.2 codec");
+  }
+
+  private static void families() {
+    require(ProtocolVersion.MINECRAFT_1_13.family() == ProtocolFamily.V1_13, "1.13 family");
+    require(ProtocolVersion.MINECRAFT_1_20_4.family() == ProtocolFamily.V1_20, "1.20 family");
+    require(ProtocolVersion.MINECRAFT_1_21.family() == ProtocolFamily.V1_21, "1.21 family");
+    require(ProtocolVersion.MINECRAFT_26_2.family() == ProtocolFamily.V26, "26 family");
+  }
+
+  private static void codecSupportBoundaries() {
+    require(ProtocolDefinition.hasCodec(393), "1.13 codec");
+    require(ProtocolDefinition.hasCodec(765), "765 codec");
+    require(!ProtocolDefinition.hasCodec(401), "1.13.1 catalog only");
+    require(!ProtocolDefinition.hasCodec(764), "1.20.2 catalog only");
+    require(!ProtocolDefinition.hasCodec(767), "1.21 catalog only");
+    require(ProtocolCatalog.withCodecs().stream().anyMatch(v -> v.number() == 393), "codec list includes 393");
+  }
+
+  private static void capabilities113() {
+    ProtocolCapabilities caps = ProtocolDefinition.forVersion(393).capabilities();
+    require(!caps.configurationPhase(), "no configuration");
+    require(!caps.loginStartUuid(), "login start username only");
+    require(!caps.loginSuccessBinaryUuid(), "login success string uuid");
+    require(!caps.loginSuccessProperties(), "no login success properties");
+    require(caps.encryption() && caps.compression(), "encryption+compression");
+    require(caps.pluginMessages() && caps.loginPluginMessage(), "plugin messages");
+    require(caps.legacyPlayChat(), "legacy chat");
+    require(!caps.knownPacks() && !caps.cookiePackets() && !caps.transferPackets(), "no modern config features");
+    require(caps.named().contains("LEGACY_PLAY_CHAT"), "named caps");
+  }
+
+  private static void states113() {
+    ProtocolDefinition v = ProtocolDefinition.forVersion(393);
+    require(!v.hasConfiguration(), "no config state");
+    require(v.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN), "play login");
+    require(!v.defines(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH),
+        "no finish configuration");
+    require(!v.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED),
+        "no login ack");
+  }
+
+  private static void packetIds113() throws Exception {
+    ProtocolDefinition v = ProtocolDefinition.forVersion(393);
+    require(v.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE) == 0x21, "keepalive s2c");
+    require(v.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE) == 0x0E, "keepalive c2s");
+    require(v.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN) == 0x25, "join game");
+    require(v.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE) == 0x19, "plugin s2c");
+    require(v.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE) == 0x0A, "plugin c2s");
+    require(v.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION) == 0x10, "position");
+    require(v.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND) == 0x02, "chat");
+    require(v.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT) == 0x1B, "disconnect");
+  }
+
+  private static void loginStart113() throws Exception {
+    PlayerProfile profile = new PlayerProfile(UUID.randomUUID(), "Steve", List.of(), false);
+    byte[] encoded = LoginStart.encode(profile, ProtocolDefinition.forVersion(393));
+    require(PlayPackets.packetId(encoded) == 0, "login start id");
+    byte[] body = PlayPackets.body(encoded);
+    LoginStart decoded = LoginStart.decode(body, ProtocolDefinition.forVersion(393));
+    require(decoded.username().equals("Steve"), "username");
+    require(decoded.clientUuid().equals(LoginStart.offlineUuid("Steve")), "offline uuid derived");
+    byte[] modern = LoginStart.encode(profile, ProtocolDefinition.forVersion(765));
+    require(PlayPackets.body(modern).length > body.length, "modern login start longer");
+  }
+
+  private static void loginSuccess113() throws Exception {
+    ProtocolDefinition v = ProtocolDefinition.forVersion(393);
+    PlayerProfile profile = new PlayerProfile(UUID.fromString("11111111-1111-1111-1111-111111111111"), "Alex", List.of(), true);
+    byte[] packet = LoginSuccess.encode(v, profile);
+    require(v.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.LOGIN_SUCCESS), "id");
+    require(LoginSuccess.peekUuid(v, packet).equals(profile.uniqueId()), "uuid roundtrip");
+    byte[] rewritten = LoginSuccess.replaceProfile(v, packet, profile);
+    require(LoginSuccess.peekUuid(v, rewritten).equals(profile.uniqueId()), "replace keeps uuid");
+  }
+
+  private static void loginToPlayWithoutConfiguration() throws Exception {
+    ProtocolSession session = new ProtocolSession();
+    session.acceptHandshake(2);
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(393);
+    LoginPipeline pipeline = new LoginPipeline(session, protocol);
+    byte[] loginStart = LoginStart.encode(new PlayerProfile(LoginStart.offlineUuid("Bob"), "Bob", List.of(), false), protocol);
+    pipeline.observe(PacketDirection.CLIENT_TO_SERVER, loginStart);
+    pipeline.observe(PacketDirection.SERVER_TO_CLIENT, LoginSuccess.encode(protocol,
+        new PlayerProfile(LoginStart.offlineUuid("Bob"), "Bob", List.of(), false)));
+    require(session.state() == ConnectionState.PLAY, "1.13 login success → play");
+  }
+
+  private static void semanticCodec113() throws Exception {
+    ProtocolDefinition v = ProtocolDefinition.forVersion(393);
+    SemanticCodec codec = new SemanticCodec(v, 4096);
+    KeepAlivePacket keep = new KeepAlivePacket(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, 99L);
+    byte[] encoded = codec.encode(keep);
+    require(PlayPackets.packetId(encoded) == 0x21, "keepalive id");
+    KeepAlivePacket decoded = (KeepAlivePacket) codec.decode(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, encoded);
+    require(decoded.id() == 99L, "keepalive value");
+    PluginMessagePacket plugin = new PluginMessagePacket(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT,
+        "minecraft:brand", PluginMessage.brandPayload("conduit"));
+    byte[] pluginWire = codec.encode(plugin);
+    require(PlayPackets.packetId(pluginWire) == 0x19, "plugin id");
+  }
+
+  private static void compatibilityRegistry() {
+    CompatibilityEntry same = CompatibilityRegistry.resolve(393, 393);
+    require(same.support() == TranslationSupport.DIRECT, "393 direct");
+    require(same.completeness() == CompatibilityCompleteness.PARTIAL, "393 partial until verified");
+    CompatibilityEntry cross = CompatibilityRegistry.resolve(393, 765);
+    require(cross.support() == TranslationSupport.UNSUPPORTED, "393→765 unsupported yet");
+    require(!cross.selectable(), "not selectable");
+    CompatibilityEntry t = CompatibilityRegistry.resolve(765, 766);
+    require(t.support() == TranslationSupport.TRANSLATED && t.completeness() == CompatibilityCompleteness.PARTIAL, "765↔766");
+    require(ProtocolCompatibility.between(393, 393) == TranslationSupport.DIRECT, "compat helper");
+    require(ProtocolCompatibility.between(393, 765) == TranslationSupport.UNSUPPORTED, "no fake translate");
+  }
+
+  private static void differenceDatabase() {
+    require(!ProtocolDifferenceDatabase.between(393, 765).isEmpty(), "393→765 diffs");
+    require(ProtocolDifferenceDatabase.between(393, 765).stream()
+        .anyMatch(c -> c.packetOrArea().equals("CONFIGURATION")), "config boundary documented");
+  }
+
+  private static void semanticFoundations() {
+    require(SemanticItemStack.of("minecraft:stone", 64).count() == 64, "item");
+    require(SemanticItemStack.empty().isEmpty(), "air");
+    SemanticEntityMetadata meta = new SemanticEntityMetadata().put("custom_name", SemanticEntityMetadata.MetadataType.COMPONENT, "x");
+    require(meta.get("custom_name").isPresent(), "metadata");
+    require(SemanticChat.system("hi").kind() == SemanticChat.ChatKind.SYSTEM, "chat");
+    require(new SemanticRegistry("minecraft:dimension_type").put("minecraft:overworld", new byte[]{1}).get("minecraft:overworld").isPresent(), "registry");
+    require(new SemanticCommandNode("server", SemanticCommandNode.NodeType.LITERAL, true).executable(), "command");
+  }
+
+  private static void systemChat113() throws Exception {
+    byte[] packet = PlayPackets.systemChat(ProtocolDefinition.forVersion(393), "hello");
+    require(PlayPackets.packetId(packet) == 0x0E, "chat id");
+    byte[] body = PlayPackets.body(packet);
+    require(body[body.length - 1] == 1, "system position byte");
+  }
+
+  private static void require(boolean condition, String message) {
+    if (!condition) throw new AssertionError(message);
+  }
+}

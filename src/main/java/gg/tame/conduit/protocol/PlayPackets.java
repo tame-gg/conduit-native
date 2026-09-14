@@ -42,8 +42,13 @@ public final class PlayPackets {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT));
-      gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
-      output.writeBoolean(false);
+      if (protocol.capabilities().legacyPlayChat()) {
+        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, false);
+        output.writeByte(1); // system position
+      } else {
+        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
+        output.writeBoolean(false);
+      }
     }
     return bytes.toByteArray();
   }

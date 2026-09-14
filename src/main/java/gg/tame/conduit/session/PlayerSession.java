@@ -210,7 +210,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         prepareTranslation(server);
         Socket socket = BackendConnection.open(server);
         writeBackendHandshake(socket, server);
-        MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile()));
+        MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile(), backendDefinition));
         BackendConnection connection = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false);
         if (forwarder.mode() == ForwardingMode.MODERN) completeBackendLogin(connection, true);
         return connection;
@@ -326,6 +326,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
       String command = PlayPackets.chatCommand(packet);
+      if (protocol.capabilities().legacyPlayChat() && command.startsWith("/")) {
+        command = command.substring(1);
+      } else if (protocol.capabilities().legacyPlayChat() && !command.startsWith("/")) {
+        return false;
+      }
       var chat = new gg.tame.conduit.api.event.player.PlayerChatEvent(this, "/" + command);
       runtime.events().fire(chat);
       if (chat.cancelled()) return true;

@@ -26,7 +26,7 @@ public final class ProfileTrace {
       int id = PlayPackets.packetId(packet);
       if (state == ConnectionState.LOGIN
           && protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_SUCCESS)) {
-        loginSuccess(where, state, id, packet, self);
+        loginSuccess(where, protocol, state, id, packet, self);
         return;
       }
       if (state != ConnectionState.PLAY) return;
@@ -43,13 +43,21 @@ public final class ProfileTrace {
       System.out.println("TRACE " + where + " decode failed: " + exception);
     }
   }
-  private static void loginSuccess(String where, ConnectionState state, int id, byte[] packet, PlayerProfile self) throws Exception {
+  private static void loginSuccess(String where, ProtocolDefinition protocol, ConnectionState state, int id, byte[] packet, PlayerProfile self) throws Exception {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
-      UUID uuid = GameProfiles.readUuid(input);
-      String name = MinecraftInput.string(input, 16);
-      List<ProfileProperty> properties = GameProfiles.readProperties(input);
-      // Whatever follows the profile is 26.2's trailer, which Conduit copies but does not decode.
+      UUID uuid;
+      String name;
+      List<ProfileProperty> properties;
+      if (!protocol.capabilities().loginSuccessBinaryUuid()) {
+        uuid = UUID.fromString(MinecraftInput.string(input, 36));
+        name = MinecraftInput.string(input, 16);
+        properties = List.of();
+      } else {
+        uuid = GameProfiles.readUuid(input);
+        name = MinecraftInput.string(input, 16);
+        properties = protocol.capabilities().loginSuccessProperties() ? GameProfiles.readProperties(input) : List.of();
+      }
       int trailing = input.available();
       System.out.println(line(where, state, id, "LOGIN_SUCCESS") + " " + who(uuid, self) + " name=" + name + " "
           + properties(properties) + " trailingBytes=" + trailing);
