@@ -5,7 +5,7 @@ Velocity or Velocity-CTD fork, and it has no dependency on either implementation
 
 The legacy `tame-gg/conduit` checkout is intentionally separate and untouched.
 
-Current version: **0.6.0**.
+Current version: **0.7.0**. Native plugin API version: **1**.
 
 ## Build and test
 
@@ -138,19 +138,19 @@ Native command framework (not Velocity's):
   26.2 reconfiguration waits for Known Packs (same as Velocity #1302) before applying the new
   backend's registry. ViaVersion on a 1.20.4 Paper box is a new handshake from Conduit; it can
   work if that plugin translates configuration.
-* `/conduit` — version and `Current server: <name>`
+* `/conduit` — version, API version, current server, player count, metrics snapshot
 * `/send current <server>` — same as `/server <server>` (player only)
 * `/send <player> <server>` — move that online player (`server.send.others`)
 * `/send <server> <server>` — move everyone on the source server (`server.send.mass`)
 
 Tab completion for `/send` offers `current`, backend names, and online players through CommandManager.
 
-Permission nodes (stub currently grants them to connected players):
+Permission nodes (replaceable `PermissionProvider`; default is permissive):
 
-* `server.use`
-* `server.send`
-* `server.send.others`
-* `server.send.mass`
+* `conduit.server`
+* `conduit.server.send`
+* `conduit.server.send.player`
+* `conduit.server.send.mass`
 * `conduit.info`
 
 `/send` never lists backend addresses. Mass moves run with bounded concurrency; a failed player stays on the source backend.
@@ -280,7 +280,58 @@ command dispatch, command-graph index validation, brand rewriting, routing match
 protocol 763 vs 765 lookup, two-backend switch/fallback mocks, and authenticated profile
 property round-trips (hasJoined, forwarding, Login Success, 26.2 player-info).
 
+## Performance
+
+Measured causes of proxy-side hitching (not Minecraft server tick lag):
+
+1. **Flush after every packet** — `MinecraftFrames.write` used to `flush()` every frame, producing syscall spikes and stally movement.
+2. **Registry Key allocation** — `ProtocolDefinition.is` allocated a `Key` on every packet-id check.
+3. **Per-packet stream wrappers** — packet id reads created `ByteArrayInputStream`/`DataInputStream` for every frame.
+4. **AES/CFB8** — encrypt/decrypt allocated a `byte[1]` and a new `cipher.update` array per byte.
+5. **Inflater per compressed packet** — new `Inflater`/`Deflater` on every wrap/unwrap.
+6. **15ms poll** while switching starved backend reads instead of waiting on session state.
+
+Steady play now coalesces TCP writes (`writeUnflushed` + flush when the opposite socket has no more queued bytes), uses TCP_NODELAY, reuses crypto/compression buffers, and bounds deferred Play (512 packets).
+
+Event-loop utilization is **not applicable**: Conduit uses blocking sockets on virtual threads, not a shared NIO selector. Mojang HTTPS runs on the connecting virtual thread before Play.
+
+Metrics (quiet; packet tracing remains `-Dconduit.trace=true`):
+
+`players`, `backends`, packets/sec, bytes/sec, authentications, backend connect ms, switch ms, decode/encode failures.
+
+## Native plugin API
+
+Package `gg.tame.conduit.api`. Plugins are JARs in `plugins/` with `conduit-plugin.yml`:
+
+```yaml
+id: example
+name: ExamplePlugin
+version: 1.0.0
+main: com.example.ExamplePlugin
+api-version: 1
+```
+
+`api-version` is the Conduit API integer, not a Minecraft protocol. Incompatible plugins are rejected.
+
+Lifecycle: discover → validate → classload → dependency order → onLoad/onEnable. Disable unregisters events, commands, and scheduler tasks and closes the plugin classloader. Data lives in `plugins/<id>/`.
+
+Events include proxy start/shutdown, login/auth/disconnect, server connect/connected/switch/failed (cancellable connect), chat/command execute, plugin enable/disable, plugin messaging.
+
+Scheduler tasks run on `conduit-scheduler` threads, never on player socket threads.
+
+## Velocity compatibility
+
+**PARTIAL — NOT YET VERIFIED** against plugins compiled with `com.velocitypowered`.
+
+Architecture: Velocity plugin → adapter (`gg.tame.conduit.compat.velocity`) → native API → core.
+
+Supported natively: player/server lookup, connect, messages, commands, events.
+Unsupported: Velocity internals, Adventure, scoreboards. Compatibility is never faked.
+
+## Protocol translation
+
+**NOT IMPLEMENTED.** `765→776` remains `UNSUPPORTED`. `Protocol765To776Translator` throws rather than rewriting packet ids. Identity forwarding is same-codec only.
+
 ## Out of scope here
 
-Velocity plugins, native plugin API, legacy/BungeeGuard forwarding, ViaVersion-style
-translation, and full compression.
+Full Velocity API packages, BungeeGuard, and a finished 765↔776 translator.

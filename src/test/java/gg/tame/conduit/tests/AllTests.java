@@ -66,6 +66,7 @@ public final class AllTests {
     onlineModeFeedsAuthenticatedIdentityToForwarding();
     ProfileTests.run();
     Phase6Tests.run();
+    Phase8Tests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {
