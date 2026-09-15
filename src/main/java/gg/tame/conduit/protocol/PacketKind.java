@@ -34,5 +34,13 @@ public enum PacketKind {
   PLAY_SET_CONTAINER_CONTENT,
   /** Single container slot. Same era-specific Slot item payload as the full-content packet. */
   PLAY_SET_CONTAINER_SLOT,
+  /** Entity metadata. Both field indices and type ids are era specific. */
+  PLAY_SET_ENTITY_METADATA,
+  /** Entity attributes. Key names were renamed and namespaced in 1.16; count width also differs. */
+  PLAY_UPDATE_ATTRIBUTES,
+  /** Advancement tree and progress. Display/criteria structure diverged after 1.13. */
+  PLAY_UPDATE_ADVANCEMENTS,
+  /** Health + food + saturation. Identical Float/VarInt/Float layout on 1.13 and 1.20.4. */
+  PLAY_UPDATE_HEALTH,
   PLAY_ENTITY_DESTROY
 }

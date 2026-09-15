@@ -250,7 +250,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
       case PLAY_DECLARE_RECIPES, PLAY_TAGS, PLAY_UPDATE_VIEW_POSITION, PLAY_UPDATE_VIEW_DISTANCE,
            PLAY_SIMULATION_DISTANCE, PLAY_CHUNK_BATCH_START, PLAY_CHUNK_BATCH_FINISHED, PLAY_UNLOCK_RECIPES,
-           PLAY_SERVER_DATA, PLAY_SET_TICKING_STATE, PLAY_STEP_TICK -> {
+           PLAY_SERVER_DATA, PLAY_SET_TICKING_STATE, PLAY_STEP_TICK, PLAY_UPDATE_ADVANCEMENTS -> {
         // Modern-only or schema-incompatible with 393. Safe to omit for initial world entry.
         if (target.version().number() <= 404) {
           yield new TranslationResult.Dropped(kind + " dropped for 393 (no compatible wire form / optional for entry)");
@@ -273,7 +273,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, body));
       }
-      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS, PLAY_UPDATE_TIME -> {
+      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS, PLAY_UPDATE_TIME, PLAY_UPDATE_HEALTH -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped(kind + " missing on target");
         }
@@ -290,6 +290,28 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
               kind + " withheld from 393 (item registry mapping not implemented)");
         }
         yield new TranslationResult.Unsupported(kind + " modern→modern not implemented");
+      }
+      case PLAY_UPDATE_ATTRIBUTES -> {
+        // 393 writes the attribute count as a fixed Int and names keys in pre-1.16 form
+        // (generic.movementSpeed); 765 uses a VarInt count and namespaced snake_case keys
+        // (minecraft:generic.movement_speed). Withhold until a verified key map exists — the
+        // values Paper sends here are the client defaults anyway.
+        if (target.version().number() <= 404) {
+          yield new TranslationResult.Dropped(
+              "entity attributes withheld from 393 (attribute keys were renamed in 1.16)");
+        }
+        yield new TranslationResult.Unsupported("entity attributes modern→modern not implemented");
+      }
+      case PLAY_SET_ENTITY_METADATA -> {
+        // Metadata is doubly era-specific: field indices differ per entity class, and the type ids
+        // shifted when VarLong was inserted at id 2 in 1.19 — so a 765 type 3 (Float) would be
+        // read by a 393 client as type 3 (String). Forwarding desyncs the stream immediately.
+        // Withhold until a real index/type mapping subsystem exists.
+        if (target.version().number() <= 404) {
+          yield new TranslationResult.Dropped(
+              "entity metadata withheld from 393 (index and type ids are era specific)");
+        }
+        yield new TranslationResult.Unsupported("entity metadata modern→modern not implemented");
       }
       case PLAY_WORLD_BORDER_INIT -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
@@ -331,7 +353,15 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
           yield new TranslationResult.Dropped(kind + " missing");
         }
         if (kind == PacketKind.PLAY_DECLARE_COMMANDS) {
-          yield new TranslationResult.Unsupported("declare commands 393↔765 requires dedicated tree translation");
+          // The brigadier node graph is structurally similar across eras, but argument parsers are
+          // named by string on 393 and by registry id from 1.19 on, so the trees are not
+          // interchangeable. Withhold rather than kill the session: the tree only drives client
+          // side command autocomplete, and commands still work without it.
+          if (target.version().number() <= 404) {
+            yield new TranslationResult.Dropped(
+                "command tree withheld from 393 (brigadier parser ids are era specific)");
+          }
+          yield new TranslationResult.Unsupported("declare commands modern→modern requires tree translation");
         }
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
