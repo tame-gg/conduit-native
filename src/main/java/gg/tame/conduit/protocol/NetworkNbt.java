@@ -15,6 +15,21 @@ public final class NetworkNbt {
     output.writeByte(0);
   }
   public static void skip(DataInput input) throws IOException { skipPayload(input, input.readUnsignedByte()); }
+
+  /**
+   * Skips a named (disk-style) NBT value: type, modified UTF-8 name, payload.
+   * 1.13 chunk block-entity lists use this form; calling {@link #skip} on them
+   * treats the name length as the start of a nameless payload and desyncs the
+   * rest of the chunk packet.
+   */
+  public static void skipNamed(DataInput input) throws IOException {
+    int type = input.readUnsignedByte();
+    if (type == 0) return;
+    int nameLength = input.readUnsignedShort();
+    if (nameLength < 0 || nameLength > 65535) throw new IOException("nbt name length");
+    input.skipBytes(nameLength);
+    skipPayload(input, type);
+  }
   public static void copy(DataInput input, DataOutput output) throws IOException {
     int type = input.readUnsignedByte();
     output.writeByte(type);

@@ -39,8 +39,8 @@ public final class ChunkCodec393 {
       if (beCount < 0 || beCount > MAX_BLOCK_ENTITIES) throw new IOException("block entities " + beCount);
       List<byte[]> entities = new ArrayList<>();
       for (int i = 0; i < beCount; i++) {
-        // Discard block-entity payloads; foundation rematerializes chunks without them.
-        gg.tame.conduit.protocol.NetworkNbt.skip(in);
+        // 1.13 block entities are named NBT compounds, not the nameless network form.
+        gg.tame.conduit.protocol.NetworkNbt.skipNamed(in);
       }
       return decodeData(x, z, groundUp, bitMap, data, entities);
     }
