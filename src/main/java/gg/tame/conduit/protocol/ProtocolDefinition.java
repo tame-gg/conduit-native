@@ -251,6 +251,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PICK_ITEM, 0x1D,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_USE_ITEM, 0x36,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_INTERACT_ENTITY, 0x13,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_ABILITIES, 0x20,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_EXPLOSION, 0x1E,
       // The remainder of the 1.20.4 clientbound table Conduit needs so that every
       // packet a 1.13 backend can send has somewhere to go.
@@ -456,6 +457,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_USE_ITEM, 0x2A,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_INTERACT_ENTITY, 0x0D,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_PLAYER, 0x05,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_ABILITIES, 0x17,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_EXPLOSION, 0x1E,
       // Everything else a real 1.13 server emits during play.
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_PASSENGERS, 0x46,

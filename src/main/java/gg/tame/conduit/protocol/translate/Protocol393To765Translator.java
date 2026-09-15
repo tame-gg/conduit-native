@@ -462,7 +462,30 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, body));
       }
-      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS, PLAY_UPDATE_TIME, PLAY_UPDATE_HEALTH, PLAY_SET_EXPERIENCE, PLAY_SWING_ARM -> {
+      case PLAY_ABILITIES -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("abilities missing on target");
+        }
+        if (direction == PacketDirection.SERVER_TO_CLIENT) {
+          // flags + flySpeed + walkSpeed on both releases.
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+        }
+        // Serverbound, 1.13 echoes the whole ability set back (flags plus both
+        // speeds); 1.16 reduced it to the flags byte alone, because the speeds
+        // were never the client's to choose. This is how a creative player
+        // toggles flight, so it is not optional -- an unmapped id ends the
+        // session the moment they press space twice.
+        byte[] body = PlayPackets.body(packet);
+        if (body.length < 1) yield new TranslationResult.Dropped("short abilities body");
+        byte[] out = target.version().number() > 404
+            ? new byte[] {body[0]}
+            : new byte[] {body[0], 0x3d, 0x4c, (byte) 0xcc, (byte) 0xcd,
+                          0x3d, (byte) 0xcc, (byte) 0xcc, (byte) 0xcd};  // vanilla defaults
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, out));
+      }
+      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS, PLAY_UPDATE_TIME, PLAY_UPDATE_HEALTH, PLAY_SET_EXPERIENCE, PLAY_SWING_ARM -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped(kind + " missing on target");
         }
