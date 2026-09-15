@@ -1,0 +1,140 @@
+package gg.tame.conduit.protocol.chunk;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Arrays;
+
+/**
+ * Block-state ID tables generated from PrismarineJS minecraft-data (1.13 + 1.20.4).
+ * Mapping is by block name + relative state offset within that block's range.
+ * Blocks unique to one version fall back to stone (id 1). Air stays 0.
+ */
+public final class BlockStateMaps {
+  private static final int[] TO_393 = load("blockstates_765_to_393.bin");
+  private static final int[] TO_765 = load("blockstates_393_to_765.bin");
+
+  private BlockStateMaps() {}
+
+  public static int to393(int state765) {
+    if (state765 < 0 || state765 >= TO_393.length) return 1;
+    return TO_393[state765];
+  }
+
+  public static int to765(int state393) {
+    if (state393 < 0 || state393 >= TO_765.length) return 1;
+    return TO_765[state393];
+  }
+
+  public static int plainsBiome113() { return 1; }
+
+  private static int[] load(String name) {
+    String path = "/gg/tame/conduit/protocol/chunk/" + name;
+    try (InputStream in = BlockStateMaps.class.getResourceAsStream(path)) {
+      if (in == null) throw new IllegalStateException("missing resource " + path);
+      byte[] header = in.readNBytes(4);
+      if (header.length != 4) throw new IllegalStateException("truncated " + name);
+      int len = (header[0] & 0xff) | ((header[1] & 0xff) << 8) | ((header[2] & 0xff) << 16) | ((header[3] & 0xff) << 24);
+      if (len < 1 || len > 200_000) throw new IllegalStateException("invalid map length " + len);
+      byte[] body = in.readNBytes(len * 4);
+      if (body.length != len * 4) throw new IllegalStateException("truncated body " + name);
+      int[] map = new int[len];
+      for (int i = 0; i < len; i++) {
+        int o = i * 4;
+        map[i] = (body[o] & 0xff) | ((body[o + 1] & 0xff) << 8) | ((body[o + 2] & 0xff) << 16) | ((body[o + 3] & 0xff) << 24);
+      }
+      return map;
+    } catch (IOException exception) {
+      throw new IllegalStateException("cannot load " + name, exception);
+    }
+  }
+
+  /** Compact bit-storage used by modern (padded) and legacy (tight) palettes. */
+  public static int[] unpack(long[] data, int bitsPerEntry, int entryCount, boolean padded) {
+    if (bitsPerEntry <= 0 || bitsPerEntry > 32) throw new IllegalArgumentException("bits " + bitsPerEntry);
+    if (entryCount < 0 || entryCount > 4096) throw new IllegalArgumentException("entries " + entryCount);
+    int[] out = new int[entryCount];
+    if (bitsPerEntry == 0) return out;
+    long mask = (1L << bitsPerEntry) - 1L;
+    if (padded) {
+      int valuesPerLong = 64 / bitsPerEntry;
+      if (valuesPerLong <= 0) throw new IllegalArgumentException("bits too large");
+      int expectedLongs = (entryCount + valuesPerLong - 1) / valuesPerLong;
+      if (data.length < expectedLongs) throw new IllegalArgumentException("short data array");
+      int index = 0;
+      for (long word : data) {
+        for (int i = 0; i < valuesPerLong && index < entryCount; i++) {
+          out[index++] = (int) ((word >> (i * bitsPerEntry)) & mask);
+        }
+      }
+    } else {
+      int bitIndex = 0;
+      for (int i = 0; i < entryCount; i++) {
+        int start = bitIndex;
+        int startLong = start >>> 6;
+        int startOffset = start & 63;
+        bitIndex += bitsPerEntry;
+        if (startLong >= data.length) throw new IllegalArgumentException("short tight data");
+        long value = data[startLong] >>> startOffset;
+        int endLong = (bitIndex - 1) >>> 6;
+        if (startLong != endLong) {
+          if (endLong >= data.length) throw new IllegalArgumentException("short tight data");
+          value |= data[endLong] << (64 - startOffset);
+        }
+        out[i] = (int) (value & mask);
+      }
+    }
+    return out;
+  }
+
+  public static long[] pack(int[] values, int bitsPerEntry, boolean padded) {
+    if (bitsPerEntry <= 0 || bitsPerEntry > 32) throw new IllegalArgumentException("bits");
+    long mask = (1L << bitsPerEntry) - 1L;
+    if (padded) {
+      int valuesPerLong = 64 / bitsPerEntry;
+      int longCount = (values.length + valuesPerLong - 1) / valuesPerLong;
+      long[] data = new long[longCount];
+      for (int i = 0; i < values.length; i++) {
+        int longIndex = i / valuesPerLong;
+        int offset = (i % valuesPerLong) * bitsPerEntry;
+        data[longIndex] |= ((long) values[i] & mask) << offset;
+      }
+      return data;
+    }
+    int totalBits = values.length * bitsPerEntry;
+    int longCount = (totalBits + 63) / 64;
+    long[] data = new long[longCount];
+    int bitIndex = 0;
+    for (int value : values) {
+      int startLong = bitIndex >>> 6;
+      int startOffset = bitIndex & 63;
+      long masked = (long) value & mask;
+      data[startLong] |= masked << startOffset;
+      int endBit = bitIndex + bitsPerEntry;
+      int endLong = (endBit - 1) >>> 6;
+      if (endLong != startLong) data[endLong] |= masked >> (64 - startOffset);
+      bitIndex = endBit;
+    }
+    return data;
+  }
+
+  public static void writeVarIntLongArray(DataOutputStream out, long[] data) throws IOException {
+    gg.tame.conduit.protocol.MinecraftOutput.varInt(out, data.length);
+    for (long value : data) out.writeLong(value);
+  }
+
+  public static long[] readVarIntLongArray(DataInputStream in, int maxLongs) throws IOException {
+    int len = gg.tame.conduit.protocol.MinecraftInput.varInt(in);
+    if (len < 0 || len > maxLongs) throw new IOException("long array length " + len);
+    long[] data = new long[len];
+    for (int i = 0; i < len; i++) data[i] = in.readLong();
+    return data;
+  }
+
+  public static byte[] emptyLight() {
+    byte[] light = new byte[2048];
+    Arrays.fill(light, (byte) 0xff); // full sky-ish default for missing light
+    return light;
+  }
+}
