@@ -34,6 +34,9 @@ if ($compatSources) {
 javac --release 21 -cp $cp -d $out "@$testList"
 if ($LASTEXITCODE -ne 0) { throw "test compile failed" }
 
+$mainResources = Join-Path $root "src/main/resources"
+if (Test-Path $mainResources) { Copy-Item (Join-Path $mainResources "*") $out -Recurse -Force }
+
 $resources = Join-Path $root "src/test/resources"
 if (Test-Path $resources) { Copy-Item (Join-Path $resources "*") $out -Recurse -Force }
 

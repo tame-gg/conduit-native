@@ -1,0 +1,151 @@
+package gg.tame.conduit.tests;
+
+import gg.tame.conduit.login.ProfileProperty;
+import gg.tame.conduit.protocol.CompatibilityCompleteness;
+import gg.tame.conduit.protocol.CompatibilityRegistry;
+import gg.tame.conduit.protocol.ConnectionState;
+import gg.tame.conduit.protocol.PacketDirection;
+import gg.tame.conduit.protocol.PacketKind;
+import gg.tame.conduit.protocol.PlayPackets;
+import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.protocol.ProtocolTranslator;
+import gg.tame.conduit.protocol.Translators;
+import gg.tame.conduit.protocol.chunk.BlockStateMaps;
+import gg.tame.conduit.protocol.chunk.ChunkCodec393;
+import gg.tame.conduit.protocol.chunk.ChunkCodec765;
+import gg.tame.conduit.protocol.chunk.SemanticChunk;
+import gg.tame.conduit.protocol.chunk.SemanticChunkSection;
+import gg.tame.conduit.protocol.codec.PlayerInfoCodec;
+import gg.tame.conduit.protocol.semantic.SemanticPlayerInfo;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+
+/** Phase 18 — 393↔765 world entry: player info, chunks, palettes, height policy. */
+public final class Phase18_393_765_WorldTests {
+  private Phase18_393_765_WorldTests() {}
+
+  public static void run() throws Exception {
+    blockStateMaps();
+    playerInfoRoundTrip();
+    playerInfoTranslate765to393();
+    chunkSectionPalette();
+    chunk765to393HeightPolicy();
+    chunkTranslateThroughTranslator();
+    updateLightDropped();
+    malformedChunkRejected();
+    compatibilityStillPartial();
+    System.out.println("Phase18_393_765_WorldTests passed.");
+  }
+
+  private static void blockStateMaps() {
+    require(BlockStateMaps.to393(0) == 0, "air");
+    require(BlockStateMaps.to393(1) == 1, "stone");
+    require(BlockStateMaps.to765(0) == 0, "air reverse");
+    require(BlockStateMaps.plainsBiome113() == 1, "plains");
+  }
+
+  private static void playerInfoRoundTrip() throws Exception {
+    ProtocolDefinition v393 = ProtocolDefinition.forVersion(393);
+    UUID id = UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    SemanticPlayerInfo info = new SemanticPlayerInfo(PacketDirection.SERVER_TO_CLIENT,
+        SemanticPlayerInfo.Action.ADD_PLAYER,
+        List.of(new SemanticPlayerInfo.Entry(id, Optional.of("Steve"),
+            List.of(new ProfileProperty("textures", "value", Optional.empty())),
+            Optional.of(1), Optional.of(50), Optional.empty(), Optional.of(true))));
+    byte[] encoded = PlayerInfoCodec.encode(v393, info);
+    SemanticPlayerInfo decoded = PlayerInfoCodec.decode(v393, encoded);
+    require(decoded.action() == SemanticPlayerInfo.Action.ADD_PLAYER, "action");
+    require(decoded.entries().get(0).username().orElse("").equals("Steve"), "name");
+    require(decoded.entries().get(0).properties().size() == 1, "textures");
+  }
+
+  private static void playerInfoTranslate765to393() throws Exception {
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    UUID id = UUID.randomUUID();
+    SemanticPlayerInfo info = new SemanticPlayerInfo(PacketDirection.SERVER_TO_CLIENT,
+        SemanticPlayerInfo.Action.ADD_PLAYER,
+        List.of(new SemanticPlayerInfo.Entry(id, Optional.of("Alex"), List.of(),
+            Optional.of(0), Optional.of(10), Optional.empty(), Optional.of(true))));
+    byte[] modern = PlayerInfoCodec.encode(v765, info);
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(PlayPackets.packetId(legacy) == 0x30, "393 player_info id");
+    SemanticPlayerInfo decoded = PlayerInfoCodec.decode(ProtocolDefinition.forVersion(393), legacy);
+    require(decoded.entries().get(0).uuid().equals(id), "uuid preserved");
+    require(decoded.entries().get(0).username().orElse("").equals("Alex"), "name preserved");
+  }
+
+  private static void chunkSectionPalette() throws Exception {
+    int[] states = new int[4096];
+    java.util.Arrays.fill(states, 1); // stone
+    states[0] = 0;
+    SemanticChunkSection section = new SemanticChunkSection(4095, states, new int[0],
+        BlockStateMaps.emptyLight(), BlockStateMaps.emptyLight());
+    SemanticChunk chunk = new SemanticChunk(0, 0, true,
+        List.of(new SemanticChunk.SectionSlot(0, section)), new int[1024], List.of(), new byte[0]);
+    byte[] body = ChunkCodec393.encodeLegacy(chunk);
+    SemanticChunk decoded = ChunkCodec393.decode(body);
+    require(decoded.sections().size() == 1, "one section");
+    require(decoded.sections().get(0).section().blockStates()[1] == 1, "stone roundtrip");
+  }
+
+  private static void chunk765to393HeightPolicy() throws Exception {
+    int[] stone = new int[4096];
+    java.util.Arrays.fill(stone, 1);
+    List<SemanticChunk.SectionSlot> sections = List.of(
+        new SemanticChunk.SectionSlot(-1, new SemanticChunkSection(4096, stone, new int[64], new byte[0], new byte[0])),
+        new SemanticChunk.SectionSlot(0, new SemanticChunkSection(4096, stone, new int[64], new byte[0], new byte[0])),
+        new SemanticChunk.SectionSlot(16, new SemanticChunkSection(4096, stone, new int[64], new byte[0], new byte[0]))
+    );
+    SemanticChunk modern = new SemanticChunk(2, 3, true, sections, new int[0], List.of(), new byte[0]);
+    SemanticChunk legacy = modern.toLegacy113();
+    require(legacy.sections().size() == 1, "only Y0..15 kept");
+    require(legacy.sections().get(0).sectionY() == 0, "section 0");
+  }
+
+  private static void chunkTranslateThroughTranslator() throws Exception {
+    int[] stone765 = new int[4096];
+    java.util.Arrays.fill(stone765, BlockStateMaps.to765(1));
+    SemanticChunk modern = new SemanticChunk(1, 1, true,
+        List.of(new SemanticChunk.SectionSlot(0,
+            new SemanticChunkSection(4096, stone765, new int[64], BlockStateMaps.emptyLight(), BlockStateMaps.emptyLight()))),
+        new int[0], List.of(), new byte[0]);
+    byte[] body765 = ChunkCodec765.encode(modern);
+    byte[] packet765 = PlayPackets.withId(
+        ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA),
+        body765);
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] packet393 = t.backendToClient(ConnectionState.PLAY, packet765);
+    require(PlayPackets.packetId(packet393) == 0x22, "393 chunk id");
+    SemanticChunk decoded = ChunkCodec393.decode(PlayPackets.body(packet393));
+    require(decoded.chunkX() == 1 && decoded.chunkZ() == 1, "coords");
+    require(!decoded.sections().isEmpty(), "has section");
+  }
+
+  private static void updateLightDropped() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] light = PlayPackets.withId(
+        ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_LIGHT),
+        new byte[] {0, 0, 0, 0, 0, 0, 0, 0});
+    byte[] out = t.backendToClient(ConnectionState.PLAY, light);
+    require(out == null, "light dropped");
+  }
+
+  private static void malformedChunkRejected() {
+    try {
+      ChunkCodec393.decode(new byte[] {0, 0, 0, 0, 0, 0, 0, 0, 1, (byte) 0xff, (byte) 0xff, (byte) 0xff, (byte) 0x7f});
+      throw new AssertionError("accepted malformed");
+    } catch (Exception expected) {
+      require(true, "rejected");
+    }
+  }
+
+  private static void compatibilityStillPartial() {
+    require(CompatibilityRegistry.resolve(393, 765).completeness() == CompatibilityCompleteness.PARTIAL, "partial");
+  }
+
+  private static void require(boolean condition, String message) {
+    if (!condition) throw new AssertionError(message);
+  }
+}
