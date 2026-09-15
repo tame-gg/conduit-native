@@ -98,7 +98,15 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION, 0x17,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x18,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_LOOK, 0x19,
-      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_FLYING, 0x1A
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_FLYING, 0x1A,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x25,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UNLOAD_CHUNK, 0x1F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_LIGHT, 0x28,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DIFFICULTY, 0x0B,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_GAME_EVENT, 0x20,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x36,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_POSITION, 0x54,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_DESTROY, 0x40
   );
   /** Protocol 766 = Minecraft 1.20.5/1.20.6. IDs from public PrismarineJS minecraft-data. */
   private static final ProtocolDefinition V1_20_5 = define(ProtocolVersion.MINECRAFT_1_20_5,
@@ -186,7 +194,14 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TELEPORT_CONFIRM, 0x00,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_SEND, 0x37,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x1D,
-      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x04
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x04,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x22,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UNLOAD_CHUNK, 0x1F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DIFFICULTY, 0x0D,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_GAME_EVENT, 0x20,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x2E,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_POSITION, 0x49,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_DESTROY, 0x35
   );
   private static final ProtocolDefinition V1_20_1 = define(ProtocolVersion.MINECRAFT_1_20_1, ProtocolCapabilities.legacyPlay(),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,

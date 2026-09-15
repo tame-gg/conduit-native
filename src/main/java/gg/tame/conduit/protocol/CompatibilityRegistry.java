@@ -25,9 +25,9 @@ public final class CompatibilityRegistry {
     register(765, 776, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE, "no 765↔776 translator");
     register(776, 765, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE, "no 776↔765 translator");
     register(393, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
-        "state bridge + login/join/keepalive/movement foundation; chunks/entities/player-info incomplete");
+        "config bridge + login/join/player-info/chunks(Y0-255)/movement; entities/metadata incomplete; real-client pending");
     register(765, 393, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
-        "reverse foundation; configuration synthesized only when switching from modern clients — limited");
+        "reverse foundation with chunk/player-info; configuration synthesis limited");
   }
 
   private CompatibilityRegistry() {}

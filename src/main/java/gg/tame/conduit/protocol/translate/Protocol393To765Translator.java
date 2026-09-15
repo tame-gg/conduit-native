@@ -221,6 +221,60 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, state, direction, PlayPackets.body(packet)));
       }
+      case PLAY_PLAYER_INFO_UPDATE, PLAY_PLAYER_INFO_REMOVE -> {
+        var info = gg.tame.conduit.protocol.codec.PlayerInfoCodec.decode(source, packet);
+        yield new TranslationResult.Translated(info);
+      }
+      case PLAY_CHUNK_DATA -> {
+        byte[] body = PlayPackets.body(packet);
+        var chunk = source.version().number() <= 404
+            ? gg.tame.conduit.protocol.chunk.ChunkCodec393.decode(body)
+            : gg.tame.conduit.protocol.chunk.ChunkCodec765.decode(body);
+        // Remap into target era inside encode.
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.ChunkDataPacket(direction, chunk));
+      }
+      case PLAY_UPDATE_LIGHT -> {
+        // 1.13 embeds light in chunk sections; standalone light updates have no 393 equivalent.
+        if (target.version().number() <= 404) {
+          yield new TranslationResult.Dropped("update light consumed for 393 (light carried in chunk data)");
+        }
+        yield new TranslationResult.Unsupported("update light toward modern not implemented");
+      }
+      case PLAY_UNLOAD_CHUNK, PLAY_DIFFICULTY, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped(kind + " missing on target");
+        }
+        // These packets share compatible field layouts between 393 and 765 for the fields we care about.
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_SPAWN_POSITION -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("spawn position missing");
+        }
+        // 765 may include angle after position; 393 is position only — trim or pad carefully.
+        byte[] body = PlayPackets.body(packet);
+        if (source.version().number() > 404 && target.version().number() <= 404) {
+          // Keep first 8 bytes of packed position if present; drop trailing angle float.
+          if (body.length > 8) body = java.util.Arrays.copyOf(body, 8);
+        } else if (source.version().number() <= 404 && target.version().number() > 404) {
+          ByteArrayOutputStream extended = new ByteArrayOutputStream();
+          extended.write(body);
+          // default angle 0
+          java.io.DataOutputStream dos = new java.io.DataOutputStream(extended);
+          dos.writeFloat(0f);
+          body = extended.toByteArray();
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, body));
+      }
+      case PLAY_ENTITY_DESTROY -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("entity destroy missing");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
       case PLAY_DECLARE_COMMANDS, PLAY_TAB_COMPLETE, PLAY_TAB_COMPLETE_REQUEST, PLAY_CLIENT_INFORMATION -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped(kind + " missing");
@@ -231,9 +285,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
       }
-      case PLAY_PLAYER_INFO_UPDATE, PLAY_PLAYER_INFO_REMOVE ->
-          new TranslationResult.Unsupported(kind + " requires dedicated player-info translation (PARTIAL)");
-      default -> new TranslationResult.Unsupported(kind + " not in 393↔765 foundation set");
+      default -> new TranslationResult.Unsupported(kind + " not in 393↔765 world-entry set");
     };
   }
 
@@ -244,6 +296,27 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
     if (semantic instanceof DisconnectPacket disconnect) return JoinGameCodec.encodeDisconnect(codec.protocol(), disconnect);
     if (semantic instanceof PlayerPositionPacket pos) return JoinGameCodec.encodePlayerPosition(codec.protocol(), pos);
     if (semantic instanceof MovementPacket move) return JoinGameCodec.encodeMovement(codec.protocol(), move);
+    if (semantic instanceof gg.tame.conduit.protocol.semantic.SemanticPlayerInfo info) {
+      return gg.tame.conduit.protocol.codec.PlayerInfoCodec.encode(codec.protocol(), info);
+    }
+    if (semantic instanceof gg.tame.conduit.protocol.semantic.ChunkDataPacket chunkPacket) {
+      byte[] body;
+      var chunk = chunkPacket.chunk();
+      if (codec.protocol().version().number() <= 404) {
+        // Ensure 393 state space + Y 0..255.
+        boolean alreadyLegacyIds = chunk.biomes1024().length == 1024;
+        body = alreadyLegacyIds
+            ? gg.tame.conduit.protocol.chunk.ChunkCodec393.encodeLegacy(chunk.projectLegacyHeight())
+            : gg.tame.conduit.protocol.chunk.ChunkCodec393.encodeLegacy(chunk.toLegacy113());
+      } else {
+        boolean fromLegacy = chunk.biomes1024().length == 1024;
+        body = fromLegacy
+            ? gg.tame.conduit.protocol.chunk.ChunkCodec765.encodeFromLegacy(chunk)
+            : gg.tame.conduit.protocol.chunk.ChunkCodec765.encode(chunk);
+      }
+      int id = codec.protocol().id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA);
+      return PlayPackets.withId(id, body);
+    }
     if (semantic instanceof KeepAlivePacket || semantic instanceof PluginMessagePacket
         || semantic instanceof EmptyPacket || semantic instanceof gg.tame.conduit.protocol.semantic.OpaquePacket) {
       return codec.encode(semantic);

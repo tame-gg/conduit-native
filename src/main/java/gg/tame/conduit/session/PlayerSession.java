@@ -836,6 +836,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     var support = ProtocolCompatibility.between(clientProtocol, targetProtocol);
     if (support == TranslationSupport.DIRECT) return;
     if (support == TranslationSupport.TRANSLATED) {
+      var entry = gg.tame.conduit.protocol.CompatibilityRegistry.resolve(clientProtocol, targetProtocol);
+      if (!entry.selectable()) {
+        throw new IOException(server.name() + " translation path is not selectable for your Minecraft version.");
+      }
       ProtocolTrace.note("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED)");
       return;
     }

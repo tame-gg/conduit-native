@@ -10,6 +10,7 @@ import gg.tame.conduit.modded.ModCompatibility;
 import gg.tame.conduit.modded.ModLoaderFamily;
 import gg.tame.conduit.modded.UnknownModdedPolicy;
 import gg.tame.conduit.protocol.BackendStatusProbe;
+import gg.tame.conduit.protocol.CompatibilityRegistry;
 import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.TranslationSupport;
@@ -131,8 +132,9 @@ public final class BackendSelector {
   }
 
   public boolean isCompatible(int clientProtocol, String backendName) {
-    TranslationSupport support = compatibility(clientProtocol, backendName);
-    return support == TranslationSupport.DIRECT || support == TranslationSupport.TRANSLATED;
+    return advertisement(backendName)
+        .map(advertisement -> CompatibilityRegistry.resolve(clientProtocol, advertisement.protocol()).selectable())
+        .orElseGet(() -> ProtocolDefinition.hasCodec(clientProtocol));
   }
 
   public boolean isEligible(String name, int clientProtocol, boolean allowDrainingBypass) {
@@ -154,14 +156,20 @@ public final class BackendSelector {
       if (!ModCompatibility.isEligible(clientFamily == null ? ModLoaderFamily.UNKNOWN : clientFamily, server.get(), policy)) {
         return false;
       }
-      // Feature flags: disable entire families when compat toggles are off.
       ModLoaderFamily family = clientFamily == null ? ModLoaderFamily.UNKNOWN : clientFamily;
       if (family == ModLoaderFamily.FORGE && !configuration.modded().forgeCompat()) return false;
       if (family == ModLoaderFamily.NEOFORGE && !configuration.modded().neoForgeCompat()) return false;
       if (family == ModLoaderFamily.FABRIC && !configuration.modded().fabricCompat()) return false;
     }
-    // Protocol translation honesty is separate: Via-style backends may accept the client wire
-    // protocol even when status advertises a different native version.
+    // When Conduit advertises a TRANSLATED/DIRECT path, require selectable completeness.
+    // UNSUPPORTED pairs remain eligible so Via-style backends can accept the client wire protocol.
+    Optional<BackendStatusProbe.Advertisement> advertisement = advertisement(name);
+    if (advertisement.isPresent()) {
+      var entry = CompatibilityRegistry.resolve(clientProtocol, advertisement.get().protocol());
+      if (entry.support() == TranslationSupport.TRANSLATED || entry.support() == TranslationSupport.DIRECT) {
+        return entry.selectable();
+      }
+    }
     return true;
   }
 
