@@ -78,7 +78,9 @@ public final class BackendHealthService implements AutoCloseable {
           ConduitLog.info("Backend " + name + " is healthy.");
         }
       } else {
-        advertisements.remove(key);
+        // Keep the last successful advertisement. Falling back to the client
+        // protocol when the ad is absent silently turns TRANSLATED into DIRECT
+        // (1.13 client → 1.20.4 handshake as 393 → outdated_client).
         state.lastOk = false;
         state.successes = 0;
         state.failures = Math.min(settings.failureThreshold(), state.failures + 1);

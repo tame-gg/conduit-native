@@ -73,7 +73,7 @@ public final class BackendSelector {
       String key = ServerRegistry.normalize(server.name());
       Optional<BackendStatusProbe.Advertisement> advertisement = BackendStatusProbe.probe(server.address(), 1500);
       if (advertisement.isEmpty()) {
-        advertisements.remove(key);
+        // Keep the last known protocol so a flaky ping cannot flip TRANSLATED→DIRECT.
         statuses.put(key, ServerStatus.offline(server.name(), now));
         if (log) System.out.println("Backend " + server.name() + " did not answer a status ping.");
         continue;
