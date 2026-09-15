@@ -180,12 +180,13 @@ public final class Phase16ModernProtocolTests {
     require(same.support() == TranslationSupport.DIRECT, "393 direct");
     require(same.completeness() == CompatibilityCompleteness.PARTIAL, "393 partial until verified");
     CompatibilityEntry cross = CompatibilityRegistry.resolve(393, 765);
-    require(cross.support() == TranslationSupport.UNSUPPORTED, "393→765 unsupported yet");
-    require(!cross.selectable(), "not selectable");
+    require(cross.support() == TranslationSupport.TRANSLATED, "393→765 translated");
+    require(cross.completeness() == CompatibilityCompleteness.PARTIAL, "393→765 partial");
+    require(cross.selectable(), "393→765 selectable");
     CompatibilityEntry t = CompatibilityRegistry.resolve(765, 766);
     require(t.support() == TranslationSupport.TRANSLATED && t.completeness() == CompatibilityCompleteness.PARTIAL, "765↔766");
     require(ProtocolCompatibility.between(393, 393) == TranslationSupport.DIRECT, "compat helper");
-    require(ProtocolCompatibility.between(393, 765) == TranslationSupport.UNSUPPORTED, "no fake translate");
+    require(ProtocolCompatibility.between(393, 765) == TranslationSupport.TRANSLATED, "393↔765 translated");
   }
 
   private static void differenceDatabase() {

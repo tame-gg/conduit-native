@@ -59,11 +59,11 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 | Client → Backend | Support | Completeness |
 |---|---|---|
 | same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
+| **393 ↔ 765** | **TRANSLATED** | **PARTIAL** — Configuration state bridge, login, Join Game, keepalive, movement, plugin messages, disconnect. Chunks / entities / player-info / command trees not complete. |
 | 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
-| 393 → 765 | UNSUPPORTED | not implemented yet (planned proof point) |
 | 765 → 776 | UNSUPPORTED | intentional until a real translator exists |
 
-**We do not claim "1.13–26.2 supported."** Correctness beats an inflated compatibility list.
+**393 ↔ 765 is not FULL.** Do not claim “1.13 works with 1.20.4” until real-client Level 4+ validation.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 
