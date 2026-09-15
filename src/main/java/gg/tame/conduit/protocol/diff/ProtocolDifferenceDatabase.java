@@ -45,8 +45,16 @@ public final class ProtocolDifferenceDatabase {
     list.add(ProtocolChange.of(765, 766, ProtocolChange.ChangeKind.UNCHANGED_PACKET, "CONFIGURATION_FINISH",
         "Finish Configuration remains empty; ID remapped 0x02→0x03."));
     // Legacy boundary
-    list.add(ProtocolChange.of(340, 393, ProtocolChange.ChangeKind.SEMANTIC_CHANGE, "FLATTENING",
-        "1.12.2→1.13 is the modern-program lower boundary. 1.12.2 remains LEGACY_UNSUPPORTED."));
+    list.add(ProtocolChange.of(393, 765, ProtocolChange.ChangeKind.CHANGED_PACKET, "PLAY_PLAYER_INFO",
+        "1.13 player_info action enum vs 1.20.4 Player Info Update bitset — dedicated translation required."));
+    list.add(ProtocolChange.of(393, 765, ProtocolChange.ChangeKind.SEMANTIC_CHANGE, "CHUNKS",
+        "Section/palette/biome/lighting layouts diverge; chunk translation is a separate subsystem (not in foundation)."));
+    list.add(ProtocolChange.of(393, 765, ProtocolChange.ChangeKind.SEMANTIC_CHANGE, "ITEMS",
+        "1.13 predates data components; SemanticItemStack bridges identifier/count/legacy metadata/components."));
+    list.add(ProtocolChange.of(393, 765, ProtocolChange.ChangeKind.UNCHANGED_PACKET, "PLAY_PLAYER_POSITION",
+        "Clientbound position (x,y,z,yaw,pitch,flags,teleportId) wire layout matches; IDs differ (0x32 vs 0x3E)."));
+    list.add(ProtocolChange.of(393, 765, ProtocolChange.ChangeKind.UNCHANGED_PACKET, "PLAY_MOVEMENT_C2S",
+        "Serverbound position/look/flying field layouts match; packet IDs differ."));
     return List.copyOf(list);
   }
 }

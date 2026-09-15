@@ -24,10 +24,10 @@ public final class CompatibilityRegistry {
         "control/login/config packets; JoinGame/player-info/registry unsupported");
     register(765, 776, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE, "no 765↔776 translator");
     register(776, 765, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE, "no 776↔765 translator");
-    register(393, 765, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE,
-        "1.13→1.20.4 translation not implemented yet");
-    register(765, 393, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE,
-        "1.20.4→1.13 translation not implemented yet");
+    register(393, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
+        "state bridge + login/join/keepalive/movement foundation; chunks/entities/player-info incomplete");
+    register(765, 393, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
+        "reverse foundation; configuration synthesized only when switching from modern clients — limited");
   }
 
   private CompatibilityRegistry() {}

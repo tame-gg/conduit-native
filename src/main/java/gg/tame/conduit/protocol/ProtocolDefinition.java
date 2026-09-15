@@ -75,6 +75,8 @@ public final class ProtocolDefinition {
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT, 1,
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KEEP_ALIVE, 3,
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_KEEP_ALIVE, 3,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_REGISTRY, 0x05,
+      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_CLIENT_INFORMATION, 0x00,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN, 0x29,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE, 0x18,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE, 0x10,
@@ -91,7 +93,12 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0A,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x0B,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x09,
-      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_CLIENT_INFORMATION, 0x00
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_POSITION, 0x3E,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TELEPORT_CONFIRM, 0x00,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION, 0x17,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x18,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_LOOK, 0x19,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_FLYING, 0x1A
   );
   /** Protocol 766 = Minecraft 1.20.5/1.20.6. IDs from public PrismarineJS minecraft-data. */
   private static final ProtocolDefinition V1_20_5 = define(ProtocolVersion.MINECRAFT_1_20_5,
@@ -175,6 +182,8 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION, 0x10,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x11,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_LOOK, 0x12,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_POSITION, 0x32,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TELEPORT_CONFIRM, 0x00,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_SEND, 0x37,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x1D,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x04

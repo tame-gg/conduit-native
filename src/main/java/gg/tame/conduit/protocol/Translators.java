@@ -1,5 +1,6 @@
 package gg.tame.conduit.protocol;
 
+import gg.tame.conduit.protocol.translate.Protocol393To765Translator;
 import gg.tame.conduit.protocol.translate.Protocol765To766Translator;
 
 /** Selects a translator only for implemented pairings. */
@@ -11,6 +12,8 @@ public final class Translators {
     if (support == TranslationSupport.TRANSLATED) {
       if (clientProtocol == 765 && backendProtocol == 766) return Protocol765To766Translator.V765_TO_766;
       if (clientProtocol == 766 && backendProtocol == 765) return Protocol765To766Translator.V766_TO_765;
+      if (clientProtocol == 393 && backendProtocol == 765) return Protocol393To765Translator.CLIENT_393_BACKEND_765;
+      if (clientProtocol == 765 && backendProtocol == 393) return Protocol393To765Translator.CLIENT_765_BACKEND_393;
     }
     throw new IllegalArgumentException("no packet translator for " + clientProtocol + " → " + backendProtocol + " (" + support + ")");
   }

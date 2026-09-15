@@ -269,18 +269,45 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess) throws IOException {
     while (connection.state() == ConnectionState.LOGIN) {
       byte[] packet = connection.readUncompressed();
-      PacketTrace.packet("backend-login", connection.state(), PacketDirection.SERVER_TO_CLIENT, protocol, packet);
+      PacketTrace.packet("backend-login", connection.state(), PacketDirection.SERVER_TO_CLIENT, backendDefinition, packet);
       byte[] response = connection.login().onBackendPacket(packet, configuration.maxFrameBytes());
       if (response != null) { connection.writeUncompressed(response); continue; }
       if (!connection.login().shouldForward()) continue;
       if (!forwardLoginSuccess) throw new IOException("backend login failed");
-      writeClient(packet);
-      loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, packet);
+      byte[] toClient = towardClient(ConnectionState.LOGIN, packet);
+      if (toClient == null) continue;
+      writeClient(toClient);
+      loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, toClient);
     }
-    if (protocol.hasConfiguration() && protocol.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED)) {
-      connection.writeUncompressed(PlayPackets.loginAcknowledged(protocol));
-      if (forwardLoginSuccess) expectClientLoginAck = true;
+    // Always ack configuration using the BACKEND protocol when the backend has that phase.
+    if (backendDefinition.hasConfiguration()
+        && backendDefinition.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED)) {
+      connection.writeUncompressed(PlayPackets.loginAcknowledged(backendDefinition));
+      if (forwardLoginSuccess && protocol.hasConfiguration()) expectClientLoginAck = true;
     }
+    // Legacy client + modern backend: Conduit absorbs Configuration; client stays LOGIN→PLAY.
+    if (!protocol.hasConfiguration() && backendDefinition.hasConfiguration()
+        && connection.state() == ConnectionState.CONFIGURATION) {
+      absorbBackendConfiguration(connection);
+    }
+  }
+
+  /**
+   * Completes the backend Configuration phase without exposing Configuration packets to a
+   * client that has no such state (e.g. 1.13).
+   */
+  private void absorbBackendConfiguration(BackendConnection connection) throws IOException {
+    var absorber = new gg.tame.conduit.protocol.translate.ConfigurationAbsorber(backendDefinition);
+    if (clientInformation != null) absorber.setClientInformation(clientInformation);
+    var settings = absorber.initialClientInformation();
+    if (settings.isPresent()) connection.writeUncompressed(settings.get());
+    while (connection.state() != ConnectionState.PLAY) {
+      byte[] packet = connection.readUncompressed();
+      connection.login().onBackendPacket(packet, configuration.maxFrameBytes());
+      var response = absorber.onBackendPacket(packet);
+      if (response.isPresent()) connection.writeUncompressed(response.get());
+    }
+    ProtocolTrace.note("configuration absorption complete for " + clientProtocol + "→" + backendProtocol);
   }
   private void readClient() {
     clientReader = Thread.currentThread();
@@ -628,7 +655,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
       gg.tame.conduit.protocol.ProfileTrace.beginSequence("switch to " + server.name(), 60);
       switchingTarget = next;
-      if (protocol.hasConfiguration()) {
+      if (!protocol.hasConfiguration() && backendDefinition.hasConfiguration()) {
+        // 393-style client: Configuration already absorbed during completeBackendLogin.
+        synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
+      } else if (protocol.hasConfiguration()) {
         configurationAck.clear();
         synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
         writeClient(PlayPackets.startConfiguration(protocol));
@@ -821,7 +851,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private void emitSelfPlayerInfoIfNeeded() throws IOException {
     if (!needSelfPlayerInfo) return;
     if (clientState.state() != ConnectionState.PLAY) return;
-    if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE)) {
+    if (!protocol.capabilities().playerInfoUpdate()
+        || !protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE)) {
       needSelfPlayerInfo = false;
       return;
     }
