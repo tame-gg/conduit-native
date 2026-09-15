@@ -17,6 +17,7 @@ import gg.tame.conduit.protocol.chunk.ChunkCodec393;
 import gg.tame.conduit.protocol.chunk.ChunkCodec765;
 import gg.tame.conduit.protocol.chunk.SemanticChunk;
 import gg.tame.conduit.protocol.chunk.SemanticChunkSection;
+import gg.tame.conduit.protocol.codec.BlockPositionCodec;
 import gg.tame.conduit.protocol.codec.PlayerInfoCodec;
 import gg.tame.conduit.protocol.semantic.SemanticPlayerInfo;
 import java.util.List;
@@ -50,6 +51,15 @@ public final class Phase18_393_765_WorldTests {
     entityAttributesWithheldFrom393();
     advancementsDroppedToward393();
     updateHealthRemappedToward393();
+    setExperienceRemappedToward393();
+    blockPositionEraRepack();
+    blockUpdateTranslatedToward393();
+    spawnPositionRepackedToward393();
+    clientInformationExtendedToward765();
+    chatEnvelopeSynthesizedToward765();
+    playerDiggingTranslatedToward765();
+    multiBlockChangeTranslatedToward393();
+    swingArmRemappedToward765();
     difficultyTrimmedToward393();
     entityStatusRemapped();
     malformedChunkRejected();
@@ -414,6 +424,239 @@ public final class Phase18_393_765_WorldTests {
     require(MinecraftInput.varInt(in) == 20, "food preserved");
     require(in.readFloat() == 5.0f, "saturation preserved");
     require(in.available() == 0, "no trailing bytes");
+  }
+
+  /**
+   * Regression: Paper sent Set Experience (765 0x5a) during world entry — captured body was all
+   * zeros (bar 0.0, level 0, total 0). Identical layout on 393, so only the id changes.
+   */
+  private static void setExperienceRemappedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    out.writeFloat(0.0f);           // experience bar
+    MinecraftOutput.varInt(out, 0); // level
+    MinecraftOutput.varInt(out, 0); // total experience
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x5A, body.toByteArray()));
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x43, "393 set_experience id");
+    require(PlayPackets.body(legacy).length == 6, "body preserved");
+  }
+
+  /** The 1.14 position field-order change: legacy packs x,y,z; modern packs x,z,y. */
+  private static void blockPositionEraRepack() {
+    ProtocolDefinition v393 = ProtocolDefinition.forVersion(393);
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    // The real captured Block Update position.
+    long modern = 0xFFFFF6800001C046L;
+    BlockPositionCodec.BlockPosition decoded = BlockPositionCodec.unpack(v765, modern);
+    require(decoded.x() == -38, "x");
+    require(decoded.y() == 70, "y");
+    require(decoded.z() == 28, "z");
+    // Forwarding the raw long would have put the block at y=0, z=114758.
+    BlockPositionCodec.BlockPosition naive = BlockPositionCodec.unpack(v393, modern);
+    require(naive.y() != 70 || naive.z() != 28, "raw forward really is wrong");
+    // Repacking preserves the coordinates.
+    long legacy = BlockPositionCodec.translate(v765, v393, modern);
+    BlockPositionCodec.BlockPosition round = BlockPositionCodec.unpack(v393, legacy);
+    require(round.x() == -38 && round.y() == 70 && round.z() == 28, "repack preserves position");
+    // And back again, including negative coordinates.
+    require(BlockPositionCodec.translate(v393, v765, legacy) == modern, "round trip");
+  }
+
+  /**
+   * Regression: Paper sent Block Update (765 0x09) once chunks were flowing — captured body was
+   * position (-38, 70, 28) packed modern, state 10.
+   */
+  private static void blockUpdateTranslatedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    out.writeLong(0xFFFFF6800001C046L);
+    MinecraftOutput.varInt(out, 10);
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x09, body.toByteArray()));
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x0B, "393 block_change id");
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(legacy)));
+    BlockPositionCodec.BlockPosition at =
+        BlockPositionCodec.unpack(ProtocolDefinition.forVersion(393), in.readLong());
+    require(at.x() == -38 && at.y() == 70 && at.z() == 28, "position repacked for 393");
+    require(MinecraftInput.varInt(in) == BlockStateMaps.to393(10), "state mapped");
+  }
+
+  /**
+   * Regression: spawn position was forwarded with its packed long untouched, which moved the
+   * 1.13 client's compass to the wrong place. It must be repacked like any other position.
+   */
+  private static void spawnPositionRepackedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    long modern = BlockPositionCodec.pack(v765, new BlockPositionCodec.BlockPosition(-38, 70, 28));
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    out.writeLong(modern);
+    out.writeFloat(0f); // 765 angle, which 393 has no field for
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x54, body.toByteArray()));
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x49, "393 spawn_position id");
+    byte[] legacyBody = PlayPackets.body(legacy);
+    require(legacyBody.length == 8, "angle dropped for 393");
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(legacyBody));
+    BlockPositionCodec.BlockPosition at =
+        BlockPositionCodec.unpack(ProtocolDefinition.forVersion(393), in.readLong());
+    require(at.x() == -38 && at.y() == 70 && at.z() == 28, "spawn position repacked");
+  }
+
+  /**
+   * Regression: the real 1.13 client's Client Settings was forwarded verbatim to Paper, which
+   * rejected it with "readerIndex(12) + length(1) exceeds writerIndex(12)" — 1.20.4 appends
+   * enableTextFiltering and allowServerListings. The 393 body must be extended, not copied.
+   */
+  private static void clientInformationExtendedToward765() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    MinecraftOutput.string(out, "en_us");
+    out.writeByte(12);              // view distance
+    MinecraftOutput.varInt(out, 0); // chat mode: enabled
+    out.writeBoolean(true);         // chat colors
+    out.writeByte(0x7F);            // displayed skin parts
+    MinecraftOutput.varInt(out, 1); // main hand: right
+    byte[] legacy = PlayPackets.withId(0x04, body.toByteArray());
+    require(PlayPackets.body(legacy).length + 1 == 12, "captured 393 packet really is 12 bytes");
+
+    byte[] modern = t.clientToBackend(ConnectionState.PLAY, legacy);
+    require(modern != null && PlayPackets.packetId(modern) == 0x09, "765 client_information id");
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(modern)));
+    require(MinecraftInput.string(in, 64).equals("en_us"), "locale");
+    require(in.readByte() == 12, "view distance");
+    require(MinecraftInput.varInt(in) == 0, "chat mode");
+    require(in.readBoolean(), "chat colors");
+    require(in.readUnsignedByte() == 0x7F, "skin parts");
+    require(MinecraftInput.varInt(in) == 1, "main hand");
+    require(!in.readBoolean(), "text filtering defaulted off");
+    require(in.readBoolean(), "server listings defaulted on");
+    require(in.available() == 0, "no trailing bytes");
+  }
+
+  /**
+   * Regression: the 1.13 client's Chat Message (bare string) was forwarded to Paper as a 765 Chat
+   * Command, which rejected it with "readerIndex(4) + length(8) exceeds writerIndex(4)" — 765
+   * expects a signing envelope (timestamp, salt, signatures, acknowledgements) after the text.
+   */
+  private static void chatEnvelopeSynthesizedToward765() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+
+    // Plain chat -> 765 Chat Message (0x05), unsigned.
+    java.io.ByteArrayOutputStream chat = new java.io.ByteArrayOutputStream();
+    MinecraftOutput.string(new java.io.DataOutputStream(chat), "hi");
+    byte[] modernChat = t.clientToBackend(ConnectionState.PLAY, PlayPackets.withId(0x02, chat.toByteArray()));
+    require(modernChat != null && PlayPackets.packetId(modernChat) == 0x05, "765 chat id");
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(modernChat)));
+    require(MinecraftInput.string(in, 256).equals("hi"), "message text");
+    in.readLong();                        // timestamp
+    require(in.readLong() == 0L, "salt");
+    require(!in.readBoolean(), "unsigned");
+    require(MinecraftInput.varInt(in) == 0, "message count");
+    require(in.available() == 3, "acknowledged bitset is 3 bytes");
+
+    // Leading slash -> 765 Chat Command (0x04), slash stripped.
+    java.io.ByteArrayOutputStream cmd = new java.io.ByteArrayOutputStream();
+    MinecraftOutput.string(new java.io.DataOutputStream(cmd), "/list");
+    byte[] modernCmd = t.clientToBackend(ConnectionState.PLAY, PlayPackets.withId(0x02, cmd.toByteArray()));
+    require(modernCmd != null && PlayPackets.packetId(modernCmd) == 0x04, "765 chat command id");
+    java.io.DataInputStream cin =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(modernCmd)));
+    require(MinecraftInput.string(cin, 256).equals("list"), "slash stripped");
+    cin.readLong();                         // timestamp
+    require(cin.readLong() == 0L, "salt");
+    require(MinecraftInput.varInt(cin) == 0, "no argument signatures");
+    require(MinecraftInput.varInt(cin) == 0, "message count");
+    require(cin.available() == 3, "acknowledged bitset is 3 bytes");
+  }
+
+  /**
+   * Regression: the real 1.13 client sent Player Digging (393 0x18) once it could move — captured
+   * body was status 0, position (-58, 103, -5) packed legacy, face 1, matching a player standing
+   * at (-57.5, 104.0, -7.5). The position must be repacked for 765 and the 1.19 prediction
+   * sequence synthesized.
+   */
+  private static void playerDiggingTranslatedToward765() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    long legacyPacked = 0xFFFFF1819FFFFFFBL;
+    BlockPositionCodec.BlockPosition expected =
+        BlockPositionCodec.unpack(ProtocolDefinition.forVersion(393), legacyPacked);
+    require(expected.x() == -58 && expected.y() == 103 && expected.z() == -5, "captured dig position");
+
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    MinecraftOutput.varInt(out, 0); // status: started digging
+    out.writeLong(legacyPacked);
+    out.writeByte(1);              // face: top
+    byte[] modern = t.clientToBackend(ConnectionState.PLAY, PlayPackets.withId(0x18, body.toByteArray()));
+    require(modern != null && PlayPackets.packetId(modern) == 0x21, "765 player_action id");
+
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(modern)));
+    require(MinecraftInput.varInt(in) == 0, "status");
+    BlockPositionCodec.BlockPosition at =
+        BlockPositionCodec.unpack(ProtocolDefinition.forVersion(765), in.readLong());
+    require(at.x() == -58 && at.y() == 103 && at.z() == -5, "position repacked for 765");
+    require(in.readByte() == 1, "face");
+    require(MinecraftInput.varInt(in) == 0, "sequence synthesized");
+    require(in.available() == 0, "no trailing bytes");
+  }
+
+  /**
+   * Regression: Paper sent Update Section Blocks (765 0x47) — captured body was section
+   * (x=-5, z=6, y=1) with 2 records: state 2389 at local (14,11,5) and air at local (13,11,5).
+   *
+   * <p>393 Multi Block Change is structurally unrelated: Int chunk X/Z, then per record a
+   * horizontal nibble-pair byte, an absolute Y byte and a VarInt state. Translated semantically.
+   */
+  private static void multiBlockChangeTranslatedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    long section = ((long) (-5 & 0x3FFFFF) << 42) | ((long) (6 & 0x3FFFFF) << 20) | 1L;
+    out.writeLong(section);
+    MinecraftOutput.varInt(out, 2);
+    MinecraftOutput.varLong(out, ((long) 2389 << 12) | (14 << 8) | (11 << 4) | 5);
+    MinecraftOutput.varLong(out, ((long) 0 << 12) | (13 << 8) | (11 << 4) | 5);
+
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x47, body.toByteArray()));
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x0F, "393 multi_block_change id");
+
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(legacy)));
+    require(in.readInt() == -5, "chunk x");
+    require(in.readInt() == 6, "chunk z");
+    require(MinecraftInput.varInt(in) == 2, "record count");
+
+    // Absolute Y = sectionY 1 * 16 + localY 5 = 21, for both records.
+    int horizontal = in.readUnsignedByte();
+    require((horizontal >> 4) == 14 && (horizontal & 0xF) == 11, "first record local x/z");
+    require(in.readUnsignedByte() == 21, "first record absolute y");
+    require(MinecraftInput.varInt(in) == BlockStateMaps.to393(2389), "first record state mapped");
+
+    horizontal = in.readUnsignedByte();
+    require((horizontal >> 4) == 13 && (horizontal & 0xF) == 11, "second record local x/z");
+    require(in.readUnsignedByte() == 21, "second record absolute y");
+    require(MinecraftInput.varInt(in) == BlockStateMaps.to393(0), "second record air");
+    require(in.available() == 0, "no trailing bytes");
+  }
+
+  /**
+   * Regression: the real 1.13 client sent Animation / swing arm (393 0x27, hand 0) once it could
+   * act in the world. Single Hand VarInt on both eras, so only the id changes.
+   */
+  private static void swingArmRemappedToward765() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] modern = t.clientToBackend(ConnectionState.PLAY, PlayPackets.withId(0x27, new byte[] {0}));
+    require(modern != null && PlayPackets.packetId(modern) == 0x33, "765 swing_arm id");
+    require(PlayPackets.body(modern).length == 1, "hand preserved");
+    require(PlayPackets.body(modern)[0] == 0, "main hand");
   }
 
   private static void malformedChunkRejected() {

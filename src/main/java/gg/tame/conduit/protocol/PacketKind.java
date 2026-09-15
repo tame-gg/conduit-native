@@ -42,5 +42,90 @@ public enum PacketKind {
   PLAY_UPDATE_ADVANCEMENTS,
   /** Health + food + saturation. Identical Float/VarInt/Float layout on 1.13 and 1.20.4. */
   PLAY_UPDATE_HEALTH,
-  PLAY_ENTITY_DESTROY
+  /** Experience bar + level + total. Identical Float/VarInt/VarInt layout on 1.13 and 1.20.4. */
+  PLAY_SET_EXPERIENCE,
+  /** Single block change. Position field order changed in 1.14; state ids are era specific. */
+  PLAY_BLOCK_UPDATE,
+  /** Player digging / block action. Carries a packed Position; 1.19+ adds a prediction sequence. */
+  PLAY_PLAYER_DIGGING,
+  /** Batch of block changes in one chunk column. Structurally unrelated between 1.13 and 1.20.4. */
+  PLAY_MULTI_BLOCK_CHANGE,
+  /** Swing arm. Single Hand VarInt on both 1.13 and 1.20.4. */
+  PLAY_SWING_ARM,
+  PLAY_ENTITY_DESTROY,
+
+  // ---------------------------------------------------------------------------
+  // Entity and world packets a real 1.20.4 server sends during ordinary play.
+  // Added from wire traces of an official client, not from speculation; the
+  // schema comparison behind each decision is in tools/schemadiff.py output.
+  // ---------------------------------------------------------------------------
+
+  /** Groups packets for atomic application. Added 1.19.4; absent before. */
+  PLAY_BUNDLE_DELIMITER,
+  /** Spawn a non-living entity. 1.20.4 widened type to VarInt and added headPitch. */
+  PLAY_SPAWN_ENTITY,
+  /** Relative entity move. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_RELATIVE_MOVE,
+  /** Relative entity move plus rotation. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_MOVE_LOOK,
+  /** Entity rotation. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_LOOK,
+  /** Entity head yaw. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_HEAD_ROTATION,
+  /** Entity velocity. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_VELOCITY,
+  /** Item pickup animation. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_COLLECT_ITEM,
+  /** Absolute entity teleport. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_TELEPORT,
+  /** Signed player chat. Added 1.19; 1.13 carries chat through PLAY_CHAT. */
+  PLAY_PLAYER_CHAT,
+  /** Damage animation/source detail. Added 1.19.4; no 1.13 equivalent. */
+  PLAY_DAMAGE_EVENT,
+  /** Block-prediction sequence acknowledgement. Added 1.19; no 1.13 equivalent. */
+  PLAY_ACKNOWLEDGE_BLOCK_CHANGE,
+  /** Positional sound. Sound registry ids differ per version; 1.20.4 adds a seed. */
+  PLAY_SOUND_EFFECT,
+  /** Particle spawn. 1.20.4 widened coordinates to f64 and the id to VarInt. */
+  PLAY_WORLD_PARTICLES,
+  /** Entity equipment. 1.16 replaced the single slot with a multi-slot array. */
+  PLAY_ENTITY_EQUIPMENT,
+  /** Client closed a container. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_CLOSE_WINDOW,
+  /** Sneak/sprint/horse actions. Byte-identical layout on 1.13 and 1.20.4. */
+  PLAY_ENTITY_ACTION,
+  /** Use item on block. 1.20.4 reorders fields and adds insideBlock + sequence. */
+  PLAY_BLOCK_PLACE,
+
+  /** Swing/hurt/wake animation for an entity. Byte-identical on 1.13 and 1.20.4. */
+  PLAY_ANIMATION,
+  /** Standalone hurt animation. Added 1.19.4; 1.13 drives it from entity status. */
+  PLAY_HURT_ANIMATION,
+  /**
+   * Pre-1.17 combat event, multiplexed behind an action enum: enter combat,
+   * end combat, or entity death (which drives the death screen). 1.17 split this
+   * into three separate packets, so translating either way is a fan-in/fan-out
+   * rather than a field copy.
+   */
+  PLAY_COMBAT_EVENT,
+  /** 1.17+ enter-combat. Folds into {@link #PLAY_COMBAT_EVENT} action 0. */
+  PLAY_ENTER_COMBAT,
+  /** 1.17+ end-combat. Folds into {@link #PLAY_COMBAT_EVENT} action 1. */
+  PLAY_END_COMBAT,
+  /** 1.17+ death, carrying the death message. Folds into action 2. */
+  PLAY_DEATH_COMBAT,
+  /** Respawn / request-stats button. Byte-identical on 1.13 and 1.20.4. */
+  PLAY_CLIENT_COMMAND,
+  /**
+   * Pre-1.19 spawn packet for living entities (mobs, players' mounts). 1.19
+   * merged it into {@link #PLAY_SPAWN_ENTITY}, so an old backend's living spawns
+   * must fan in to the unified modern packet.
+   */
+  PLAY_SPAWN_LIVING_ENTITY,
+  /**
+   * Block-break / door / portal style world effects. Same field list on 1.13 and
+   * 1.20.4, but it carries a packed Position, whose bit layout changed in 1.14 —
+   * so it must be converted, not copied.
+   */
+  PLAY_WORLD_EVENT
 }

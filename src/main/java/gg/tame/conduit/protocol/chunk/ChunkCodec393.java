@@ -14,7 +14,8 @@ import java.util.List;
  * 1.13 (393) Chunk Data codec.
  * Wire: x,z, groundUp, primaryBitMask, data(size+bytes), blockEntities(nbt[]).
  * Section (1.13): bitsPerBlock, optional palette, data longs (tight), blockLight[2048], skyLight[2048].
- * Full chunk appends 1024 biome ints after sections.
+ * Full chunk appends 256 column biome ints after sections (the 1024-entry
+ * 3D biome array is 1.15+, not 1.13).
  * Public layout: PrismarineJS minecraft-data 1.13 + wiki.vg Chunk Format (1.13 era).
  */
 public final class ChunkCodec393 {
@@ -53,10 +54,16 @@ public final class ChunkCodec393 {
         if ((bitMap & (1 << sectionY)) == 0) continue;
         sections.add(new SemanticChunk.SectionSlot(sectionY, readSection(in, true)));
       }
+      // 1.13 biomes are 256 ints -- one per X/Z column -- appended to chunkData
+      // when groundUp is set. The 1024-int form is the 4x4x4 three-dimensional
+      // biome array introduced in 1.15, and reading that many here overran the
+      // buffer on every real 1.13 chunk (EOFException). Confirmed against the
+      // published 1.13 / 1.14 / 1.15 map_chunk schemas: neither 1.13 nor 1.14
+      // carries a biomes field of its own, and 1.15 is where count 1024 appears.
       int[] biomes = new int[0];
       if (groundUp) {
-        biomes = new int[1024];
-        for (int i = 0; i < 1024; i++) biomes[i] = in.readInt();
+        biomes = new int[256];
+        for (int index = 0; index < 256; index++) biomes[index] = in.readInt();
       }
       return new SemanticChunk(x, z, groundUp, sections, biomes, entities, new byte[0]);
     }
@@ -81,8 +88,14 @@ public final class ChunkCodec393 {
         writeSection(out, ordered[y].section(), true);
       }
       if (legacy.fullChunk()) {
-        int[] biomes = legacy.biomes1024().length == 1024 ? legacy.biomes1024() : plainsBiomes();
-        for (int biome : biomes) out.writeInt(biome);
+        // 1.13 expects exactly 256 column biomes here. Writing the 1.15-style
+        // 1024-entry array put 768 junk ints into chunkData; the client ignored
+        // the tail because chunkData is length-prefixed, so it rendered, but it
+        // wasted ~3 KB on every chunk and misaligned anything read after it.
+        int[] source = legacy.biomes1024();
+        for (int index = 0; index < 256; index++) {
+          out.writeInt(index < source.length ? source[index] : BlockStateMaps.plainsBiome113());
+        }
       }
     }
     byte[] data = sectionBytes.toByteArray();
@@ -175,8 +188,9 @@ public final class ChunkCodec393 {
     return 32 - Integer.numberOfLeadingZeros(v - 1);
   }
 
+  /** 256 column biomes, the 1.13 chunk biome shape. */
   private static int[] plainsBiomes() {
-    int[] biomes = new int[1024];
+    int[] biomes = new int[256];
     java.util.Arrays.fill(biomes, BlockStateMaps.plainsBiome113());
     return biomes;
   }

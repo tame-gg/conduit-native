@@ -84,6 +84,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private volatile boolean expectClientLoginAck;
   private volatile boolean commandsDeclared;
   private static final int MAX_DEFERRED_PLAY = 512;
+  /** Set once Conduit has synthesised finish_configuration for a non-configuration backend. */
+  private volatile boolean configurationFinishSynthesized;
   private final List<byte[]> deferredPlay = new java.util.ArrayList<>();
   private boolean playLoginSent;
   private boolean needSelfPlayerInfo = true;
@@ -490,6 +492,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           current.markBrandSeen();
         }
         outbound = maybeMergeCommands(outbound);
+        // A pre-1.20.2 backend has no Configuration phase and will never send the
+        // finish_configuration that a modern client waits for, so the client sits
+        // in Configuration while backend Play packets pile up in deferredPlay
+        // until the bound trips and the session dies. Conduit has to synthesise
+        // that transition itself: the state exists on one side of this pair only.
+        synthesizeConfigurationFinishIfNeeded(current.state());
         if (deferPlayUntilReady(translated, outbound, current.state())) {
           flushDeferredPlay();
           continue;
@@ -525,6 +533,30 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return packet;
     }
   }
+  /**
+   * Drives a modern client out of Configuration when the backend has no such state.
+   *
+   * <p>Only fires for a cross-version pair where the client protocol has a
+   * Configuration phase and the backend protocol does not (e.g. a 1.20.4 client
+   * on a 1.13 backend). Conduit sends the client a finish_configuration it will
+   * never receive from the backend; the client's acknowledgement then runs the
+   * normal Configuration→Play transition, which flushes the deferred Play queue.
+   *
+   * <p>Idempotent: the synthesis happens at most once per session.
+   */
+  private void synthesizeConfigurationFinishIfNeeded(ConnectionState backendState) throws IOException {
+    if (configurationFinishSynthesized) return;
+    if (!protocol.hasConfiguration()) return;                 // client has no Configuration to leave
+    if (ProtocolDefinition.forVersion(backendProtocol).hasConfiguration()) return;  // backend will send its own
+    if (clientState.state() != ConnectionState.CONFIGURATION) return;
+    if (backendState != ConnectionState.PLAY) return;         // wait until the backend is actually in Play
+    configurationFinishSynthesized = true;
+    ProtocolTrace.note("CONFIG SYNTH finish_configuration for " + clientProtocol
+        + " client on non-configuration backend " + backendProtocol);
+    writeClient(PlayPackets.idOnly(protocol.id(ConnectionState.CONFIGURATION,
+        PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH)), true);
+  }
+
   private boolean isFinishConfiguration(byte[] packet) throws IOException {
     return protocol.hasConfiguration() && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.CONFIGURATION_FINISH);
   }

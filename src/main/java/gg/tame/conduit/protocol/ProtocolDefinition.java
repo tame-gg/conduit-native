@@ -2,16 +2,39 @@ package gg.tame.conduit.protocol;
 
 import java.util.Map;
 
-/** Packet-id registry for one supported protocol version. Add versions here, not to sessions. */
+/**
+ * Packet-id registry for one supported protocol version. Add versions here, not to sessions.
+ *
+ * <p>Versions enter the registry one of two ways. A <em>declared</em> definition
+ * spells out its whole table, which is what a version with a genuinely novel
+ * layout needs. A <em>derived</em> definition ({@link #derive}) inherits an
+ * existing table and applies a {@link ProtocolRevision} delta, which is what the
+ * long tail of point releases needs &mdash; most of them move a handful of play
+ * ids and leave handshake, status and login alone. Deriving keeps the cost of a
+ * new version proportional to what the version actually changed, instead of
+ * requiring a full hand-copied table per protocol number across 1.13&ndash;26.2.
+ *
+ * <p>Every definition carries a {@link CodecStatus} and a provenance note, and
+ * neither is merged with translation status: having a codec for a protocol says
+ * nothing about whether a translator to some other protocol exists.
+ */
 public final class ProtocolDefinition {
   private final ProtocolVersion version;
   private final ProtocolCapabilities capabilities;
   private final int[][][] ids;
-  private ProtocolDefinition(ProtocolVersion version, ProtocolCapabilities capabilities, int[][][] ids) {
+  private final CodecStatus codecStatus;
+  private final String source;
+  private ProtocolDefinition(ProtocolVersion version, ProtocolCapabilities capabilities, int[][][] ids,
+                             CodecStatus codecStatus, String source) {
     this.version = version; this.capabilities = capabilities; this.ids = ids;
+    this.codecStatus = codecStatus; this.source = source;
   }
   public ProtocolVersion version() { return version; }
   public ProtocolCapabilities capabilities() { return capabilities; }
+  /** How far this protocol's packet table has been authored and validated. */
+  public CodecStatus codecStatus() { return codecStatus; }
+  /** Where this protocol's packet ids came from. */
+  public String source() { return source; }
   public boolean hasConfiguration() { return capabilities.configurationPhase(); }
   public boolean loginShouldAuthenticate() { return capabilities.loginShouldAuthenticate(); }
   public boolean knownPacks() { return capabilities.knownPacks(); }
@@ -34,13 +57,69 @@ public final class ProtocolDefinition {
     ProtocolDefinition definition = BY_NUMBER.get(number);
     if (definition == null) {
       throw new IllegalArgumentException("unsupported Minecraft protocol: " + number
-          + "; codecs: 393 (1.13), 763 (1.20.1), 765 (1.20.4), 766 (1.20.5), 776 (26.2)");
+          + "; codecs: " + describeCodecs());
     }
     return definition;
   }
   public static boolean hasCodec(int number) { return BY_NUMBER.containsKey(number); }
+
+  /** Codec status for any protocol number, including ones with no table at all. */
+  public static CodecStatus codecStatus(int number) {
+    ProtocolDefinition definition = BY_NUMBER.get(number);
+    return definition == null ? CodecStatus.NONE : definition.codecStatus();
+  }
+
+  /** Every protocol number that has a packet table, in registration order. */
+  public static Map<Integer, ProtocolDefinition> all() {
+    return Map.copyOf(BY_NUMBER);
+  }
+
+  private static String describeCodecs() {
+    StringBuilder text = new StringBuilder();
+    BY_NUMBER.values().stream()
+        .sorted(java.util.Comparator.comparingInt(d -> d.version().number()))
+        .forEach(d -> {
+          if (text.length() > 0) text.append(", ");
+          text.append(d.version().number()).append(" (").append(d.version().displayName())
+              .append('/').append(d.codecStatus()).append(')');
+        });
+    return text.toString();
+  }
+
   public ProtocolFamily family() { return version.family(); }
+
+  /**
+   * Builds a table for a version that inherits {@code base} and applies the
+   * revision's deltas. Only the mappings the release actually changed need to be
+   * listed; {@link PacketMapping#removed} drops a packet the release deleted so a
+   * derived table never keeps exposing a kind its protocol no longer has.
+   */
+  public static ProtocolDefinition derive(ProtocolDefinition base, ProtocolRevision revision) {
+    if (base == null) throw new IllegalArgumentException("derive requires a base definition");
+    int[][][] ids = new int[base.ids.length][][];
+    for (int state = 0; state < base.ids.length; state++) {
+      ids[state] = new int[base.ids[state].length][];
+      for (int direction = 0; direction < base.ids[state].length; direction++) {
+        ids[state][direction] = base.ids[state][direction].clone();
+      }
+    }
+    for (PacketMapping delta : revision.deltas()) {
+      ids[delta.state().ordinal()][delta.direction().ordinal()][delta.kind().ordinal()] = delta.id();
+    }
+    String provenance = revision.source() + " (derived from " + base.version().displayName() + ")";
+    // A null capability set means "inherit the base version's"; revisions cannot
+    // look the base up themselves because the registry is still being built.
+    ProtocolCapabilities capabilities =
+        revision.capabilities() == null ? base.capabilities() : revision.capabilities();
+    return new ProtocolDefinition(revision.version(), capabilities, ids, revision.status(), provenance);
+  }
+
   private static ProtocolDefinition define(ProtocolVersion version, ProtocolCapabilities capabilities, Object... entries) {
+    return define(version, capabilities, CodecStatus.DECLARED, "authored packet table", entries);
+  }
+
+  private static ProtocolDefinition define(ProtocolVersion version, ProtocolCapabilities capabilities,
+                                           CodecStatus status, String source, Object... entries) {
     int[][][] ids = new int[ConnectionState.values().length][PacketDirection.values().length][PacketKind.values().length];
     for (int[][] byDirection : ids) {
       for (int[] byKind : byDirection) java.util.Arrays.fill(byKind, -1);
@@ -51,7 +130,7 @@ public final class ProtocolDefinition {
       PacketKind kind = (PacketKind) entries[index + 2];
       ids[state.ordinal()][direction.ordinal()][kind.ordinal()] = (Integer) entries[index + 3];
     }
-    return new ProtocolDefinition(version, capabilities, ids);
+    return new ProtocolDefinition(version, capabilities, ids, status, source);
   }
   private static final ProtocolDefinition V1_20_4 = define(ProtocolVersion.MINECRAFT_1_20_4, new ProtocolCapabilities(true, false),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
@@ -90,6 +169,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE, 0x24,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE, 0x15,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x05,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0A,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x0B,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x09,
@@ -127,7 +207,40 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA, 0x56,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_ATTRIBUTES, 0x71,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_ADVANCEMENTS, 0x70,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_HEALTH, 0x5B
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_HEALTH, 0x5B,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_EXPERIENCE, 0x5A,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BLOCK_UPDATE, 0x09,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLAYER_DIGGING, 0x21,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_MULTI_BLOCK_CHANGE, 0x47,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x33,
+      // Entity/world packets a real 1.20.4 server sends during ordinary play,
+      // observed on the wire while proxying an official 1.13 client.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BUNDLE_DELIMITER, 0x00,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_ENTITY, 0x01,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ACKNOWLEDGE_BLOCK_CHANGE, 0x05,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DAMAGE_EVENT, 0x19,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_PARTICLES, 0x27,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_RELATIVE_MOVE, 0x2C,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_MOVE_LOOK, 0x2D,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_LOOK, 0x2E,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x37,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_HEAD_ROTATION, 0x46,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_VELOCITY, 0x58,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_EQUIPMENT, 0x59,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x66,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COLLECT_ITEM, 0x6C,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_TELEPORT, 0x6D,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLOSE_WINDOW, 0x0E,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_ENTITY_ACTION, 0x22,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_BLOCK_PLACE, 0x35,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ANIMATION, 0x03,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_HURT_ANIMATION, 0x22,
+      // 1.17 split the 1.13 combat_event into these three standalone packets.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_END_COMBAT, 0x38,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTER_COMBAT, 0x39,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DEATH_COMBAT, 0x3A,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_COMMAND, 0x08,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_EVENT, 0x26
   );
   /** Protocol 766 = Minecraft 1.20.5/1.20.6. IDs from public PrismarineJS minecraft-data. */
   private static final ProtocolDefinition V1_20_5 = define(ProtocolVersion.MINECRAFT_1_20_5,
@@ -179,7 +292,11 @@ public final class ProtocolDefinition {
    * Protocol 393 = Minecraft 1.13. Packet IDs from PrismarineJS minecraft-data {@code 1.13/protocol.json}.
    * States: HANDSHAKING / STATUS / LOGIN / PLAY — no CONFIGURATION.
    */
-  private static final ProtocolDefinition V1_13 = define(ProtocolVersion.MINECRAFT_1_13, ProtocolCapabilities.flattening113(),
+  private static final ProtocolDefinition V1_13 = define(ProtocolVersion.MINECRAFT_1_13,
+      ProtocolCapabilities.flattening113(), CodecStatus.VERIFIED,
+      "authored from published 1.13 packet ids; exercised end-to-end by the official "
+          + "Minecraft 1.13 client against the official 1.13 server through Conduit "
+          + "(login, chunks, movement, combat, death, respawn, advancements; ~3 minutes, no disconnect)",
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,
@@ -230,7 +347,40 @@ public final class ProtocolDefinition {
       // 1.13 multiplexes every border operation behind an action enum on this single id.
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_BORDER_INIT, 0x3B,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_TIME, 0x4A,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_HEALTH, 0x44
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_HEALTH, 0x44,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_EXPERIENCE, 0x43,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BLOCK_UPDATE, 0x0B,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLAYER_DIGGING, 0x18,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_MULTI_BLOCK_CHANGE, 0x0F,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x27,
+      // Entity/world packets needed to carry real 1.20.4 gameplay to a 1.13 client.
+      // 1.13 has no bundle delimiter, player chat, damage event or block-change ack.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_ENTITY, 0x00,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_RELATIVE_MOVE, 0x28,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_MOVE_LOOK, 0x29,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_LOOK, 0x2A,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_HEAD_ROTATION, 0x39,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_VELOCITY, 0x41,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COLLECT_ITEM, 0x4F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_TELEPORT, 0x50,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x4D,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_PARTICLES, 0x24,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_EQUIPMENT, 0x42,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLOSE_WINDOW, 0x09,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_ENTITY_ACTION, 0x19,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_BLOCK_PLACE, 0x29,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ANIMATION, 0x06,
+      // 1.13 multiplexes enter/end/death behind an action enum on this one id.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COMBAT_EVENT, 0x2F,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_COMMAND, 0x03,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UNLOCK_RECIPES, 0x34,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_LIVING_ENTITY, 0x03,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_CONTENT, 0x15,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_SLOT, 0x17,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA, 0x3F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_ADVANCEMENTS, 0x51,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_ATTRIBUTES, 0x52,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_EVENT, 0x23
   );
   private static final ProtocolDefinition V1_20_1 = define(ProtocolVersion.MINECRAFT_1_20_1, ProtocolCapabilities.legacyPlay(),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
@@ -296,10 +446,32 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x0E,
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_CLIENT_INFORMATION, 0x00
   );
-  private static final Map<Integer, ProtocolDefinition> BY_NUMBER = Map.ofEntries(
-      Map.entry(ProtocolVersion.MINECRAFT_1_13.number(), V1_13),
-      Map.entry(ProtocolVersion.MINECRAFT_1_20_1.number(), V1_20_1),
-      Map.entry(ProtocolVersion.MINECRAFT_1_20_4.number(), V1_20_4),
-      Map.entry(ProtocolVersion.MINECRAFT_1_20_5.number(), V1_20_5),
-      Map.entry(ProtocolVersion.MINECRAFT_26_2.number(), V26_2));
+  /**
+   * Registered packet tables, keyed by protocol number.
+   *
+   * <p>Declared tables are registered directly. Derived tables are registered
+   * through {@link #derive} from a {@link ProtocolRevision}, so a point release
+   * costs only its delta. A protocol number absent from this map has no codec:
+   * {@link ProtocolCatalog} still lists it as a known identity, but Conduit
+   * reports it as unsupported rather than guessing at a neighbour's layout.
+   */
+  private static final Map<Integer, ProtocolDefinition> BY_NUMBER = buildRegistry();
+
+  private static Map<Integer, ProtocolDefinition> buildRegistry() {
+    Map<Integer, ProtocolDefinition> registry = new java.util.LinkedHashMap<>();
+    for (ProtocolDefinition declared : new ProtocolDefinition[] {V1_13, V1_20_1, V1_20_4, V1_20_5, V26_2}) {
+      registry.put(declared.version().number(), declared);
+    }
+    for (ProtocolRevision revision : ProtocolRevisions.ALL) {
+      ProtocolDefinition base = registry.get(revision.baseProtocol());
+      if (base == null) {
+        throw new IllegalStateException("revision for protocol " + revision.protocol()
+            + " names a base protocol that is not registered");
+      }
+      if (registry.putIfAbsent(revision.protocol(), derive(base, revision)) != null) {
+        throw new IllegalStateException("duplicate registration for protocol " + revision.protocol());
+      }
+    }
+    return registry;
+  }
 }

@@ -1,20 +1,21 @@
 package gg.tame.conduit.protocol;
 
-import gg.tame.conduit.protocol.translate.Protocol393To765Translator;
-import gg.tame.conduit.protocol.translate.Protocol765To766Translator;
-
-/** Selects a translator only for implemented pairings. */
+/**
+ * Selects a translator for an ordered (client, backend) protocol pair.
+ *
+ * <p>Both protocol numbers are inputs. The selection is never made from the
+ * backend version alone, and never mirrored: 765&rarr;393 is a separate
+ * registration from 393&rarr;765 and may not exist when its opposite does.
+ */
 public final class Translators {
   private Translators() {}
+
   public static ProtocolTranslator forPair(int clientProtocol, int backendProtocol) {
     TranslationSupport support = ProtocolCompatibility.between(clientProtocol, backendProtocol);
     if (support == TranslationSupport.DIRECT) return IdentityTranslator.INSTANCE;
-    if (support == TranslationSupport.TRANSLATED) {
-      if (clientProtocol == 765 && backendProtocol == 766) return Protocol765To766Translator.V765_TO_766;
-      if (clientProtocol == 766 && backendProtocol == 765) return Protocol765To766Translator.V766_TO_765;
-      if (clientProtocol == 393 && backendProtocol == 765) return Protocol393To765Translator.CLIENT_393_BACKEND_765;
-      if (clientProtocol == 765 && backendProtocol == 393) return Protocol393To765Translator.CLIENT_765_BACKEND_393;
-    }
-    throw new IllegalArgumentException("no packet translator for " + clientProtocol + " → " + backendProtocol + " (" + support + ")");
+    return TranslatorRegistry.find(clientProtocol, backendProtocol)
+        .orElseThrow(() -> new IllegalArgumentException(
+            "no packet translator for " + clientProtocol + " → " + backendProtocol
+                + " (" + support + ")"));
   }
 }

@@ -2,6 +2,7 @@ package gg.tame.conduit.tests;
 
 import gg.tame.conduit.login.LoginStart;
 import gg.tame.conduit.login.PlayerProfile;
+import gg.tame.conduit.protocol.CodecStatus;
 import gg.tame.conduit.protocol.CompatibilityCompleteness;
 import gg.tame.conduit.protocol.CompatibilityEntry;
 import gg.tame.conduit.protocol.CompatibilityRegistry;
@@ -86,10 +87,32 @@ public final class Phase16ModernProtocolTests {
   private static void codecSupportBoundaries() {
     require(ProtocolDefinition.hasCodec(393), "1.13 codec");
     require(ProtocolDefinition.hasCodec(765), "765 codec");
-    require(!ProtocolDefinition.hasCodec(401), "1.13.1 catalog only");
-    require(!ProtocolDefinition.hasCodec(764), "1.20.2 catalog only");
-    require(!ProtocolDefinition.hasCodec(767), "1.21 catalog only");
     require(ProtocolCatalog.withCodecs().stream().anyMatch(v -> v.number() == 393), "codec list includes 393");
+
+    // Declared tables are authored directly for their protocol; derived tables
+    // inherit a declared table plus that release's delta. Both are usable
+    // codecs, and the distinction must stay visible rather than collapsing
+    // into a single "supported" bit.
+    // 393 is the one protocol exercised end-to-end by a real client against a
+    // real server of the same version, so it is the only VERIFIED codec.
+    require(ProtocolDefinition.codecStatus(393) == CodecStatus.VERIFIED, "393 verified on the wire");
+    require(ProtocolDefinition.codecStatus(765) == CodecStatus.DECLARED, "765 declared, not wire-verified");
+    require(ProtocolDefinition.codecStatus(401) == CodecStatus.DERIVED, "401 derived from 393");
+    require(ProtocolDefinition.codecStatus(764) == CodecStatus.DERIVED, "764 derived");
+    require(ProtocolDefinition.codecStatus(767) == CodecStatus.DERIVED, "767 derived");
+
+    // A catalog entry is still not a codec. 1.14.2 has no published packet data
+    // to derive from and legacy versions are out of the program, so both remain
+    // known identities with no packet table at all.
+    require(!ProtocolDefinition.hasCodec(485), "1.14.2 catalog only, no published data to derive");
+    require(ProtocolDefinition.codecStatus(485) == CodecStatus.NONE, "485 has no codec");
+    require(!ProtocolDefinition.hasCodec(47), "1.8.9 out of program");
+    require(ProtocolDefinition.codecStatus(47) == CodecStatus.NONE, "47 has no codec");
+
+    // Having a codec on both sides never by itself implies a translation path.
+    require(ProtocolDefinition.hasCodec(401) && ProtocolDefinition.hasCodec(765), "both have codecs");
+    require(ProtocolCompatibility.between(401, 765) == TranslationSupport.UNSUPPORTED,
+        "401->765 has codecs but no translator");
   }
 
   private static void capabilities113() {
@@ -178,7 +201,10 @@ public final class Phase16ModernProtocolTests {
   private static void compatibilityRegistry() {
     CompatibilityEntry same = CompatibilityRegistry.resolve(393, 393);
     require(same.support() == TranslationSupport.DIRECT, "393 direct");
-    require(same.completeness() == CompatibilityCompleteness.PARTIAL, "393 partial until verified");
+    // Promoted from PARTIAL once the official 1.13 client sustained real play
+    // against the official 1.13 server through Conduit. Native 393 being FULL
+    // says nothing about 393 -> 765, which stays PARTIAL below.
+    require(same.completeness() == CompatibilityCompleteness.FULL, "393 native verified");
     CompatibilityEntry cross = CompatibilityRegistry.resolve(393, 765);
     require(cross.support() == TranslationSupport.TRANSLATED, "393→765 translated");
     require(cross.completeness() == CompatibilityCompleteness.PARTIAL, "393→765 partial");

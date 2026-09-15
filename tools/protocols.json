@@ -1,0 +1,267 @@
+[
+  {
+    "release": "1.7.10",
+    "protocol": 5,
+    "modern_program": false
+  },
+  {
+    "release": "1.8.9",
+    "protocol": 47,
+    "modern_program": false
+  },
+  {
+    "release": "1.12.2",
+    "protocol": 340,
+    "modern_program": false
+  },
+  {
+    "release": "1.13",
+    "protocol": 393,
+    "modern_program": true
+  },
+  {
+    "release": "1.13.1",
+    "protocol": 401,
+    "modern_program": true
+  },
+  {
+    "release": "1.13.2",
+    "protocol": 404,
+    "modern_program": true
+  },
+  {
+    "release": "1.14",
+    "protocol": 477,
+    "modern_program": true
+  },
+  {
+    "release": "1.14.1",
+    "protocol": 480,
+    "modern_program": true
+  },
+  {
+    "release": "1.14.2",
+    "protocol": 485,
+    "modern_program": true
+  },
+  {
+    "release": "1.14.3",
+    "protocol": 490,
+    "modern_program": true
+  },
+  {
+    "release": "1.14.4",
+    "protocol": 498,
+    "modern_program": true
+  },
+  {
+    "release": "1.15",
+    "protocol": 573,
+    "modern_program": true
+  },
+  {
+    "release": "1.15.1",
+    "protocol": 575,
+    "modern_program": true
+  },
+  {
+    "release": "1.15.2",
+    "protocol": 578,
+    "modern_program": true
+  },
+  {
+    "release": "1.16",
+    "protocol": 735,
+    "modern_program": true
+  },
+  {
+    "release": "1.16.1",
+    "protocol": 736,
+    "modern_program": true
+  },
+  {
+    "release": "1.16.2",
+    "protocol": 751,
+    "modern_program": true
+  },
+  {
+    "release": "1.16.3",
+    "protocol": 753,
+    "modern_program": true
+  },
+  {
+    "release": "1.16.4",
+    "protocol": 754,
+    "modern_program": true
+  },
+  {
+    "release": "1.16.5",
+    "protocol": 754,
+    "modern_program": true
+  },
+  {
+    "release": "1.17",
+    "protocol": 755,
+    "modern_program": true
+  },
+  {
+    "release": "1.17.1",
+    "protocol": 756,
+    "modern_program": true
+  },
+  {
+    "release": "1.18",
+    "protocol": 757,
+    "modern_program": true
+  },
+  {
+    "release": "1.18.1",
+    "protocol": 757,
+    "modern_program": true
+  },
+  {
+    "release": "1.18.2",
+    "protocol": 758,
+    "modern_program": true
+  },
+  {
+    "release": "1.19",
+    "protocol": 759,
+    "modern_program": true
+  },
+  {
+    "release": "1.19.1",
+    "protocol": 760,
+    "modern_program": true
+  },
+  {
+    "release": "1.19.2",
+    "protocol": 760,
+    "modern_program": true
+  },
+  {
+    "release": "1.19.3",
+    "protocol": 761,
+    "modern_program": true
+  },
+  {
+    "release": "1.19.4",
+    "protocol": 762,
+    "modern_program": true
+  },
+  {
+    "release": "1.20",
+    "protocol": 763,
+    "modern_program": true
+  },
+  {
+    "release": "1.20.1",
+    "protocol": 763,
+    "modern_program": true
+  },
+  {
+    "release": "1.20.2",
+    "protocol": 764,
+    "modern_program": true
+  },
+  {
+    "release": "1.20.3",
+    "protocol": 765,
+    "modern_program": true
+  },
+  {
+    "release": "1.20.4",
+    "protocol": 765,
+    "modern_program": true
+  },
+  {
+    "release": "1.20.5",
+    "protocol": 766,
+    "modern_program": true
+  },
+  {
+    "release": "1.20.6",
+    "protocol": 766,
+    "modern_program": true
+  },
+  {
+    "release": "1.21",
+    "protocol": 767,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.1",
+    "protocol": 767,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.2",
+    "protocol": 768,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.3",
+    "protocol": 768,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.4",
+    "protocol": 769,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.5",
+    "protocol": 770,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.6",
+    "protocol": 771,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.7",
+    "protocol": 772,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.8",
+    "protocol": 772,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.9",
+    "protocol": 773,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.10",
+    "protocol": 773,
+    "modern_program": true
+  },
+  {
+    "release": "1.21.11",
+    "protocol": 774,
+    "modern_program": true
+  },
+  {
+    "release": "26.1",
+    "protocol": 775,
+    "modern_program": true
+  },
+  {
+    "release": "26.1.1",
+    "protocol": 775,
+    "modern_program": true
+  },
+  {
+    "release": "26.1.2",
+    "protocol": 775,
+    "modern_program": true
+  },
+  {
+    "release": "26.2",
+    "protocol": 776,
+    "modern_program": true
+  }
+]
