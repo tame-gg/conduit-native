@@ -179,7 +179,7 @@ public final class Phase17_393_765_TranslationTests {
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(87).orElse(-1) == 120, "zombie 393→765");
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(120).orElse(-1) == 87, "zombie 765→393");
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(10).orElse(-1) == 20, "creeper");
-    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(1).orElse(-1) == 9, "boat object");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(1, 0).orElse(-1) == 9, "boat object");
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.isLiving765(120), "zombie living765");
     require(!gg.tame.conduit.protocol.entity.EntityTypeMaps.isLiving765(3), "arrow not living765");
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(3).orElse(-1) == 60, "arrow object");

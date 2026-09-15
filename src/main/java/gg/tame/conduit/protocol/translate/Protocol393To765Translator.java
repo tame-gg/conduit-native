@@ -180,6 +180,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       return switch (result) {
         case TranslationResult.Translated translated -> {
           byte[] encoded = encodeSemantic(to, translated.packet());
+          ProtocolTrace.emitted(kind.name() + " " + fromProtocol + "→" + toProtocol, encoded);
           ProtocolTrace.translation(fromProtocol, state, direction, id, kind.name(),
               "Translator " + fromProtocol + "→" + toProtocol,
               toProtocol, translated.packet().state(), PlayPackets.packetId(encoded));
@@ -203,11 +204,19 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
     } catch (TranslationException exception) {
       throw exception;
     } catch (RuntimeException exception) {
+      // Include the packet so a failure against a real server is diagnosable from
+      // the log alone, instead of needing the run reproduced to see the bytes.
       throw new TranslationException("393↔765 translation failed: "
-          + exception.getClass().getSimpleName() + ": " + exception.getMessage(), exception);
+          + exception.getClass().getSimpleName() + ": " + exception.getMessage()
+          + " [" + fromProtocol + "→" + toProtocol + " " + state + " " + direction
+          + " " + describe(packet) + "]", exception);
     } catch (IOException exception) {
+      // Include the packet so a failure against a real server is diagnosable from
+      // the log alone, instead of needing the run reproduced to see the bytes.
       throw new TranslationException("393↔765 translation failed: "
-          + exception.getClass().getSimpleName() + ": " + exception.getMessage(), exception);
+          + exception.getClass().getSimpleName() + ": " + exception.getMessage()
+          + " [" + fromProtocol + "→" + toProtocol + " " + state + " " + direction
+          + " " + describe(packet) + "]", exception);
     }
   }
 
@@ -558,9 +567,37 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
           yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
               kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
         }
-        yield new TranslationResult.Dropped(
-            "1.13 combined combat_event must fan out to three 1.17+ packets; "
-                + "single-packet output cannot express that yet");
+        // 1.17 split this packet by action, and each 1.13 action corresponds to
+        // exactly one of the three, so the "fan-out" is really a demultiplex.
+        // Action 2 is what raises the death screen, so dropping it leaves a
+        // modern player dead with no way to respawn.
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          int action = MinecraftInput.varInt(input);
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+          DataOutputStream output = new DataOutputStream(buffer);
+          PacketKind out = switch (action) {
+            case 0 -> PacketKind.PLAY_ENTER_COMBAT;
+            case 1 -> PacketKind.PLAY_END_COMBAT;
+            case 2 -> PacketKind.PLAY_DEATH_COMBAT;
+            default -> null;
+          };
+          if (out == null || !target.defines(ConnectionState.PLAY, direction, out)) {
+            yield new TranslationResult.Dropped("combat action " + action + " has no target packet");
+          }
+          if (action == 1) {
+            MinecraftOutput.varInt(output, MinecraftInput.varInt(input));   // duration
+            input.readInt();               // 1.17 dropped the killer's entity id
+          } else if (action == 2) {
+            MinecraftOutput.varInt(output, MinecraftInput.varInt(input));   // player entity id
+            input.readInt();               // killer id, dropped as above
+            // 1.20.3 carries the death message as an NBT component, not JSON.
+            gg.tame.conduit.protocol.text.ComponentCodec.jsonToNbt(
+                output, MinecraftInput.string(input, 262_144));
+          }
+          output.flush();
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              out, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
       }
 
       case PLAY_BUNDLE_DELIMITER -> {
@@ -849,6 +886,62 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
               kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
         }
       }
+      case PLAY_EXPLOSION -> {
+        // 1.13   x,y,z:f32  strength:f32  count:i32  records[3B]  motion x,y,z:f32
+        // 1.20.4 x,y,z:f64  strength:f32  count:VarInt records[3B] motion x,y,z:f32
+        //        blockInteraction:VarInt  smallParticle  largeParticle  sound
+        //
+        // The coordinates widened and 1.20.3 appended a particle/sound descriptor
+        // that 1.13 has no source for. The particle ids are the two explosion
+        // particles from 1.20.4's own registry and neither carries extra data, so
+        // they can be written exactly rather than guessed; the sound is named by
+        // identifier, which is version independent.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("explosion missing on target");
+        }
+        boolean toModern = target.version().number() > 404;
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          double x;
+          double y;
+          double z;
+          if (source.version().number() > 404) {
+            x = input.readDouble(); y = input.readDouble(); z = input.readDouble();
+          } else {
+            x = input.readFloat(); y = input.readFloat(); z = input.readFloat();
+          }
+          float strength = input.readFloat();
+          int count = source.version().number() > 404 ? MinecraftInput.varInt(input) : input.readInt();
+          if (count < 0 || count > 1_000_000) yield new TranslationResult.Dropped("bad explosion record count");
+          byte[] records = new byte[count * 3];
+          input.readFully(records);
+          float motionX = input.readFloat();
+          float motionY = input.readFloat();
+          float motionZ = input.readFloat();
+
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(records.length + 64);
+          DataOutputStream output = new DataOutputStream(buffer);
+          if (toModern) {
+            output.writeDouble(x); output.writeDouble(y); output.writeDouble(z);
+          } else {
+            output.writeFloat((float) x); output.writeFloat((float) y); output.writeFloat((float) z);
+          }
+          output.writeFloat(strength);
+          if (toModern) MinecraftOutput.varInt(output, count); else output.writeInt(count);
+          output.write(records);
+          output.writeFloat(motionX);
+          output.writeFloat(motionY);
+          output.writeFloat(motionZ);
+          if (toModern) {
+            MinecraftOutput.varInt(output, 1);        // block interaction: DESTROY_WITH_DECAY
+            MinecraftOutput.varInt(output, EXPLOSION_PARTICLE_765);
+            MinecraftOutput.varInt(output, EXPLOSION_EMITTER_PARTICLE_765);
+            MinecraftOutput.string(output, "minecraft:entity.generic.explode");
+            output.writeBoolean(false);               // no fixed sound range
+          }
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
       case PLAY_SPAWN_PLAYER -> {
         // 1.20.2 removed the dedicated player spawn in favour of the unified
         // spawn packet, so a 1.13 backend's player spawns have to fan in.
@@ -1059,6 +1152,16 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
     };
   }
 
+  /** Packet id and leading bytes, for failure messages. Never throws itself. */
+  private static String describe(byte[] packet) {
+    try {
+      return "id=0x" + Integer.toHexString(PlayPackets.packetId(packet))
+          + " body=" + ProtocolTrace.hex(PlayPackets.body(packet), 96);
+    } catch (IOException exception) {
+      return "unframed packet of " + packet.length + " bytes";
+    }
+  }
+
   // ------------------------------------------------------- per-session helpers
 
   /** Queues an extra packet, encoded with the definition of the side it is going to. */
@@ -1177,6 +1280,10 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
   /** 1.13 mob-registry id for {@code minecraft:player}. */
   private static final int PLAYER_TYPE_393 = 92;
 
+  /** 1.20.4 particle-registry ids for the two explosion particles; neither carries data. */
+  private static final int EXPLOSION_PARTICLE_765 = 23;
+  private static final int EXPLOSION_EMITTER_PARTICLE_765 = 22;
+
   private byte[] encodeSemantic(SemanticCodec codec, SemanticPacket semantic) throws IOException {
     if (semantic instanceof JoinGamePacket join) return JoinGameCodec.encode(codec.protocol(), join);
     if (semantic instanceof LoginSuccessPacket success) return JoinGameCodec.encodeLoginSuccess(codec.protocol(), success);
@@ -1235,40 +1342,56 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
     boolean toModern = toProtocol > 404;
     if (fromModern == toModern) return body;
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
-      ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 8);
-      DataOutputStream out = new DataOutputStream(buffer);
-
-      MinecraftOutput.varInt(out, MinecraftInput.varInt(in));            // entityId
-      out.writeLong(in.readLong());                                      // uuid high
-      out.writeLong(in.readLong());                                      // uuid low
-
+      int entityId = MinecraftInput.varInt(in);
+      long uuidHigh = in.readLong();
+      long uuidLow = in.readLong();
       int type = fromModern ? MinecraftInput.varInt(in) : in.readUnsignedByte();
-      if (!fromModern && toModern) {
-        var mapped = gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(type);
+      double x = in.readDouble();
+      double y = in.readDouble();
+      double z = in.readDouble();
+      byte pitch = in.readByte();
+      byte yaw = in.readByte();
+      byte headPitch = fromModern ? in.readByte() : 0;
+      int objectData = fromModern ? MinecraftInput.varInt(in) : in.readInt();
+      short vx = in.readShort();
+      short vy = in.readShort();
+      short vz = in.readShort();
+
+      // The type has to be resolved together with objectData: 1.13 puts the
+      // minecart variant in objectData while 1.20.4 gives each variant its own
+      // entity type, so the two fields are one piece of information.
+      int mappedType;
+      int mappedData = objectData;
+      if (toModern) {
+        var mapped = gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(type, objectData);
         if (mapped.isEmpty()) return null;
-        type = mapped.getAsInt();
-      } else if (fromModern && !toModern) {
+        mappedType = mapped.getAsInt();
+        if (type == 10) mappedData = 0;          // variant is now carried by the type itself
+      } else {
         var mapped = gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(type);
         if (mapped.isEmpty()) return null;
-        type = mapped.getAsInt();
-      }
-      if (toModern) MinecraftOutput.varInt(out, type); else out.writeByte(type & 0xff);
-
-      for (int index = 0; index < 3; index++) out.writeDouble(in.readDouble());  // x, y, z
-      out.writeByte(in.readByte());                                      // pitch
-      out.writeByte(in.readByte());                                      // yaw
-
-      if (fromModern) {
-        int headPitch = in.readByte();                                   // 1.20.4 only
-        if (toModern) out.writeByte(headPitch);
-      } else if (toModern) {
-        out.writeByte(0);                                                // no 1.13 source for headPitch
+        mappedType = mapped.getAsInt();
+        if (mappedType == 10) {
+          mappedData = gg.tame.conduit.protocol.entity.LegacyObjectTypes.objectDataFor(type);
+        }
       }
 
-      int objectData = fromModern ? MinecraftInput.varInt(in) : in.readInt();
-      if (toModern) MinecraftOutput.varInt(out, objectData); else out.writeInt(objectData);
-
-      for (int index = 0; index < 3; index++) out.writeShort(in.readShort());    // velocity
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 8);
+      DataOutputStream out = new DataOutputStream(buffer);
+      MinecraftOutput.varInt(out, entityId);
+      out.writeLong(uuidHigh);
+      out.writeLong(uuidLow);
+      if (toModern) MinecraftOutput.varInt(out, mappedType); else out.writeByte(mappedType & 0xff);
+      out.writeDouble(x);
+      out.writeDouble(y);
+      out.writeDouble(z);
+      out.writeByte(pitch);
+      out.writeByte(yaw);
+      if (toModern) out.writeByte(headPitch);
+      if (toModern) MinecraftOutput.varInt(out, mappedData); else out.writeInt(mappedData);
+      out.writeShort(vx);
+      out.writeShort(vy);
+      out.writeShort(vz);
       out.flush();
       return buffer.toByteArray();
     } catch (IOException exception) {

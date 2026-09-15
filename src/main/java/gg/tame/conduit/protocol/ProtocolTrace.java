@@ -6,6 +6,13 @@ package gg.tame.conduit.protocol;
  */
 public final class ProtocolTrace {
   private static final boolean ENABLED = Boolean.getBoolean("conduit.trace");
+  /**
+   * Also dump the BYTES Conduit emits ({@code -Dconduit.trace.bodies=true}).
+   * A client that rejects a packet reports its own decoder's complaint and
+   * nothing about what it was fed, so diagnosing a malformed translation needs
+   * the emitted body, not just the packet name.
+   */
+  private static final boolean BODIES = Boolean.getBoolean("conduit.trace.bodies");
 
   private ProtocolTrace() {}
 
@@ -33,6 +40,14 @@ public final class ProtocolTrace {
         + (semantic == null || semantic.isBlank() ? "" : " " + semantic)
         + " → " + translator
         + " → " + targetProtocol + " " + targetState + " 0x" + Integer.toHexString(targetId));
+  }
+
+  public static boolean bodies() { return ENABLED && BODIES; }
+
+  /** Dumps an emitted packet body; no-op unless {@code -Dconduit.trace.bodies=true}. */
+  public static void emitted(String label, byte[] packet) {
+    if (!bodies()) return;
+    System.out.println("TRACE EMIT " + label + " " + hex(packet, 160));
   }
 
   public static void note(String message) {

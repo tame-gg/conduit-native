@@ -17,9 +17,9 @@ import java.util.OptionalInt;
  */
 public final class EntityTypeMaps {
   private static final int[] MOB_393_TO_765 = loadInts("entitytypes_mob_393_to_765.bin");
-  private static final int[] OBJECT_393_TO_765 = loadInts("entitytypes_object_393_to_765.bin");
+
   private static final int[] TO_MOB_393 = loadInts("entitytypes_765_to_mob_393.bin");
-  private static final int[] TO_OBJECT_393 = loadInts("entitytypes_765_to_object_393.bin");
+
   private static final byte[] LIVING_765 = loadBytes("entitytypes_765_living_flags.bin");
 
   private EntityTypeMaps() {}
@@ -28,16 +28,25 @@ public final class EntityTypeMaps {
     return lookup(MOB_393_TO_765, type393);
   }
 
-  public static OptionalInt object393To765(int type393) {
-    return lookup(OBJECT_393_TO_765, type393);
+  /**
+   * 1.13 Spawn Object type -> 1.20.4 entity type, by identifier.
+   *
+   * <p>Delegates to {@link LegacyObjectTypes}: the 1.13 object namespace is not
+   * the entity registry, so the generated registry-index table cannot answer
+   * this. {@code objectData} is needed because 1.13 puts the minecart variant
+   * there while 1.20.4 gives each variant its own entity type.
+   */
+  public static OptionalInt object393To765(int type393, int objectData) {
+    return LegacyObjectTypes.to765(type393, objectData);
   }
 
   public static OptionalInt toMob393(int type765) {
     return lookup(TO_MOB_393, type765);
   }
 
+  /** 1.20.4 entity type -> 1.13 Spawn Object type, by identifier. */
   public static OptionalInt toObject393(int type765) {
-    return lookup(TO_OBJECT_393, type765);
+    return LegacyObjectTypes.toObjectType(type765);
   }
 
   /** True when the 765 registry entry is a living/mob category (not projectile/object). */

@@ -14,14 +14,27 @@ import java.util.OptionalInt;
  * <p>The two layouts are genuinely different, not merely reordered:
  *
  * <pre>
- *   393   present:bool  [ itemId:VarInt  count:i8   nbt(named root) ]
- *   765   count:VarInt  [ itemId:VarInt             nbt(nameless root) ]
+ *   393        itemId:i16 (-1 empty)  [ count:i8  nbt(NAMED root) ]
+ *   404..763   present:bool           [ itemId:VarInt  count:i8  nbt(NAMED root) ]
+ *   764..765   present:bool           [ itemId:VarInt  count:i8  nbt(NAMELESS root) ]
+ *   766+       count:VarInt           [ itemId:VarInt  components... ]
  * </pre>
  *
- * <p>1.20.2 moved the "is there anything here" signal into the count itself and
- * dropped the root name from network NBT. So emptiness, count width and NBT
- * framing all have to be rebuilt; only the identifier and the compound contents
- * carry over, and the identifier only after a name-based registry translation.
+ * <p>Both boundaries here are easy to get wrong, and both were found by a real
+ * client rejecting real bytes rather than by reasoning about release notes.
+ *
+ * <p>The {@code present} boolean with a VarInt id arrived in <b>1.13.2</b>
+ * (protocol 404), not in 1.13: protocol 393 still writes a signed short id where
+ * -1 means empty. Reading a 1.13 server's dropped-item metadata with the 1.13.2
+ * layout eats one byte too many and then trips over the metadata terminator.
+ *
+ * <p>The count-first layout arrived in <b>1.20.5</b> (protocol 766) with item
+ * data components — <b>not</b> in 1.20.4. Writing it to a 1.20.4 client makes it
+ * read the count as the {@code present} flag and then hit the next field as an
+ * NBT tag type, which it reports only as "Loading NBT data".
+ *
+ * <p>What 1.20.2 (protocol 764) did change is the NBT root: network NBT lost its
+ * root name there, so 765 keeps the 1.13.2 field order but a nameless root.
  *
  * <p>Items with no counterpart in the target registry decode to
  * {@link SemanticItem#EMPTY}. That is the fail-closed choice this pair needs: a
@@ -32,43 +45,64 @@ import java.util.OptionalInt;
 public final class ItemCodec {
   private ItemCodec() {}
 
+  /** Protocol 764 = 1.20.2, where network NBT lost its root name. */
+  private static final int NAMELESS_NBT_FROM = 764;
+  /** Protocol 766 = 1.20.5, where the slot became count-first with data components. */
+  private static final int COUNT_FIRST_FROM = 766;
+  /** Protocol 404 = 1.13.2, where the short id became a present flag plus a VarInt id. */
+  private static final int PRESENT_FLAG_FROM = 404;
+
+  private static boolean shortIdForm(int protocol) { return protocol < PRESENT_FLAG_FROM; }
+  private static boolean countFirstForm(int protocol) { return protocol >= COUNT_FIRST_FROM; }
+  private static boolean namedNbtRoot(int protocol) { return protocol < NAMELESS_NBT_FROM; }
+
   /** Reads one slot in the given protocol's layout. */
   public static SemanticItem read(int protocol, DataInput input) throws IOException {
-    boolean legacy = protocol <= 404;
-    int count;
-    if (legacy) {
-      if (!input.readBoolean()) return SemanticItem.EMPTY;
-      int id = MinecraftInput.varInt(input);
-      count = input.readByte();
-      byte[] tag = ItemNbt.readTag(input, true);
-      return stack(protocol, id, count, tag);
+    if (shortIdForm(protocol)) {
+      int id = input.readShort();
+      if (id < 0) return SemanticItem.EMPTY;
+      int count = input.readByte();
+      return stack(protocol, id, count, ItemNbt.readTag(input, true));
     }
-    count = MinecraftInput.varInt(input);
-    if (count <= 0) return SemanticItem.EMPTY;
+    if (countFirstForm(protocol)) {
+      int count = MinecraftInput.varInt(input);
+      if (count <= 0) return SemanticItem.EMPTY;
+      int id = MinecraftInput.varInt(input);
+      return stack(protocol, id, count, ItemNbt.readTag(input, false));
+    }
+    if (!input.readBoolean()) return SemanticItem.EMPTY;
     int id = MinecraftInput.varInt(input);
-    byte[] tag = ItemNbt.readTag(input, false);
-    return stack(protocol, id, count, tag);
+    int count = input.readByte();
+    return stack(protocol, id, count, ItemNbt.readTag(input, namedNbtRoot(protocol)));
   }
 
   /** Writes one slot in the given protocol's layout, or the empty slot. */
   public static void write(int protocol, DataOutput output, SemanticItem item) throws IOException {
-    boolean legacy = protocol <= 404;
     OptionalInt id = item.isEmpty() ? OptionalInt.empty() : ItemRegistries.id(protocol, item.identifier());
     if (item.isEmpty() || id.isEmpty()) {
       // Unknown on this side: fail closed rather than emit an arbitrary id.
-      if (legacy) output.writeBoolean(false); else MinecraftOutput.varInt(output, 0);
+      if (shortIdForm(protocol)) output.writeShort(-1);
+      else if (countFirstForm(protocol)) MinecraftOutput.varInt(output, 0);
+      else output.writeBoolean(false);
       return;
     }
-    if (legacy) {
-      output.writeBoolean(true);
-      MinecraftOutput.varInt(output, id.getAsInt());
-      output.writeByte(Math.min(item.count(), 127));
+    int count = Math.min(item.count(), 127);
+    if (shortIdForm(protocol)) {
+      output.writeShort(id.getAsInt());
+      output.writeByte(count);
       ItemNbt.writeTag(output, item.tag(), true);
       return;
     }
-    MinecraftOutput.varInt(output, Math.min(item.count(), 127));
+    if (countFirstForm(protocol)) {
+      MinecraftOutput.varInt(output, count);
+      MinecraftOutput.varInt(output, id.getAsInt());
+      ItemNbt.writeTag(output, item.tag(), false);
+      return;
+    }
+    output.writeBoolean(true);
     MinecraftOutput.varInt(output, id.getAsInt());
-    ItemNbt.writeTag(output, item.tag(), false);
+    output.writeByte(count);
+    ItemNbt.writeTag(output, item.tag(), namedNbtRoot(protocol));
   }
 
   /** Reads a slot in one protocol and writes it straight out in the other. */

@@ -164,5 +164,11 @@ public enum PacketKind {
    * Pre-1.20.2 spawn packet for other players. 1.20.2 removed it in favour of the
    * unified spawn packet, so a 1.13 backend's player spawns have to fan in.
    */
-  PLAY_SPAWN_PLAYER
+  PLAY_SPAWN_PLAYER,
+  /**
+   * Explosion. 1.13 sends float coordinates and nothing else; 1.20.4 widened the
+   * coordinates to doubles and appended the block-interaction mode, two particle
+   * descriptors and a sound.
+   */
+  PLAY_EXPLOSION
 }

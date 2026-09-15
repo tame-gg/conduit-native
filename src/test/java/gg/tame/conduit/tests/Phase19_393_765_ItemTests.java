@@ -52,6 +52,7 @@ public final class Phase19_393_765_ItemTests {
     blockStatePropertiesSurvive();
     componentJsonNbtRoundTrip();
     transactionAckIsSynthesised();
+    realDroppedItemMetadataFrom113();
     System.out.println("Phase19_393_765_ItemTests passed.");
   }
 
@@ -395,6 +396,63 @@ public final class Phase19_393_765_ItemTests {
       require(in.readBoolean(), "accepted");
     }
     require(translator.drainToClient().isEmpty(), "the queue is drained, not replayed");
+  }
+
+  /**
+   * Captured from a real Minecraft 1.13 server through Conduit: entity 222's
+   * metadata for a dropped arrow.
+   *
+   * <p>This is the regression that unit tests alone did not catch. Protocol 393
+   * writes a Slot as a signed short id, not as the {@code present} boolean with a
+   * VarInt id — that form arrived in 1.13.2 (protocol 404). Decoding these exact
+   * bytes with the 1.13.2 layout eats one byte too many and then trips over the
+   * 0xFF metadata terminator, which is precisely what happened on the wire.
+   */
+  private static void realDroppedItemMetadataFrom113() throws Exception {
+    byte[] captured = {
+        (byte) 0x00, (byte) 0x00, (byte) 0x00,               // index 0, Byte, flags 0
+        (byte) 0x01, (byte) 0x01, (byte) 0xac, (byte) 0x02,  // index 1, VarInt, air 300
+        (byte) 0x02, (byte) 0x05, (byte) 0x00,               // index 2, OptChat, absent
+        (byte) 0x03, (byte) 0x07, (byte) 0x00,               // index 3, Boolean
+        (byte) 0x04, (byte) 0x07, (byte) 0x00,               // index 4, Boolean
+        (byte) 0x05, (byte) 0x07, (byte) 0x00,               // index 5, Boolean
+        (byte) 0x06, (byte) 0x06, (byte) 0x01, (byte) 0xd9,  // index 6, Slot, short id 473
+        (byte) 0x01, (byte) 0x00,                            // count 1, no NBT
+        (byte) 0xff                                          // terminator
+    };
+    byte[] modern = MetadataCodec.translate(
+        ProtocolDefinition.forVersion(393), ProtocolDefinition.forVersion(765), captured, false);
+    require(modern != null, "a real dropped-item metadata packet must translate");
+
+    // Walk to the item field: it is a non-living entity, so index 6 becomes 8.
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(modern))) {
+      SemanticItem item = null;
+      while (true) {
+        int index = in.readUnsignedByte();
+        if (index == 0xff) break;
+        int type = MinecraftInput.varInt(in);
+        if (index == 8) {
+          require(type == 7, "Slot is type 7 on 765");
+          item = ItemCodec.read(765, in);
+          continue;
+        }
+        skipKnown(in, type);
+      }
+      require(item != null, "the dropped item's stack must survive");
+      require(item.identifier().equals("minecraft:arrow"), "1.13 item 473 is an arrow");
+      require(item.count() == 1, "one arrow");
+    }
+  }
+
+  private static void skipKnown(DataInputStream in, int type) throws Exception {
+    switch (type) {
+      case 0 -> in.readByte();
+      case 1 -> MinecraftInput.varInt(in);
+      case 3 -> in.readFloat();
+      case 6 -> { if (in.readBoolean()) ComponentCodec.nbtToJson(in); }
+      case 8 -> in.readBoolean();
+      default -> throw new AssertionError("unexpected metadata type " + type);
+    }
   }
 
   // ------------------------------------------------------------------ helpers

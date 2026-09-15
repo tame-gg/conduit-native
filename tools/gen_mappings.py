@@ -222,6 +222,8 @@ def main() -> None:
     write_table(RES / "item/items_765_to_393.bin", item_map(i765, i393, invert(ITEM_RENAMES_393_TO_765)))
     write_names(RES / "item/items_393_names.txt", i393)
     write_names(RES / "item/items_765_names.txt", i765)
+    write_names(RES / "entity/entitytypes_765_names.txt",
+                {k: v["protocol_id"] for k, v in reg765["minecraft:entity_type"]["entries"].items()})
 
     missing_blocks = [b for b in b393 if BLOCK_RENAMES_393_TO_765.get(b, b) not in b765]
     missing_items = [i for i in i393 if ITEM_RENAMES_393_TO_765.get(i, i) not in i765]

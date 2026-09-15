@@ -330,8 +330,8 @@ public final class Phase18_393_765_WorldTests {
     require(legacy != null, "container content must now reach the 1.13 client");
     require(PlayPackets.packetId(legacy) == 0x15, "1.13 Window Items id");
     byte[] out = PlayPackets.body(legacy);
-    // windowId(1) + count as a short(2) + 46 empty slots (1 byte each).
-    require(out.length == 1 + 2 + 46, "46 empty slots, no state id and no carried item");
+    // windowId(1) + count as a short(2) + 46 empty slots, each the short id -1.
+    require(out.length == 1 + 2 + 46 * 2, "46 empty slots, no state id and no carried item");
     require(out[0] == 0x00 && out[1] == 0x00 && out[2] == 46, "window 0 with 46 slots");
   }
 
@@ -347,7 +347,8 @@ public final class Phase18_393_765_WorldTests {
     require(legacy != null, "container slot must now reach the 1.13 client");
     require(PlayPackets.packetId(legacy) == 0x17, "1.13 Set Slot id");
     require(java.util.Arrays.equals(PlayPackets.body(legacy),
-        new byte[] {0x00, 0x00, 0x2D, 0x00}), "window 0, slot 45, empty item, no state id");
+        new byte[] {0x00, 0x00, 0x2D, (byte) 0xFF, (byte) 0xFF}),
+        "window 0, slot 45, the 1.13 empty slot (-1), no state id");
   }
 
   /**
