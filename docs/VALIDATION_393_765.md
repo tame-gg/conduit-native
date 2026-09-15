@@ -130,10 +130,12 @@ server's Open Window arrived as `OPENED window=1 menu=2` — `generic_9x3`, the
 correct 1.20.4 menu for a 27-slot chest — followed by its contents, a slot
 click and a close.
 
-Container path, 393 → 765: the probe received and echoed the **Confirm
-Transaction** that Conduit synthesises on the backend's behalf, because 1.20.4
-has no such packet and a 1.13 client will not touch its inventory again until it
-arrives. Container contents, slot updates, clicks and closes all translate.
+Container path, 393 → 765: with the probe standing south of a freshly placed
+chest (yaw 0 / face north), the 1.20.4 server's Open Screen arrives as
+`OPENED window=1 type=minecraft:chest slots=27`. Conduit also synthesises the
+**Confirm Transaction** a 1.13 client needs after inventory clicks, because
+1.20.4 has no such packet. Container contents, slot updates, clicks and closes
+all translate.
 
 ## Entity metadata and attributes
 
@@ -178,20 +180,26 @@ and not a fatal unknown:
 
 ## What is still NOT proven
 
-- The **393 → 765 chest open** was not observed live. The codec is unit-tested
-  in both directions and the mirror direction works on the wire, but the 1.20.4
-  server did not accept the scripted probe's right-click — the evidence points
-  at the probe's position handling rather than the translation, and that has not
-  been isolated.
 - **Clicking a container by hand** was never done: synthetic OS input does not
   reach the Minecraft window here, so the serverbound container path is verified
   through scripted clients against real servers, not through a human at a mouse.
-- **Entity type ids** fail closed rather than mapping completely: four spawn
-  packets were dropped as unmapped types in the final 393 → 765 run.
+- **Some entity types** still fail closed: name-based maps cover the common
+  living/object set (including iron golem, zombified piglin, fireworks, command
+  minecart, trader llama→llama, trident, glow item frame→item frame, chest boat
+  →boat), but uncommon modern-only types remain unmapped.
 - Not swept: villager trading, redstone behaviour over time, dimension changes,
   server switching under translation, resource packs, furnace and enchanting and
   anvil screens, the recipe book, hoppers, or any modded traffic.
 - Only this one pair. 393 ↔ 765 working says nothing about any other pair.
+
+## Core gameplay status (this pair)
+
+**CORE GAMEPLAY: bidirectionally verified** with scripted probes against real
+vanilla 1.13 / 1.20.4 servers (login, configuration bridge, world entry, chunks,
+movement, block place/break, chest open/click/close, inventory, equipment,
+metadata, attributes, health, chat, keepalive). Not FULL Minecraft compatibility:
+sounds, particles, scoreboards, titles, boss bars, block-entity NBT, recipes and
+advancements remain intentionally unsupported.
 
 ## Reproducing
 

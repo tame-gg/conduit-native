@@ -59,14 +59,14 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 | Client → Backend | Support | Completeness |
 |---|---|---|
 | same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
-| **393 ↔ 765** | **TRANSLATED** | **SUBSTANTIAL, not complete** — both directions carry login, world, movement, blocks, entities, health, chat, items, inventory, containers, equipment, entity metadata and attributes against real clients and real servers. Sounds, particles, scoreboards, titles, boss bars, block-entity data, recipes and advancements are deliberately unsupported. See `docs/VALIDATION_393_765.md` for what was and was not proven. |
+| **393 ↔ 765** | **TRANSLATED** | **CORE GAMEPLAY VERIFIED (bidirectional)** — login, world, movement, blocks, entities, health, chat, items, inventory, containers (including chest open/click/close), equipment, metadata and attributes against real vanilla clients/servers via scripted probes. Sounds, particles, scoreboards, titles, boss bars, block-entity data, recipes and advancements remain deliberately unsupported. Not equivalent to a human gameplay session. See `docs/VALIDATION_393_765.md`. |
 | 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
 | 765 → 776 | UNSUPPORTED | intentional until a real translator exists |
 
-**393 ↔ 765 is not FULL.** Ordinary survival play crosses the pair in both
-directions, verified with official clients against official servers, but the
-unsupported list above is real and the gaps in `docs/VALIDATION_393_765.md`
-under "What is still NOT proven" have not been closed.
+**393 ↔ 765 is CORE GAMEPLAY VERIFIED, not FULL.** Ordinary survival play crosses
+the pair in both directions under scripted real-client/server probes, but the
+unsupported list above is intentional and human mouse/keyboard play was not
+exercised here.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 
