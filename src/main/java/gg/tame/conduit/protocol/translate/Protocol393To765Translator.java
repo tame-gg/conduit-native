@@ -213,7 +213,12 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             out, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
       }
-      case LOGIN_SET_COMPRESSION, LOGIN_ENCRYPTION_REQUEST, LOGIN_ENCRYPTION_RESPONSE,
+      case LOGIN_SET_COMPRESSION -> {
+        // Backend-only: Conduit enables compression on the backend socket and never forwards
+        // Set Compression to any client (client↔proxy stays uncompressed).
+        yield new TranslationResult.Dropped("set compression consumed for backend framing");
+      }
+      case LOGIN_ENCRYPTION_REQUEST, LOGIN_ENCRYPTION_RESPONSE,
            LOGIN_PLUGIN_REQUEST, LOGIN_PLUGIN_RESPONSE -> {
         if (!target.defines(state, direction, kind)) {
           yield new TranslationResult.Dropped(kind + " missing on target");
@@ -240,7 +245,31 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         }
         yield new TranslationResult.Unsupported("update light toward modern not implemented");
       }
-      case PLAY_UNLOAD_CHUNK, PLAY_DIFFICULTY, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM -> {
+      case PLAY_DECLARE_RECIPES, PLAY_TAGS, PLAY_UPDATE_VIEW_POSITION, PLAY_UPDATE_VIEW_DISTANCE,
+           PLAY_SIMULATION_DISTANCE, PLAY_CHUNK_BATCH_START, PLAY_CHUNK_BATCH_FINISHED, PLAY_UNLOCK_RECIPES -> {
+        // Modern-only or schema-incompatible with 393. Safe to omit for initial world entry.
+        if (target.version().number() <= 404) {
+          yield new TranslationResult.Dropped(kind + " dropped for 393 (no compatible wire form / optional for entry)");
+        }
+        yield new TranslationResult.Unsupported(kind + " modern→modern not implemented");
+      }
+      case PLAY_DIFFICULTY -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("difficulty missing on target");
+        }
+        byte[] body = PlayPackets.body(packet);
+        // 765: difficulty(u8) + difficultyLocked(bool). 393: difficulty(u8) only.
+        if (source.version().number() > 404 && target.version().number() <= 404) {
+          if (body.length < 1) throw new IOException("short difficulty");
+          body = new byte[] { body[0] };
+        } else if (source.version().number() <= 404 && target.version().number() > 404) {
+          byte difficulty = body.length > 0 ? body[0] : 0;
+          body = new byte[] { difficulty, 0 };
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, body));
+      }
+      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped(kind + " missing on target");
         }

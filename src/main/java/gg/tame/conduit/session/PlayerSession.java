@@ -212,7 +212,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         writeBackendHandshake(socket, server);
         MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile(), backendDefinition));
         BackendConnection connection = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false);
-        if (forwarder.mode() == ForwardingMode.MODERN) completeBackendLogin(connection, true);
+        // MODERN forwarding always needs the login plugin exchange.
+        // TRANSLATED (e.g. 393→765) must also finish LOGIN here so Set Compression is consumed
+        // and Configuration can be absorbed before Play — otherwise mode=none leaks compression
+        // to the client (observed with real 1.13 → Paper 1.20.4).
+        if (forwarder.mode() == ForwardingMode.MODERN || translationSupport == TranslationSupport.TRANSLATED) {
+          completeBackendLogin(connection, true);
+        }
         return connection;
       } catch (IOException exception) {
         last = exception;
@@ -264,6 +270,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
 
   private byte[] towardClient(ConnectionState state, byte[] packet) {
     if (translator == IdentityTranslator.INSTANCE) return packet;
+    if (ProtocolTrace.enabled()) {
+      try {
+        ProtocolTrace.note("backend→client attempt " + state + " id=0x"
+            + Integer.toHexString(PlayPackets.packetId(packet)) + " len=" + packet.length);
+      } catch (Exception ignored) { }
+    }
     return translator.backendToClient(state, packet);
   }
   private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess) throws IOException {
@@ -459,6 +471,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           translated = towardClient(backendState, packet);
         } catch (TranslationException translation) {
           gg.tame.conduit.log.ConduitLog.warn("Translation failed: " + translation.getMessage());
+          ProtocolTrace.note("FAIL " + translation.getMessage());
           close();
           return;
         }
@@ -488,6 +501,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (isPlayDisconnect(translated)) { close(); return; }
       } catch (IOException exception) {
         if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return;
+        ProtocolTrace.note("backend I/O: " + exception.getMessage());
         handleBackendLoss(current);
       }
     }

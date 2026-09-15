@@ -1,4 +1,4 @@
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
 $out = Join-Path $root "out"
 $lib = Join-Path $root "lib"
@@ -15,7 +15,7 @@ $testList = Join-Path $out "test-sources.txt"
 $mainSources | Set-Content $mainList
 $testSources | Set-Content $testList
 
-javac --release 21 -d $out "@$mainList"
+cmd /c "javac --release 21 -d `"$out`" `"@$mainList`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "main compile failed" }
 
 # Velocity compatibility layer (optional but expected for Phase9).
@@ -27,11 +27,11 @@ $compatSources = Get-ChildItem (Join-Path $root "src\compat-velocity") -Recurse 
 if ($compatSources) {
   $compatList = Join-Path $out "compat-sources.txt"
   $compatSources | Set-Content $compatList
-  javac --release 21 -cp $cp -d $out "@$compatList"
+  cmd /c "javac --release 21 -cp `"$cp`" -d `"$out`" `"@$compatList`" 2>&1"
   if ($LASTEXITCODE -ne 0) { throw "compat-velocity compile failed" }
 }
 
-javac --release 21 -cp $cp -d $out "@$testList"
+cmd /c "javac --release 21 -cp `"$cp`" -d `"$out`" `"@$testList`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "test compile failed" }
 
 $mainResources = Join-Path $root "src/main/resources"
@@ -41,5 +41,5 @@ $resources = Join-Path $root "src/test/resources"
 if (Test-Path $resources) { Copy-Item (Join-Path $resources "*") $out -Recurse -Force }
 
 $runCp = ($libJars + $out) -join ";"
-java -ea -cp $runCp gg.tame.conduit.tests.AllTests
+cmd /c "java -ea -cp `"$runCp`" gg.tame.conduit.tests.AllTests"
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }

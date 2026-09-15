@@ -33,6 +33,11 @@ public final class Phase18_393_765_WorldTests {
     chunk765to393HeightPolicy();
     chunkTranslateThroughTranslator();
     updateLightDropped();
+    setCompressionDroppedToward393();
+    heldItemTranslated();
+    declareRecipesDroppedToward393();
+    difficultyTrimmedToward393();
+    entityStatusRemapped();
     malformedChunkRejected();
     compatibilityStillPartial();
     System.out.println("Phase18_393_765_WorldTests passed.");
@@ -130,6 +135,51 @@ public final class Phase18_393_765_WorldTests {
         new byte[] {0, 0, 0, 0, 0, 0, 0, 0});
     byte[] out = t.backendToClient(ConnectionState.PLAY, light);
     require(out == null, "light dropped");
+  }
+
+  /** Regression: real 1.13 client failed when Paper Set Compression was forwarded (commit 764468b). */
+  private static void setCompressionDroppedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] compression = PlayPackets.withId(
+        ProtocolDefinition.forVersion(765).id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SET_COMPRESSION),
+        new byte[] {(byte) 0x80, 0x02}); // VarInt 256 threshold
+    byte[] out = t.backendToClient(ConnectionState.LOGIN, compression);
+    require(out == null, "set compression must not reach 393 client");
+  }
+
+  /** Regression: real Paper 1.20.4 sent held_item_slot (0x51) immediately after Join Game. */
+  private static void heldItemTranslated() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] modern = PlayPackets.withId(0x51, new byte[] {0});
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x3D, "held item id 393");
+    require(PlayPackets.body(legacy).length == 1 && PlayPackets.body(legacy)[0] == 0, "slot preserved");
+  }
+
+  /** Regression: Paper 1.20.4 sends declare_recipes (0x73) before chunks; schema incompatible with 393. */
+  private static void declareRecipesDroppedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x73, new byte[] {0})) == null, "recipes dropped");
+    require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x74, new byte[] {0})) == null, "tags dropped");
+    require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x52, new byte[] {0, 0})) == null, "view pos dropped");
+    require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x53, new byte[] {0})) == null, "view dist dropped");
+  }
+
+  /** Regression: 765 difficulty includes locked bool; 393 is difficulty byte only. */
+  private static void difficultyTrimmedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] modern = PlayPackets.withId(0x0B, new byte[] {2, 1}); // normal + locked
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x0D, "393 difficulty id");
+    require(PlayPackets.body(legacy).length == 1 && PlayPackets.body(legacy)[0] == 2, "locked bit stripped");
+  }
+
+  /** Regression: Paper sent entity_status (0x1d) during world entry; body matches 393 0x1c. */
+  private static void entityStatusRemapped() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] modern = PlayPackets.withId(0x1D, new byte[] {0, 0, 0, 1, 24});
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x1C, "393 entity_status id");
   }
 
   private static void malformedChunkRejected() {

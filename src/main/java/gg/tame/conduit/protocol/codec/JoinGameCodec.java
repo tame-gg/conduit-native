@@ -230,7 +230,13 @@ public final class JoinGameCodec {
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_POSITION));
       output.writeDouble(pos.x());
-      output.writeDouble(pos.y());
+      double y = pos.y();
+      if (protocol.version().number() <= 404) {
+        // 1.13 world height is Y 0..255. Modern negative Y / >255 cannot be represented.
+        if (y < 0.0) y = 64.0;
+        else if (y > 255.0) y = 255.0;
+      }
+      output.writeDouble(y);
       output.writeDouble(pos.z());
       output.writeFloat(pos.yaw());
       output.writeFloat(pos.pitch());
