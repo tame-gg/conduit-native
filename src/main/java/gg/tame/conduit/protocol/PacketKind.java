@@ -170,5 +170,56 @@ public enum PacketKind {
    * coordinates to doubles and appended the block-interaction mode, two particle
    * descriptors and a sound.
    */
-  PLAY_EXPLOSION
+  PLAY_EXPLOSION,
+
+  // ---------------------------------------------------------------------------
+  // The rest of what a real 1.13 server sends during ordinary play. Conduit is
+  // fail-closed, so an id with no entry here ends the session; every one of
+  // these therefore needs an explicit translate-or-drop decision even when the
+  // packet itself is only cosmetic. Enumerated from a real server, not a table.
+  // ---------------------------------------------------------------------------
+
+  /** Riding. Entity id plus a VarInt array of passengers; identical on both. */
+  PLAY_SET_PASSENGERS,
+  /** Respawn after death or a dimension change. World identity was rewritten in 1.16. */
+  PLAY_RESPAWN,
+  /** XP orb spawn. entityId + three doubles + a short count; identical on both. */
+  PLAY_SPAWN_EXPERIENCE_ORB,
+  /** Potion effect applied. The effect id widened from a byte to a VarInt. */
+  PLAY_ENTITY_EFFECT,
+  /** Potion effect cleared. Same id-width change. */
+  PLAY_REMOVE_ENTITY_EFFECT,
+  /** Item cooldown after use. Carries an item registry id, so it needs the item map. */
+  PLAY_SET_COOLDOWN,
+  /** Block cracking overlay. Carries a packed Position, whose layout changed in 1.14. */
+  PLAY_BLOCK_BREAK_ANIMATION,
+  /** Opens the sign text editor. Packed Position; 1.20 appended a front/back flag. */
+  PLAY_OPEN_SIGN_EDITOR,
+  /** Tab-list header and footer: two text components. */
+  PLAY_TAB_LIST_HEADER,
+
+  // Display-only packets. Mapped so the id is recognised and dropped on purpose.
+  PLAY_STATISTICS,
+  PLAY_BOSS_BAR,
+  PLAY_NAMED_SOUND_EFFECT,
+  PLAY_NBT_QUERY_RESPONSE,
+  PLAY_SPAWN_PAINTING,
+  PLAY_SPAWN_GLOBAL_ENTITY,
+  PLAY_BLOCK_ENTITY_DATA,
+  PLAY_BLOCK_ACTION,
+  PLAY_SCOREBOARD_OBJECTIVE,
+  PLAY_TEAMS,
+  PLAY_UPDATE_SCORE,
+  PLAY_DISPLAY_SCOREBOARD,
+  PLAY_TITLE,
+  PLAY_STOP_SOUND,
+  PLAY_CAMERA,
+  PLAY_ATTACH_ENTITY,
+  PLAY_USE_BED,
+  PLAY_FACE_PLAYER,
+  PLAY_CRAFT_RECIPE_RESPONSE,
+  PLAY_SELECT_ADVANCEMENT_TAB,
+  PLAY_VEHICLE_MOVE,
+  PLAY_MAP_DATA,
+  PLAY_TRADE_LIST
 }

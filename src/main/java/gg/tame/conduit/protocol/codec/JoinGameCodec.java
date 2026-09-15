@@ -132,6 +132,79 @@ public final class JoinGameCodec {
     MinecraftOutput.varInt(output, join.portalCooldown());
   }
 
+  /**
+   * Rebuilds a Respawn body across the pair.
+   *
+   * <pre>
+   *   1.13    dimension:i32  difficulty:u8  gameMode:u8  levelType:String
+   *   1.20.4  dimensionType:Identifier  worldName:Identifier  hashedSeed:i64
+   *           gameMode:u8  previousGameMode:i8  isDebug:bool  isFlat:bool
+   *           [deathLocation]  portalCooldown:VarInt  dataKept:i8
+   * </pre>
+   *
+   * <p>Only the game mode survives as a field. 1.16 replaced the numeric
+   * dimension with a pair of registry identifiers, so the world identity is
+   * derived from the same name/id mapping Join Game already uses for this pair,
+   * and the fields 1.13 has no source for take the values that mean "nothing
+   * special": no seed, not a debug or flat world unless 1.13 said so, no death
+   * location, no portal cooldown, and dataKept = 0x03 so the client keeps its
+   * attributes and metadata across the respawn instead of blanking them.
+   *
+   * @return the target-era body, or null when it cannot be parsed
+   */
+  public static byte[] encodeRespawn(ProtocolDefinition source, ProtocolDefinition target, byte[] body) {
+    boolean fromModern = source.version().number() > 404;
+    boolean toModern = target.version().number() > 404;
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
+      int dimensionId;
+      String worldName;
+      int gameMode;
+      byte difficulty = 2;
+      boolean flat = false;
+      if (fromModern) {
+        MinecraftInput.string(input, 32767);            // dimension type
+        worldName = MinecraftInput.string(input, 32767);
+        dimensionId = JoinGamePacket.dimensionIdFromName(worldName);
+        input.readLong();                                // hashed seed
+        gameMode = input.readUnsignedByte();
+        input.readByte();                                // previous game mode
+        input.readBoolean();                             // is debug
+        flat = input.readBoolean();
+      } else {
+        dimensionId = input.readInt();
+        difficulty = input.readByte();
+        gameMode = input.readUnsignedByte();
+        String levelType = MinecraftInput.string(input, 16);
+        flat = "flat".equalsIgnoreCase(levelType);
+        worldName = JoinGamePacket.dimensionNameFromId(dimensionId);
+      }
+
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+      DataOutputStream output = new DataOutputStream(buffer);
+      if (toModern) {
+        MinecraftOutput.string(output, JoinGamePacket.dimensionNameFromId(dimensionId));
+        MinecraftOutput.string(output, worldName);
+        output.writeLong(0L);                            // no seed to carry
+        output.writeByte(gameMode & 0xff);
+        output.writeByte(gameMode & 0xff);               // previous: no 1.13 source
+        output.writeBoolean(false);                      // not a debug world
+        output.writeBoolean(flat);
+        output.writeBoolean(false);                      // no death location
+        MinecraftOutput.varInt(output, 0);               // no portal cooldown
+        output.writeByte(0x03);                          // keep attributes and metadata
+      } else {
+        output.writeInt(dimensionId);
+        output.writeByte(difficulty);
+        output.writeByte(gameMode & 0xff);
+        MinecraftOutput.string(output, flat ? "flat" : "default");
+      }
+      output.flush();
+      return buffer.toByteArray();
+    } catch (IOException exception) {
+      return null;
+    }
+  }
+
   public static LoginStartPacket decodeLoginStart(ProtocolDefinition protocol, byte[] body) throws IOException {
     LoginStart decoded = LoginStart.decode(body, protocol);
     Optional<UUID> uuid = protocol.capabilities().loginStartUuid()

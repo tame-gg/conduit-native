@@ -886,6 +886,156 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
               kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
         }
       }
+      case PLAY_SET_PASSENGERS, PLAY_SPAWN_EXPERIENCE_ORB, PLAY_ATTACH_ENTITY -> {
+        // Field-for-field identical on 1.13 and 1.20.4; only the id moved.
+        // Riding matters: without passengers a boat or horse carries nobody.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped(kind + " missing on target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_ENTITY_EFFECT, PLAY_REMOVE_ENTITY_EFFECT -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped(kind + " missing on target");
+        }
+        // The effect id widened from a byte to a VarInt in 1.19. The numeric ids
+        // 1..31 are the same set in both releases (1.14 and later only appended
+        // hero_of_the_village and darkness), so ids in that range are equivalent
+        // and anything above it is dropped rather than shown as a wrong effect.
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          int entityId = MinecraftInput.varInt(input);
+          int effect = source.version().number() > 404 ? MinecraftInput.varInt(input) : input.readUnsignedByte();
+          if (target.version().number() <= 404 && effect > 31) {
+            yield new TranslationResult.Dropped("potion effect " + effect + " postdates 1.13");
+          }
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(16);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(output, entityId);
+          if (target.version().number() > 404) MinecraftOutput.varInt(output, effect);
+          else output.writeByte(effect);
+          if (kind == PacketKind.PLAY_ENTITY_EFFECT) {
+            output.writeByte(input.readByte());                        // amplifier
+            MinecraftOutput.varInt(output, MinecraftInput.varInt(input));  // duration
+            output.writeByte(input.readByte());                        // flags
+            // 1.19 appended optional factor data (a darkness-effect detail).
+            if (target.version().number() > 404) output.writeBoolean(false);
+          }
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_SET_COOLDOWN -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("set cooldown missing on target");
+        }
+        // itemId:VarInt + ticks:VarInt. The id must cross the item registry.
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          int item = MinecraftInput.varInt(input);
+          int ticks = MinecraftInput.varInt(input);
+          var mapped = gg.tame.conduit.protocol.item.ItemRegistries.translate(
+              source.version().number(), target.version().number(), item);
+          if (mapped.isEmpty()) {
+            yield new TranslationResult.Dropped("cooldown item has no counterpart on the target");
+          }
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(8);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(output, mapped.getAsInt());
+          MinecraftOutput.varInt(output, ticks);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_BLOCK_BREAK_ANIMATION -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("block break animation missing on target");
+        }
+        // entityId:VarInt, location:Position, stage:i8. Position packing changed.
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(16);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(output, MinecraftInput.varInt(input));
+          output.writeLong(BlockPositionCodec.translate(source, target, input.readLong()));
+          output.writeByte(input.readByte());
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_OPEN_SIGN_EDITOR -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("sign editor missing on target");
+        }
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(12);
+          DataOutputStream output = new DataOutputStream(buffer);
+          output.writeLong(BlockPositionCodec.translate(source, target, input.readLong()));
+          // 1.20 added a front/back flag; 1.13 signs only have a front.
+          if (target.version().number() > 404) output.writeBoolean(true);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_TAB_LIST_HEADER -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("tab list header missing on target");
+        }
+        // Two text components. 1.20.3 moved components from JSON to NBT, which
+        // is a representation change the component codec handles in full rather
+        // than by flattening to plain text.
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+          DataOutputStream output = new DataOutputStream(buffer);
+          for (int component = 0; component < 2; component++) {
+            if (source.version().number() <= 404) {
+              String json = MinecraftInput.string(input, 262_144);
+              if (target.version().number() > 404) {
+                gg.tame.conduit.protocol.text.ComponentCodec.jsonToNbt(output, json);
+              } else {
+                MinecraftOutput.string(output, json);
+              }
+            } else {
+              String json = gg.tame.conduit.protocol.text.ComponentCodec.nbtToJson(input);
+              MinecraftOutput.string(output, json);
+            }
+          }
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_RESPAWN -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("respawn missing on target");
+        }
+        // 1.16 replaced the numeric dimension with a pair of registry
+        // identifiers, and 1.20 appended the seed, the debug/flat flags, the
+        // death location and a portal cooldown. Nothing but the game mode
+        // survives as a field, so the packet is rebuilt from the synthesised
+        // world identity the Join Game codec already establishes for this pair.
+        byte[] rebuilt = JoinGameCodec.encodeRespawn(source, target, PlayPackets.body(packet));
+        if (rebuilt == null) {
+          yield new TranslationResult.Dropped("respawn body not translatable for this pair");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, rebuilt));
+      }
+      case PLAY_STATISTICS, PLAY_BOSS_BAR, PLAY_NAMED_SOUND_EFFECT, PLAY_NBT_QUERY_RESPONSE,
+           PLAY_SPAWN_PAINTING, PLAY_SPAWN_GLOBAL_ENTITY, PLAY_BLOCK_ENTITY_DATA, PLAY_BLOCK_ACTION,
+           PLAY_SCOREBOARD_OBJECTIVE, PLAY_TEAMS, PLAY_UPDATE_SCORE, PLAY_DISPLAY_SCOREBOARD,
+           PLAY_TITLE, PLAY_STOP_SOUND, PLAY_CAMERA, PLAY_USE_BED, PLAY_FACE_PLAYER,
+           PLAY_CRAFT_RECIPE_RESPONSE, PLAY_SELECT_ADVANCEMENT_TAB, PLAY_VEHICLE_MOVE,
+           PLAY_MAP_DATA, PLAY_TRADE_LIST -> {
+        // Recognised and dropped on purpose. Each of these is either display-only
+        // (scoreboards, titles, boss bars, the tab list, statistics) or names
+        // something from the sending era's own registry that this pair has no
+        // verified mapping for (block-entity types, paintings, sounds, map and
+        // trade payloads). Dropping costs the feature; forwarding the bytes would
+        // desynchronise the stream, and a fail-closed proxy would end the session.
+        // These are the deliberately-unsupported set for 393 <-> 765, not an
+        // oversight, and none of them gates world entry or movement.
+        yield new TranslationResult.Dropped(
+            kind + " is display-only or names era-specific registry entries; "
+                + "intentionally unsupported for 393 <-> 765");
+      }
       case PLAY_EXPLOSION -> {
         // 1.13   x,y,z:f32  strength:f32  count:i32  records[3B]  motion x,y,z:f32
         // 1.20.4 x,y,z:f64  strength:f32  count:VarInt records[3B] motion x,y,z:f32
