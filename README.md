@@ -40,7 +40,7 @@ Do **not** read the catalog as "everything is supported."
 
 | Minecraft | Protocol | Configuration | Status |
 |---|---|---|---|
-| 1.13 | 393 | no | DIRECT / PARTIAL — login/play essentials codec; real-client verification pending |
+| 1.13 | 393 | no | DIRECT / VERIFIED — exercised end-to-end by the official 1.13 client, and as both ends of the 393 ↔ 765 translated pair |
 | 1.20.1 | 763 | no | DIRECT / codec |
 | 1.20.3 / 1.20.4 | 765 | yes | DIRECT; 1.20.4 login/Play previously verified |
 | 1.20.5 / 1.20.6 | 766 | yes | DIRECT codec; translated path from 765 is PARTIAL |
@@ -59,11 +59,14 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 | Client → Backend | Support | Completeness |
 |---|---|---|
 | same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
-| **393 ↔ 765** | **TRANSLATED** | **PARTIAL** — real 1.13↔Paper 1.20.4 validation in progress (login + config absorb + Join Game reached; Level 4 **not** verified). See `../real-client-validation/RESULTS.md` when present. Chunk/player-info pipeline + difficulty/held-item/recipe drops from live traces. |
+| **393 ↔ 765** | **TRANSLATED** | **SUBSTANTIAL, not complete** — both directions carry login, world, movement, blocks, entities, health, chat, items, inventory, containers, equipment, entity metadata and attributes against real clients and real servers. Sounds, particles, scoreboards, titles, boss bars, block-entity data, recipes and advancements are deliberately unsupported. See `docs/VALIDATION_393_765.md` for what was and was not proven. |
 | 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
 | 765 → 776 | UNSUPPORTED | intentional until a real translator exists |
 
-**393 ↔ 765 is not FULL.** Do not claim “1.13 works with 1.20.4” until real-client Level 4+ validation.
+**393 ↔ 765 is not FULL.** Ordinary survival play crosses the pair in both
+directions, verified with official clients against official servers, but the
+unsupported list above is real and the gaps in `docs/VALIDATION_393_765.md`
+under "What is still NOT proven" have not been closed.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 
