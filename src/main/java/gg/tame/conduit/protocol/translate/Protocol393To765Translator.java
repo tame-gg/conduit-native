@@ -41,8 +41,11 @@ import java.util.Set;
  * <p>Protocol data: PrismarineJS minecraft-data 1.13 + 1.20.4 — not another proxy's implementation.
  */
 public final class Protocol393To765Translator implements ProtocolTranslator {
-  public static final Protocol393To765Translator CLIENT_393_BACKEND_765 = new Protocol393To765Translator(393, 765);
-  public static final Protocol393To765Translator CLIENT_765_BACKEND_393 = new Protocol393To765Translator(765, 393);
+  /** 1.13 client in front of a 1.20.4 backend. One instance per session. */
+  public static Protocol393To765Translator clientLegacy() { return new Protocol393To765Translator(393, 765); }
+
+  /** 1.20.4 client in front of a 1.13 backend. One instance per session. */
+  public static Protocol393To765Translator clientModern() { return new Protocol393To765Translator(765, 393); }
 
   private static final Set<PacketKind> CONFIG_CONSUME = EnumSet.of(
       PacketKind.CONFIGURATION_FINISH,
@@ -73,6 +76,54 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
   private final int backendProtocol;
   private final SemanticCodec clientCodec;
   private final SemanticCodec backendCodec;
+
+  // --------------------------------------------------------- per-session state
+  //
+  // None of this can be shared between players: a container state id, an
+  // inventory action number and "which entity id is a living entity" all belong
+  // to one connection. Translators are therefore created per session.
+
+  /** Extra packets produced while translating one packet, drained by the session. */
+  private final java.util.concurrent.ConcurrentLinkedQueue<byte[]> toClient =
+      new java.util.concurrent.ConcurrentLinkedQueue<>();
+  private final java.util.concurrent.ConcurrentLinkedQueue<byte[]> toBackend =
+      new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+  /**
+   * The container state id a 1.20.4 client must echo back. A 1.13 backend has no
+   * such counter, so Conduit owns it: it is bumped on every container update
+   * Conduit sends to a modern client, and replayed into every click that client
+   * sends back.
+   */
+  private final java.util.concurrent.atomic.AtomicInteger containerState =
+      new java.util.concurrent.atomic.AtomicInteger();
+
+  /**
+   * The 1.13 inventory action number. A 1.13 client will not accept another
+   * inventory change until the server confirms the action number it sent, and a
+   * 1.20.4 backend has no packet for that, so Conduit answers on its behalf.
+   */
+  private final java.util.concurrent.atomic.AtomicInteger actionNumber =
+      new java.util.concurrent.atomic.AtomicInteger(1);
+
+  /**
+   * Whether each spawned entity extends LivingEntity, learned from the spawn
+   * packet that introduced it. Entity metadata indices shift by a different
+   * amount for living and non-living entities, so this is not optional
+   * bookkeeping — without it every mob's metadata lands on the wrong field.
+   */
+  private final java.util.Map<Integer, Boolean> livingEntities =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  @Override public java.util.List<byte[]> drainToClient() { return drain(toClient); }
+  @Override public java.util.List<byte[]> drainToBackend() { return drain(toBackend); }
+
+  private static java.util.List<byte[]> drain(java.util.Queue<byte[]> queue) {
+    if (queue.isEmpty()) return java.util.List.of();
+    java.util.List<byte[]> packets = new java.util.ArrayList<>(queue.size());
+    for (byte[] packet = queue.poll(); packet != null; packet = queue.poll()) packets.add(packet);
+    return packets;
+  }
 
   private Protocol393To765Translator(int clientProtocol, int backendProtocol) {
     this.clientProtocol = clientProtocol;
@@ -399,6 +450,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
 
       case PLAY_SPAWN_LIVING_ENTITY -> {
+        rememberLiving(peekEntityId(PlayPackets.body(packet)), true);
         // 1.19 merged living-entity spawns into the unified spawn_entity packet,
         // so a 1.13 backend's mob spawns have to fan in. Real differences:
         //   1.13  ... type, x,y,z, yaw, pitch, headPitch, velocity, metadata
@@ -570,6 +622,10 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
 
       case PLAY_SPAWN_ENTITY -> {
+        // Remember whether this entity is living BEFORE any reshaping: metadata
+        // that arrives later needs it to place field indices correctly.
+        rememberLiving(peekEntityId(PlayPackets.body(packet)),
+            source.version().number() > 404 && spawnIsLiving765(PlayPackets.body(packet)));
         if (source.version().number() > 404 && target.version().number() <= 404) {
           // 765 unified spawn → 393 living or object spawn (never copy type ids).
           var split = unifiedSpawnTo393(PlayPackets.body(packet));
@@ -622,16 +678,28 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
 
       case PLAY_ENTITY_EQUIPMENT -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("entity equipment missing on target");
+        }
         // 1.16 replaced the single (slot, item) pair with a top-bit-terminated
-        // array of them, so one 1.20.4 packet can carry up to six slots while a
-        // 1.13 packet carries exactly one. Splitting would require emitting
-        // several packets from one, which this path cannot yet express. The item
-        // payload also uses era-specific registry ids, the same blocker that
-        // already fails inventory closed. Held items therefore do not render on
-        // other entities; no state desync.
-        yield new TranslationResult.Dropped(
-            "1.16+ multi-slot equipment cannot be expressed as a single 1.13 packet, "
-                + "and item ids are unmapped across the pair");
+        // array, so one modern packet can carry six slots that 1.13 can only
+        // express as six packets. Toward 1.13 the first change is returned and
+        // the rest are queued for the session to send straight after it.
+        var changes = gg.tame.conduit.protocol.inventory.ContainerCodec.readEquipment(
+            source.version().number(), PlayPackets.body(packet));
+        if (changes.isEmpty()) yield new TranslationResult.Dropped("empty equipment packet");
+        if (target.version().number() > 404) {
+          byte[] merged = gg.tame.conduit.protocol.inventory.ContainerCodec.writeEquipment765(changes);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, merged));
+        }
+        for (int index = 1; index < changes.size(); index++) {
+          queueToClient(kind, ConnectionState.PLAY, direction, target,
+              gg.tame.conduit.protocol.inventory.ContainerCodec.writeEquipment393(changes.get(index)));
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction,
+            gg.tame.conduit.protocol.inventory.ContainerCodec.writeEquipment393(changes.get(0))));
       }
 
       case PLAY_BLOCK_PLACE -> {
@@ -647,53 +715,193 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
 
       case PLAY_SET_CONTAINER_CONTENT, PLAY_SET_CONTAINER_SLOT -> {
-        // Slot payloads carry item ids from the sending era's registry. Conduit has no verified
-        // 1.13 <-> 1.20.4 item mapping yet, so translating would risk wrong or corrupt items.
-        // Fail closed: the 393 client sees an empty inventory rather than a mistranslated one.
-        if (target.version().number() <= 404) {
-          yield new TranslationResult.Dropped(
-              kind + " withheld from 393 (item registry mapping not implemented)");
+        // Every slot is decoded into a semantic item, translated by identifier
+        // and re-encoded in the target's slot layout. The container framing
+        // differs too: 1.17 added the state id and the carried (cursor) item,
+        // so those are synthesised toward a modern client and discarded toward
+        // a 1.13 one, where the cursor is reconciled by transaction instead.
+        int nextState = target.version().number() > 404 ? containerState.incrementAndGet() : 0;
+        byte[] reshaped = kind == PacketKind.PLAY_SET_CONTAINER_CONTENT
+            ? gg.tame.conduit.protocol.inventory.ContainerCodec.containerContent(
+                source.version().number(), target.version().number(), PlayPackets.body(packet), nextState)
+            : gg.tame.conduit.protocol.inventory.ContainerCodec.containerSlot(
+                source.version().number(), target.version().number(), PlayPackets.body(packet), nextState);
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, reshaped));
+      }
+      case PLAY_OPEN_WINDOW -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("open window missing on target");
         }
-        // Slot payloads name items by the sending era's registry id, and 1.20.4
-        // additionally wraps the container in a stateId plus a carried-item slot.
-        // An unmapped copy would hand the target wrong or malformed items, so
-        // both directions fail closed: the player sees an empty container rather
-        // than a mistranslated one. Revisit with a real item-id mapping.
-        yield new TranslationResult.Dropped(
-            kind + " withheld (item registry ids and container framing differ across the pair)");
+        byte[] reshaped = gg.tame.conduit.protocol.inventory.ContainerCodec.openWindow(
+            source.version().number(), target.version().number(), PlayPackets.body(packet));
+        if (reshaped == null) {
+          // A screen with no counterpart (horse, grindstone, loom, smithing).
+          // Dropping leaves the player where they were rather than opening the
+          // wrong screen, which would desync every subsequent slot update.
+          yield new TranslationResult.Dropped("screen type has no counterpart on the target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, reshaped));
+      }
+      case PLAY_CLOSE_WINDOW_CLIENTBOUND, PLAY_WINDOW_PROPERTY -> {
+        // windowId (+ property/value). Identical field layouts on both releases.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped(kind + " missing on target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_CLICK_WINDOW -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("click window missing on target");
+        }
+        var click = gg.tame.conduit.protocol.inventory.ContainerCodec.readClick(
+            source.version().number(), PlayPackets.body(packet));
+        int action = actionNumber.getAndIncrement() & 0x7fff;
+        byte[] reshaped = gg.tame.conduit.protocol.inventory.ContainerCodec.writeClick(
+            target.version().number(), click, containerState.get(), action);
+        if (source.version().number() <= 404) {
+          // The 1.13 client is waiting for the transaction confirmation that a
+          // 1.20.4 backend will never send. Without it the client freezes its
+          // inventory after the first click. Conduit answers on the backend's
+          // behalf with the action number the client itself just used; the
+          // backend still authoritatively resends the slots afterwards.
+          queueToClient(PacketKind.PLAY_CONFIRM_TRANSACTION, ConnectionState.PLAY,
+              PacketDirection.SERVER_TO_CLIENT, source,
+              gg.tame.conduit.protocol.inventory.ContainerCodec.confirmTransaction(
+                  click.windowId(), sourceActionNumber(PlayPackets.body(packet)), true));
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, reshaped));
+      }
+      case PLAY_CONFIRM_TRANSACTION -> {
+        // 1.13 only. Toward a modern client there is nothing to send. Toward a
+        // 1.13 BACKEND, an unaccepted transaction must be echoed back or the
+        // server stops applying that window's clicks — so Conduit echoes it
+        // rather than dropping it, since the modern client cannot.
+        if (direction == PacketDirection.SERVER_TO_CLIENT && target.version().number() > 404) {
+          echoTransactionIfRejected(PlayPackets.body(packet), source);
+          yield new TranslationResult.Dropped("1.13 transaction handshake answered by Conduit");
+        }
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("confirm transaction missing on target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_CREATIVE_SLOT -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("creative slot missing on target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction,
+            gg.tame.conduit.protocol.inventory.ContainerCodec.creativeSlot(
+                source.version().number(), target.version().number(), PlayPackets.body(packet))));
+      }
+      case PLAY_SET_CARRIED_ITEM, PLAY_PICK_ITEM -> {
+        // Selected hotbar slot / pick block. One short or one VarInt; unchanged.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped(kind + " missing on target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_USE_ITEM -> {
+        // hand:VarInt on both, plus a 1.19+ prediction sequence a 1.13 client
+        // does not have and a 1.13 server does not read.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("use item missing on target");
+        }
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          int hand = MinecraftInput.varInt(input);
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(8);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(output, hand);
+          if (target.version().number() > 404) MinecraftOutput.varInt(output, 0);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_INTERACT_ENTITY -> {
+        // entityId, type, [target x/y/z for INTERACT_AT], [hand], and from 1.16
+        // a trailing sneaking flag the 1.13 client never sends. Attacking a mob
+        // goes through this packet, so it is gameplay-critical, not cosmetic.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("interact entity missing on target");
+        }
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          int entityId = MinecraftInput.varInt(input);
+          int type = MinecraftInput.varInt(input);
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(24);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(output, entityId);
+          MinecraftOutput.varInt(output, type);
+          if (type == 2) {                       // interact at: three floats follow
+            for (int axis = 0; axis < 3; axis++) output.writeFloat(input.readFloat());
+          }
+          if (type == 0 || type == 2) {          // interact / interact at carry a hand
+            MinecraftOutput.varInt(output, MinecraftInput.varInt(input));
+          }
+          boolean sneaking = input.available() >= 1 && input.readBoolean();
+          if (target.version().number() > 404) output.writeBoolean(sneaking);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_SPAWN_PLAYER -> {
+        // 1.20.2 removed the dedicated player spawn in favour of the unified
+        // spawn packet, so a 1.13 backend's player spawns have to fan in.
+        //   1.13   entityId uuid x y z yaw pitch metadata
+        //   1.20.4 entityId uuid type x y z pitch yaw headYaw objectData velocity
+        if (target.defines(ConnectionState.PLAY, direction, kind)) {
+          rememberLiving(peekEntityId(PlayPackets.body(packet)), true);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+        }
+        byte[] unified = playerSpawnToUnified(PlayPackets.body(packet));
+        if (unified == null) yield new TranslationResult.Dropped("player spawn not parseable");
+        rememberLiving(peekEntityId(unified), true);
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            PacketKind.PLAY_SPAWN_ENTITY, ConnectionState.PLAY, direction, unified));
       }
       case PLAY_UPDATE_ATTRIBUTES -> {
-        // 393 writes the attribute count as a fixed Int and names keys in pre-1.16 form
-        // (generic.movementSpeed); 765 uses a VarInt count and namespaced snake_case keys
-        // (minecraft:generic.movement_speed). Withhold until a verified key map exists — the
-        // values Paper sends here are the client defaults anyway.
-        if (target.version().number() <= 404) {
-          yield new TranslationResult.Dropped(
-              "entity attributes withheld from 393 (attribute keys were renamed in 1.16)");
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("attributes missing on target");
         }
-        // Attribute keys were renamed and namespaced in 1.16 (generic.movementSpeed
-        // -> minecraft:generic.movement_speed) and the modifier count width changed,
-        // so an unmapped copy names attributes the target does not know. Dropping
-        // leaves the target on default attribute values, which is stable.
-        yield new TranslationResult.Dropped(
-            "entity attributes withheld (attribute keys were renamed in 1.16)");
+        // Keys are mapped by identity across the 1.16 rename, and the count
+        // changes width (fixed Int on 1.13, VarInt on 1.20.4). Entries with no
+        // counterpart are dropped individually and the count rewritten.
+        byte[] reshaped = gg.tame.conduit.protocol.entity.AttributeCodec.translate(
+            source.version().number(), target.version().number(), PlayPackets.body(packet));
+        if (reshaped == null) {
+          yield new TranslationResult.Dropped("no attribute in this packet exists on the target");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, reshaped));
       }
       case PLAY_SET_ENTITY_METADATA -> {
-        // Metadata is doubly era-specific: field indices differ per entity class, and the type ids
-        // shifted when VarLong was inserted at id 2 in 1.19 — so a 765 type 3 (Float) would be
-        // read by a 393 client as type 3 (String). Forwarding desyncs the stream immediately.
-        // Withhold until a real index/type mapping subsystem exists.
-        if (target.version().number() <= 404) {
-          yield new TranslationResult.Dropped(
-              "entity metadata withheld from 393 (index and type ids are era specific)");
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("entity metadata missing on target");
         }
-        // Same hazard in the other direction: a 1.13 type 3 (String) would be
-        // read by a modern client as type 3 (Float). Withhold rather than corrupt.
-        // Cost: entities lose custom appearance state (name tags, poses, held
-        // items, baby/adult). They still spawn, move and can be interacted with,
-        // because position and identity travel in their own packets. No desync.
-        yield new TranslationResult.Dropped(
-            "entity metadata withheld (index and type ids are era specific in both directions)");
+        // Type ids and field indices are both era-specific, so every entry is
+        // decoded, remapped and re-encoded. Which entity this is decides how far
+        // the indices shift, which is why spawns are tracked above.
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          int entityId = MinecraftInput.varInt(input);
+          byte[] body = input.readAllBytes();
+          byte[] translated = gg.tame.conduit.protocol.entity.MetadataCodec.translate(
+              source, target, body, isLiving(entityId));
+          if (translated == null) {
+            yield new TranslationResult.Dropped("no metadata field in this packet exists on the target");
+          }
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(translated.length + 5);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(output, entityId);
+          output.write(translated);
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
       }
       case PLAY_WORLD_BORDER_INIT -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
@@ -850,6 +1058,124 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       default -> new TranslationResult.Unsupported(kind + " not in 393↔765 world-entry set");
     };
   }
+
+  // ------------------------------------------------------- per-session helpers
+
+  /** Queues an extra packet, encoded with the definition of the side it is going to. */
+  private void queueToClient(PacketKind kind, ConnectionState state, PacketDirection unusedDirection,
+                             ProtocolDefinition destination, byte[] body) throws IOException {
+    if (!destination.defines(state, PacketDirection.SERVER_TO_CLIENT, kind)) return;
+    toClient.add(PlayPackets.withId(
+        destination.id(state, PacketDirection.SERVER_TO_CLIENT, kind), body));
+  }
+
+  private void queueToBackend(PacketKind kind, ProtocolDefinition destination, byte[] body) throws IOException {
+    if (!destination.defines(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, kind)) return;
+    toBackend.add(PlayPackets.withId(
+        destination.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, kind), body));
+  }
+
+  /**
+   * A 1.13 server that rejects an inventory action expects the client to send
+   * the same action number back before it will apply anything else in that
+   * window. A 1.20.4 client has no such packet, so Conduit closes the loop.
+   */
+  private void echoTransactionIfRejected(byte[] body, ProtocolDefinition backend) throws IOException {
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
+      int windowId = input.readUnsignedByte();
+      short action = input.readShort();
+      boolean accepted = input.readBoolean();
+      if (accepted) return;
+      queueToBackend(PacketKind.PLAY_CONFIRM_TRANSACTION, backend,
+          gg.tame.conduit.protocol.inventory.ContainerCodec.confirmTransaction(windowId, action, true));
+    }
+  }
+
+  /** The action number a 1.13 client put in its own click, so the ack matches it. */
+  private static int sourceActionNumber(byte[] clickBody) throws IOException {
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(clickBody))) {
+      input.readUnsignedByte();      // windowId
+      input.readShort();             // slot
+      input.readByte();              // button
+      return input.readShort();
+    }
+  }
+
+  /** Whether a unified 1.20.4 spawn packet describes a living entity. */
+  private static boolean spawnIsLiving765(byte[] body) {
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      MinecraftInput.varInt(in);        // entityId
+      in.readLong();
+      in.readLong();                    // uuid
+      return gg.tame.conduit.protocol.entity.EntityTypeMaps.isLiving765(MinecraftInput.varInt(in));
+    } catch (IOException exception) {
+      return true;
+    }
+  }
+
+  private void rememberLiving(int entityId, boolean living) {
+    if (entityId < 0) return;
+    if (livingEntities.size() > 8192) livingEntities.clear();   // bounded; entities respawn cheaply
+    livingEntities.put(entityId, living);
+  }
+
+  /**
+   * Whether this entity extends LivingEntity. Unknown entities are treated as
+   * living: the player's own entity and every mob are living, and that is what
+   * almost all metadata traffic is about, so it is the safer default.
+   */
+  private boolean isLiving(int entityId) {
+    return livingEntities.getOrDefault(entityId, Boolean.TRUE);
+  }
+
+  private static int peekEntityId(byte[] body) {
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
+      return MinecraftInput.varInt(input);
+    } catch (IOException exception) {
+      return -1;
+    }
+  }
+
+  /**
+   * Converts a 1.13 Spawn Player into the unified modern spawn packet.
+   *
+   * <pre>
+   *   1.13    entityId uuid x y z yaw:i8 pitch:i8 metadata
+   *   1.20.4  entityId uuid type x y z pitch:i8 yaw:i8 headYaw:i8 objectData velocity
+   * </pre>
+   *
+   * <p>The player entity type is resolved through the name-based entity map, not
+   * assumed; the trailing 1.13 metadata blob is dropped because 1.19+ delivers
+   * metadata in its own packet, which this translator now handles.
+   */
+  private static byte[] playerSpawnToUnified(byte[] body) {
+    java.util.OptionalInt playerType = gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(
+        PLAYER_TYPE_393);
+    if (playerType.isEmpty()) return null;
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+      DataOutputStream out = new DataOutputStream(buffer);
+      MinecraftOutput.varInt(out, MinecraftInput.varInt(in));   // entityId
+      out.writeLong(in.readLong());
+      out.writeLong(in.readLong());
+      MinecraftOutput.varInt(out, playerType.getAsInt());
+      for (int axis = 0; axis < 3; axis++) out.writeDouble(in.readDouble());
+      byte yaw = in.readByte();
+      byte pitch = in.readByte();
+      out.writeByte(pitch);          // modern order is pitch before yaw
+      out.writeByte(yaw);
+      out.writeByte(yaw);            // head yaw: 1.13 sends it separately, start aligned
+      MinecraftOutput.varInt(out, 0);                 // objectData: unused for players
+      for (int axis = 0; axis < 3; axis++) out.writeShort(0);   // no velocity in the 1.13 packet
+      out.flush();
+      return buffer.toByteArray();
+    } catch (IOException exception) {
+      return null;
+    }
+  }
+
+  /** 1.13 mob-registry id for {@code minecraft:player}. */
+  private static final int PLAYER_TYPE_393 = 92;
 
   private byte[] encodeSemantic(SemanticCodec codec, SemanticPacket semantic) throws IOException {
     if (semantic instanceof JoinGamePacket join) return JoinGameCodec.encode(codec.protocol(), join);

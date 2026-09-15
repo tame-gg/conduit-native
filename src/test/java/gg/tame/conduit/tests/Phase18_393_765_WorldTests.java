@@ -44,11 +44,11 @@ public final class Phase18_393_765_WorldTests {
     updateTimeRemappedToward393();
     setTickingStateDroppedToward393();
     stepTickDroppedToward393();
-    containerContentWithheldFrom393();
-    containerSlotWithheldFrom393();
+    containerContentTranslatedTo393();
+    containerSlotTranslatedTo393();
     declareCommandsWithheldFrom393();
-    entityMetadataWithheldFrom393();
-    entityAttributesWithheldFrom393();
+    entityMetadataTranslatedTo393();
+    entityAttributesTranslatedTo393();
     advancementsDroppedToward393();
     updateHealthRemappedToward393();
     setExperienceRemappedToward393();
@@ -314,10 +314,11 @@ public final class Phase18_393_765_WorldTests {
    * Regression: Paper sent Set Container Content (765 0x13) during world entry — captured body was
    * window 0, state 1, 46 empty slots plus an empty carried item.
    *
-   * <p>Withheld rather than translated: Slot payloads carry era-specific item registry ids and
-   * Conduit has no verified 1.13 mapping, so a translation could hand the client wrong items.
+   * <p>Now translated: each slot is decoded to a semantic item and re-encoded in
+   * the 1.13 layout. The 1.17 state id and carried item have no 1.13 field and
+   * are dropped, so the body must end exactly after the 46 slots.
    */
-  private static void containerContentWithheldFrom393() throws Exception {
+  private static void containerContentTranslatedTo393() throws Exception {
     ProtocolTranslator t = Translators.forPair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     body.write(0x00);        // window id: player inventory
@@ -325,17 +326,28 @@ public final class Phase18_393_765_WorldTests {
     body.write(0x2E);        // slot count = 46
     for (int slot = 0; slot < 47; slot++) body.write(0x00); // 46 empty slots + empty carried item
     byte[] modern = PlayPackets.withId(0x13, body.toByteArray());
-    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "container content withheld");
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null, "container content must now reach the 1.13 client");
+    require(PlayPackets.packetId(legacy) == 0x15, "1.13 Window Items id");
+    byte[] out = PlayPackets.body(legacy);
+    // windowId(1) + count as a short(2) + 46 empty slots (1 byte each).
+    require(out.length == 1 + 2 + 46, "46 empty slots, no state id and no carried item");
+    require(out[0] == 0x00 && out[1] == 0x00 && out[2] == 46, "window 0 with 46 slots");
   }
 
   /**
    * Regression: Paper sent Set Container Slot (765 0x15) during world entry — captured body was
-   * window 0, state 2, slot 45 (offhand), empty item. Withheld for the same item-registry reason.
+   * window 0, state 2, slot 45 (offhand), empty item. Now translated, with the
+   * state id stripped and the slot number carried through unchanged.
    */
-  private static void containerSlotWithheldFrom393() throws Exception {
+  private static void containerSlotTranslatedTo393() throws Exception {
     ProtocolTranslator t = Translators.forPair(393, 765);
     byte[] modern = PlayPackets.withId(0x15, new byte[] {0x00, 0x02, 0x00, 0x2D, 0x00});
-    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "container slot withheld");
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null, "container slot must now reach the 1.13 client");
+    require(PlayPackets.packetId(legacy) == 0x17, "1.13 Set Slot id");
+    require(java.util.Arrays.equals(PlayPackets.body(legacy),
+        new byte[] {0x00, 0x00, 0x2D, 0x00}), "window 0, slot 45, empty item, no state id");
   }
 
   /**
@@ -354,10 +366,12 @@ public final class Phase18_393_765_WorldTests {
    * Regression: Paper sent Set Entity Metadata (765 0x56) during world entry — captured body was
    * entity 1083, index 9, type 3 (Float on 765), value 20.0, then the 0xff terminator.
    *
-   * <p>Must be withheld: 1.19 inserted VarLong at type id 2, so 765 type 3 (Float) is type 3
-   * (String) on 393. Forwarding the bytes would desync the client mid-packet.
+   * <p>Now translated. The hazard the old withholding avoided is real — 1.19
+   * inserted VarLong at type id 2, so 765 Float (3) would be read as 393 String
+   * (3) — so the assertion here is that the type is REWRITTEN to 2 and the index
+   * shifted from 9 to 7, not that the bytes came through.
    */
-  private static void entityMetadataWithheldFrom393() throws Exception {
+  private static void entityMetadataTranslatedTo393() throws Exception {
     ProtocolTranslator t = Translators.forPair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
@@ -367,15 +381,26 @@ public final class Phase18_393_765_WorldTests {
     out.writeFloat(20.0f);             // health
     out.writeByte(0xFF);               // end of metadata
     byte[] modern = PlayPackets.withId(0x56, body.toByteArray());
-    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "entity metadata withheld");
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null, "entity metadata must now reach the 1.13 client");
+    require(PlayPackets.packetId(legacy) == 0x3F, "1.13 Entity Metadata id");
+    try (java.io.DataInputStream in = new java.io.DataInputStream(
+        new java.io.ByteArrayInputStream(PlayPackets.body(legacy)))) {
+      require(MinecraftInput.varInt(in) == 1083, "entity id preserved");
+      require(in.readUnsignedByte() == 7, "health index 9 shifts to 7 for a living entity");
+      require(MinecraftInput.varInt(in) == 2, "Float is type 2 on 393, not 3");
+      require(in.readFloat() == 20.0f, "health value preserved");
+      require(in.readUnsignedByte() == 0xFF, "terminator");
+    }
   }
 
   /**
    * Regression: Paper sent Update Attributes (765 0x71) during world entry — captured body began
    * entity 1084, 2 attributes, "minecraft:generic.movement_speed" = 0.1, 0 modifiers.
-   * Withheld: 393 uses an Int count and pre-1.16 attribute key names.
+   * Now translated: the key is renamed back to its pre-1.16 form and the count
+   * changes from a VarInt to the fixed Int that 1.13 reads.
    */
-  private static void entityAttributesWithheldFrom393() throws Exception {
+  private static void entityAttributesTranslatedTo393() throws Exception {
     ProtocolTranslator t = Translators.forPair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
@@ -385,7 +410,18 @@ public final class Phase18_393_765_WorldTests {
     out.writeDouble(0.10000000149011612d);
     MinecraftOutput.varInt(out, 0);     // no modifiers
     byte[] modern = PlayPackets.withId(0x71, body.toByteArray());
-    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "attributes withheld");
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null, "attributes must now reach the 1.13 client");
+    require(PlayPackets.packetId(legacy) == 0x52, "1.13 Entity Properties id");
+    try (java.io.DataInputStream in = new java.io.DataInputStream(
+        new java.io.ByteArrayInputStream(PlayPackets.body(legacy)))) {
+      require(MinecraftInput.varInt(in) == 1084, "entity id preserved");
+      require(in.readInt() == 1, "1.13 writes the count as a fixed Int");
+      require(MinecraftInput.string(in, 256).equals("generic.movementSpeed"),
+          "the 1.16 rename is undone");
+      require(in.readDouble() == 0.10000000149011612d, "value preserved");
+      require(MinecraftInput.varInt(in) == 0, "no modifiers");
+    }
   }
 
   /**

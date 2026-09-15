@@ -266,8 +266,27 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
 
   private byte[] towardBackend(ConnectionState state, byte[] packet) {
     if (translator == IdentityTranslator.INSTANCE) return packet;
-    byte[] translated = translator.clientToBackend(state, packet);
-    return translated;
+    return translator.clientToBackend(state, packet);
+  }
+
+  /**
+   * Sends anything the translator produced beyond the packet it was handed.
+   *
+   * <p>Translation is not always one-in one-out across this pair: six 1.16
+   * equipment slots become six 1.13 packets, and a 1.13 client will not touch
+   * its inventory again until it gets the transaction confirmation that a 1.20.4
+   * server has no packet for. Those extras are queued by the translator and sent
+   * here, immediately after the packet that produced them, so ordering holds.
+   */
+  private void flushTranslatorExtras(BackendConnection target) {
+    if (translator == IdentityTranslator.INSTANCE) return;
+    for (byte[] extra : translator.drainToClient()) {
+      try { writeClient(extra, true); } catch (IOException exception) { return; }
+    }
+    if (target == null) return;
+    for (byte[] extra : translator.drainToBackend()) {
+      try { target.writeUncompressed(extra); } catch (IOException exception) { return; }
+    }
   }
 
   private byte[] towardClient(ConnectionState state, byte[] packet) {
@@ -352,6 +371,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           }
           byte[] outbound = towardBackend(clientState.state(), packet);
           if (outbound != null) target.writeUncompressed(outbound);
+          flushTranslatorExtras(target);
         }
       }
     } catch (IOException ignored) { }
@@ -477,7 +497,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           close();
           return;
         }
-        if (translated == null) continue;
+        if (translated == null) { flushTranslatorExtras(current); continue; }
         if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
         var brand = BrandRewriter.rewrite(protocol, brandState(backendState), translated, configuration.maxFrameBytes());
         byte[] outbound;
@@ -503,6 +523,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           continue;
         }
         writeClient(outbound, true);
+        flushTranslatorExtras(current);
         if (clientState.state() == ConnectionState.PLAY && isPlayLogin(translated)) {
           emitSelfPlayerInfoIfNeeded();
         }

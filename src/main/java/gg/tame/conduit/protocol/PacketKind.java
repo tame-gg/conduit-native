@@ -127,5 +127,42 @@ public enum PacketKind {
    * 1.20.4, but it carries a packed Position, whose bit layout changed in 1.14 —
    * so it must be converted, not copied.
    */
-  PLAY_WORLD_EVENT
+  PLAY_WORLD_EVENT,
+
+  // ---------------------------------------------------------------------------
+  // Inventory, containers and item interaction. Slot payloads name items by the
+  // sending era's registry, and the container framing gained a state id in 1.17,
+  // so none of these can be forwarded as bytes.
+  // ---------------------------------------------------------------------------
+
+  /** Server opens a screen. 1.14 replaced the type string with a registry id. */
+  PLAY_OPEN_WINDOW,
+  /** Server closes a screen. Single window id on both releases. */
+  PLAY_CLOSE_WINDOW_CLIENTBOUND,
+  /** Furnace/enchanting/beacon progress bars: windowId, property, value. Same on both. */
+  PLAY_WINDOW_PROPERTY,
+  /**
+   * 1.13's inventory-action handshake. The server echoes each click's action
+   * number and the client re-sends it when the server rejects it. 1.17 replaced
+   * the whole mechanism with the container state id, so 1.20.4 has no such
+   * packet and Conduit has to answer it on the backend's behalf.
+   */
+  PLAY_CONFIRM_TRANSACTION,
+  /** Client clicked a container slot. 1.17 swapped the action number for a state id. */
+  PLAY_CLICK_WINDOW,
+  /** Client changed its selected hotbar slot. Single short on both releases. */
+  PLAY_SET_CARRIED_ITEM,
+  /** Creative-mode direct slot set: slot plus item payload. */
+  PLAY_CREATIVE_SLOT,
+  /** Middle-click pick block. Single VarInt slot on both releases. */
+  PLAY_PICK_ITEM,
+  /** Use held item (right click in air). 1.19 appended a prediction sequence. */
+  PLAY_USE_ITEM,
+  /** Attack or interact with an entity. 1.16 appended a sneaking flag. */
+  PLAY_INTERACT_ENTITY,
+  /**
+   * Pre-1.20.2 spawn packet for other players. 1.20.2 removed it in favour of the
+   * unified spawn packet, so a 1.13 backend's player spawns have to fan in.
+   */
+  PLAY_SPAWN_PLAYER
 }

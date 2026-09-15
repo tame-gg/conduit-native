@@ -240,7 +240,17 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTER_COMBAT, 0x39,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DEATH_COMBAT, 0x3A,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_COMMAND, 0x08,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_EVENT, 0x26
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_EVENT, 0x26,
+      // Inventory / container / item interaction.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_OPEN_WINDOW, 0x31,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CLOSE_WINDOW_CLIENTBOUND, 0x12,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WINDOW_PROPERTY, 0x14,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLICK_WINDOW, 0x0D,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SET_CARRIED_ITEM, 0x2C,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CREATIVE_SLOT, 0x2F,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PICK_ITEM, 0x1D,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_USE_ITEM, 0x36,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_INTERACT_ENTITY, 0x13
   );
   /** Protocol 766 = Minecraft 1.20.5/1.20.6. IDs from public PrismarineJS minecraft-data. */
   private static final ProtocolDefinition V1_20_5 = define(ProtocolVersion.MINECRAFT_1_20_5,
@@ -380,7 +390,20 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA, 0x3F,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_ADVANCEMENTS, 0x51,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_ATTRIBUTES, 0x52,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_EVENT, 0x23
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_EVENT, 0x23,
+      // Inventory / container / item interaction.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_OPEN_WINDOW, 0x14,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CLOSE_WINDOW_CLIENTBOUND, 0x13,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WINDOW_PROPERTY, 0x16,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CONFIRM_TRANSACTION, 0x12,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIRM_TRANSACTION, 0x06,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLICK_WINDOW, 0x08,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SET_CARRIED_ITEM, 0x21,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CREATIVE_SLOT, 0x24,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PICK_ITEM, 0x15,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_USE_ITEM, 0x2A,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_INTERACT_ENTITY, 0x0D,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_PLAYER, 0x05
   );
   private static final ProtocolDefinition V1_20_1 = define(ProtocolVersion.MINECRAFT_1_20_1, ProtocolCapabilities.legacyPlay(),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,

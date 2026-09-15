@@ -30,8 +30,11 @@ public final class TranslatorRegistry {
   private static final Map<Long, Supplier<ProtocolTranslator>> PAIRS = new LinkedHashMap<>();
 
   static {
-    register(393, 765, () -> Protocol393To765Translator.CLIENT_393_BACKEND_765);
-    register(765, 393, () -> Protocol393To765Translator.CLIENT_765_BACKEND_393);
+    // A new instance per lookup: these translators carry per-session state
+    // (container state ids, pending action numbers, which entity is living)
+    // that must never be shared between players.
+    register(393, 765, () -> Protocol393To765Translator.clientLegacy());
+    register(765, 393, () -> Protocol393To765Translator.clientModern());
     register(765, 766, () -> Protocol765To766Translator.V765_TO_766);
     register(766, 765, () -> Protocol765To766Translator.V766_TO_765);
   }
