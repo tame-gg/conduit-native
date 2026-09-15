@@ -59,7 +59,7 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 | Client → Backend | Support | Completeness |
 |---|---|---|
 | same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
-| **393 ↔ 765** | **TRANSLATED** | **PARTIAL** — Configuration bridge + login/Join Game + Player Info + chunk height-clamped translation (Y 0–255) + movement/keepalive. Deepslate/negative-Y sections dropped. Block states mapped by Prismarine name/offset. Lighting standalone updates dropped (embedded in 393 chunks). Automated Level 4 pipeline tests green; **REAL CLIENT NOT AVAILABLE** for Level 4 verification (no local 1.13 install). See `docs/CHUNK_393_765.md`. |
+| **393 ↔ 765** | **TRANSLATED** | **PARTIAL** — real 1.13↔Paper 1.20.4 validation in progress (login + config absorb + Join Game reached; Level 4 **not** verified). See `../real-client-validation/RESULTS.md` when present. Chunk/player-info pipeline + difficulty/held-item/recipe drops from live traces. |
 | 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
 | 765 → 776 | UNSUPPORTED | intentional until a real translator exists |
 
