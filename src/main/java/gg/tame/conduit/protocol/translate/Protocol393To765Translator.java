@@ -972,50 +972,72 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       short vy = in.readShort();
       short vz = in.readShort();
 
-      var mob = gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(type765);
-      if (mob.isPresent()) {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
-        DataOutputStream out = new DataOutputStream(buffer);
-        MinecraftOutput.varInt(out, entityId);
-        out.writeLong(uuidHigh);
-        out.writeLong(uuidLow);
-        MinecraftOutput.varInt(out, mob.getAsInt());
-        out.writeDouble(x);
-        out.writeDouble(y);
-        out.writeDouble(z);
-        out.writeByte(yaw);       // 1.13 living: yaw then pitch
-        out.writeByte(pitch);
-        out.writeByte(headPitch);
-        out.writeShort(vx);
-        out.writeShort(vy);
-        out.writeShort(vz);
-        out.writeByte(0xff);      // empty metadata terminator (full metadata still withheld)
-        out.flush();
-        return new Spawn393(PacketKind.PLAY_SPAWN_LIVING_ENTITY, buffer.toByteArray());
+      var preferLiving = gg.tame.conduit.protocol.entity.EntityTypeMaps.isLiving765(type765);
+      if (preferLiving) {
+        var mob = gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(type765);
+        if (mob.isPresent()) {
+          return living393(entityId, uuidHigh, uuidLow, mob.getAsInt(), x, y, z, yaw, pitch, headPitch, vx, vy, vz);
+        }
+        var object = gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(type765);
+        if (object.isEmpty()) return null;
+        return object393(entityId, uuidHigh, uuidLow, object.getAsInt(), x, y, z, pitch, yaw, objectData, vx, vy, vz);
       }
 
       var object = gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(type765);
-      if (object.isEmpty()) return null;
-      ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
-      DataOutputStream out = new DataOutputStream(buffer);
-      MinecraftOutput.varInt(out, entityId);
-      out.writeLong(uuidHigh);
-      out.writeLong(uuidLow);
-      out.writeByte(object.getAsInt() & 0xff);
-      out.writeDouble(x);
-      out.writeDouble(y);
-      out.writeDouble(z);
-      out.writeByte(pitch);
-      out.writeByte(yaw);
-      out.writeInt(objectData);
-      out.writeShort(vx);
-      out.writeShort(vy);
-      out.writeShort(vz);
-      out.flush();
-      return new Spawn393(PacketKind.PLAY_SPAWN_ENTITY, buffer.toByteArray());
+      if (object.isPresent()) {
+        return object393(entityId, uuidHigh, uuidLow, object.getAsInt(), x, y, z, pitch, yaw, objectData, vx, vy, vz);
+      }
+      var mob = gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(type765);
+      if (mob.isEmpty()) return null;
+      return living393(entityId, uuidHigh, uuidLow, mob.getAsInt(), x, y, z, yaw, pitch, headPitch, vx, vy, vz);
     } catch (IOException exception) {
       return null;
     }
+  }
+
+  private static Spawn393 living393(int entityId, long uuidHigh, long uuidLow, int type393,
+                                    double x, double y, double z, byte yaw, byte pitch, byte headPitch,
+                                    short vx, short vy, short vz) throws IOException {
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+    DataOutputStream out = new DataOutputStream(buffer);
+    MinecraftOutput.varInt(out, entityId);
+    out.writeLong(uuidHigh);
+    out.writeLong(uuidLow);
+    MinecraftOutput.varInt(out, type393);
+    out.writeDouble(x);
+    out.writeDouble(y);
+    out.writeDouble(z);
+    out.writeByte(yaw);       // 1.13 living: yaw then pitch
+    out.writeByte(pitch);
+    out.writeByte(headPitch);
+    out.writeShort(vx);
+    out.writeShort(vy);
+    out.writeShort(vz);
+    out.writeByte(0xff);      // empty metadata terminator (full metadata still withheld)
+    out.flush();
+    return new Spawn393(PacketKind.PLAY_SPAWN_LIVING_ENTITY, buffer.toByteArray());
+  }
+
+  private static Spawn393 object393(int entityId, long uuidHigh, long uuidLow, int type393,
+                                    double x, double y, double z, byte pitch, byte yaw, int objectData,
+                                    short vx, short vy, short vz) throws IOException {
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+    DataOutputStream out = new DataOutputStream(buffer);
+    MinecraftOutput.varInt(out, entityId);
+    out.writeLong(uuidHigh);
+    out.writeLong(uuidLow);
+    out.writeByte(type393 & 0xff);
+    out.writeDouble(x);
+    out.writeDouble(y);
+    out.writeDouble(z);
+    out.writeByte(pitch);
+    out.writeByte(yaw);
+    out.writeInt(objectData);
+    out.writeShort(vx);
+    out.writeShort(vy);
+    out.writeShort(vz);
+    out.flush();
+    return new Spawn393(PacketKind.PLAY_SPAWN_ENTITY, buffer.toByteArray());
   }
 
   /**

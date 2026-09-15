@@ -180,9 +180,12 @@ public final class Phase17_393_765_TranslationTests {
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(120).orElse(-1) == 87, "zombie 765→393");
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(10).orElse(-1) == 20, "creeper");
     require(gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(1).orElse(-1) == 9, "boat object");
-    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.isLivingOn393(120), "zombie living");
-    require(!gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(9).isPresent()
-        || gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(9).isPresent(), "boat not living-only");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.isLiving765(120), "zombie living765");
+    require(!gg.tame.conduit.protocol.entity.EntityTypeMaps.isLiving765(3), "arrow not living765");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(3).orElse(-1) == 60, "arrow object");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(55).orElse(-1) == 2, "item object");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.isLivingOn393(120), "zombie living on 393");
+    require(!gg.tame.conduit.protocol.entity.EntityTypeMaps.isLivingOn393(9), "boat object on 393");
   }
 
   private static void disconnect() throws Exception {
