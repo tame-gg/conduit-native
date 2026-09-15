@@ -26,5 +26,13 @@ public enum PacketKind {
   PLAY_WORLD_BORDER_INIT,
   /** World age + time of day. Identical two-long layout on 1.13 and 1.20.4. */
   PLAY_UPDATE_TIME,
+  /** Tick rate + frozen flag. Added in 1.20.3; no 1.13 equivalent. */
+  PLAY_SET_TICKING_STATE,
+  /** Advance a frozen world by N ticks. Added in 1.20.3; no 1.13 equivalent. */
+  PLAY_STEP_TICK,
+  /** Full container contents. Carries Slot item ids, which are registry-incompatible across eras. */
+  PLAY_SET_CONTAINER_CONTENT,
+  /** Single container slot. Same era-specific Slot item payload as the full-content packet. */
+  PLAY_SET_CONTAINER_SLOT,
   PLAY_ENTITY_DESTROY
 }

@@ -41,6 +41,10 @@ public final class Phase18_393_765_WorldTests {
     serverDataDroppedToward393();
     worldBorderInitTranslatedToward393();
     updateTimeRemappedToward393();
+    setTickingStateDroppedToward393();
+    stepTickDroppedToward393();
+    containerContentWithheldFrom393();
+    containerSlotWithheldFrom393();
     difficultyTrimmedToward393();
     entityStatusRemapped();
     malformedChunkRejected();
@@ -264,6 +268,58 @@ public final class Phase18_393_765_WorldTests {
     require(in.readLong() == 47391L, "world age preserved");
     require(in.readLong() == 47391L, "time of day preserved");
     require(in.available() == 0, "no trailing bytes");
+  }
+
+  /**
+   * Regression: Paper sent Set Ticking State (765 0x6e) during world entry — captured body was
+   * tick rate 20.0f + frozen false. Added in 1.20.3, so 393 must never see it.
+   */
+  private static void setTickingStateDroppedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    out.writeFloat(20.0f);  // tick rate, as captured
+    out.writeBoolean(false); // is frozen
+    byte[] modern = PlayPackets.withId(0x6E, body.toByteArray());
+    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "ticking state dropped");
+  }
+
+  /**
+   * Regression: Paper sent Step Tick (765 0x6f, captured body = VarInt 0) right after
+   * Set Ticking State. Added in 1.20.3 alongside it; 393 has no equivalent.
+   */
+  private static void stepTickDroppedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] modern = PlayPackets.withId(0x6F, new byte[] {0});
+    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "step tick dropped");
+  }
+
+  /**
+   * Regression: Paper sent Set Container Content (765 0x13) during world entry — captured body was
+   * window 0, state 1, 46 empty slots plus an empty carried item.
+   *
+   * <p>Withheld rather than translated: Slot payloads carry era-specific item registry ids and
+   * Conduit has no verified 1.13 mapping, so a translation could hand the client wrong items.
+   */
+  private static void containerContentWithheldFrom393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    body.write(0x00);        // window id: player inventory
+    body.write(0x01);        // state id
+    body.write(0x2E);        // slot count = 46
+    for (int slot = 0; slot < 47; slot++) body.write(0x00); // 46 empty slots + empty carried item
+    byte[] modern = PlayPackets.withId(0x13, body.toByteArray());
+    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "container content withheld");
+  }
+
+  /**
+   * Regression: Paper sent Set Container Slot (765 0x15) during world entry — captured body was
+   * window 0, state 2, slot 45 (offhand), empty item. Withheld for the same item-registry reason.
+   */
+  private static void containerSlotWithheldFrom393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] modern = PlayPackets.withId(0x15, new byte[] {0x00, 0x02, 0x00, 0x2D, 0x00});
+    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "container slot withheld");
   }
 
   private static void malformedChunkRejected() {

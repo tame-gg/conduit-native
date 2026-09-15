@@ -250,7 +250,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
       case PLAY_DECLARE_RECIPES, PLAY_TAGS, PLAY_UPDATE_VIEW_POSITION, PLAY_UPDATE_VIEW_DISTANCE,
            PLAY_SIMULATION_DISTANCE, PLAY_CHUNK_BATCH_START, PLAY_CHUNK_BATCH_FINISHED, PLAY_UNLOCK_RECIPES,
-           PLAY_SERVER_DATA -> {
+           PLAY_SERVER_DATA, PLAY_SET_TICKING_STATE, PLAY_STEP_TICK -> {
         // Modern-only or schema-incompatible with 393. Safe to omit for initial world entry.
         if (target.version().number() <= 404) {
           yield new TranslationResult.Dropped(kind + " dropped for 393 (no compatible wire form / optional for entry)");
@@ -280,6 +280,16 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         // These packets share compatible field layouts between 393 and 765 for the fields we care about.
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_SET_CONTAINER_CONTENT, PLAY_SET_CONTAINER_SLOT -> {
+        // Slot payloads carry item ids from the sending era's registry. Conduit has no verified
+        // 1.13 <-> 1.20.4 item mapping yet, so translating would risk wrong or corrupt items.
+        // Fail closed: the 393 client sees an empty inventory rather than a mistranslated one.
+        if (target.version().number() <= 404) {
+          yield new TranslationResult.Dropped(
+              kind + " withheld from 393 (item registry mapping not implemented)");
+        }
+        yield new TranslationResult.Unsupported(kind + " modern→modern not implemented");
       }
       case PLAY_WORLD_BORDER_INIT -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {

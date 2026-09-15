@@ -119,7 +119,11 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_STATUS, 0x1D,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_DATA, 0x49,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_BORDER_INIT, 0x23,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_TIME, 0x62
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_TIME, 0x62,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_TICKING_STATE, 0x6E,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STEP_TICK, 0x6F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_CONTENT, 0x13,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_SLOT, 0x15
   );
   /** Protocol 766 = Minecraft 1.20.5/1.20.6. IDs from public PrismarineJS minecraft-data. */
   private static final ProtocolDefinition V1_20_5 = define(ProtocolVersion.MINECRAFT_1_20_5,
