@@ -102,13 +102,42 @@ public final class ComponentCodec {
     }
   }
 
+  /**
+   * Writes a JSON array as an NBT list.
+   *
+   * <p>NBT lists are homogeneous, but JSON arrays in text components are not:
+   * a translation's {@code with} array routinely holds a bare string next to a
+   * nested component, as in {@code commands.give.success.single}. Modern
+   * Minecraft handles that by promoting every element to a compound holding the
+   * value under an empty key, and its reader unwraps the same shape. Taking the
+   * element type from the first item instead and writing the rest as if they
+   * matched produces a list the client cannot parse — which it reports only as
+   * "Loading NBT data" before dropping the connection.
+   */
   private static void writeList(DataOutput output, List<?> list, boolean withType) throws IOException {
     List<?> items = list.stream().filter(java.util.Objects::nonNull).toList();
-    int element = items.isEmpty() ? 0 : nbtType(items.get(0));
     if (withType) output.writeByte(9);
-    output.writeByte(element);
+    if (items.isEmpty()) {
+      output.writeByte(0);
+      output.writeInt(0);
+      return;
+    }
+    int element = nbtType(items.get(0));
+    boolean homogeneous = items.stream().allMatch(item -> nbtType(item) == element);
+    if (homogeneous) {
+      output.writeByte(element);
+      output.writeInt(items.size());
+      for (Object item : items) writeTag(output, item, false);
+      return;
+    }
+    output.writeByte(10);                       // a list of wrapper compounds
     output.writeInt(items.size());
-    for (Object item : items) writeTag(output, item, false);
+    for (Object item : items) {
+      output.writeByte(nbtType(item));
+      output.writeUTF("");                      // the empty key modern NBT uses
+      writeTag(output, item, false);
+      output.writeByte(0);
+    }
   }
 
   private static int nbtType(Object value) {
@@ -140,7 +169,9 @@ public final class ComponentCodec {
         if (length < 0 || length > 65536) throw new IOException("nbt list " + length);
         List<Object> items = new ArrayList<>(Math.min(length, 64));
         for (int index = 0; index < length; index++) items.add(readTag(input, element));
-        yield items;
+        // Undo the wrapper a heterogeneous list is stored in: each element is a
+        // compound whose only key is the empty string.
+        yield items.stream().map(ComponentCodec::unwrap).toList();
       }
       case 10 -> {
         Map<String, Object> map = new LinkedHashMap<>();
@@ -154,6 +185,13 @@ public final class ComponentCodec {
       case 12 -> skipArray(input, 8);
       default -> throw new IOException("unknown nbt tag type " + type);
     };
+  }
+
+  private static Object unwrap(Object value) {
+    if (value instanceof Map<?, ?> map && map.size() == 1 && map.containsKey("")) {
+      return map.get("");
+    }
+    return value;
   }
 
   private static Object skipArray(DataInput input, int width) throws IOException {

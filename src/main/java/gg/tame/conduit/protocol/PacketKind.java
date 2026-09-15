@@ -221,5 +221,33 @@ public enum PacketKind {
   PLAY_SELECT_ADVANCEMENT_TAB,
   PLAY_VEHICLE_MOVE,
   PLAY_MAP_DATA,
-  PLAY_TRADE_LIST
+  PLAY_TRADE_LIST,
+
+  // ---------------------------------------------------------------------------
+  // 1.20.4 clientbound packets with no 1.13 counterpart. Mapped for the same
+  // fail-closed reason as above: an unrecognised id ends the session.
+  // ---------------------------------------------------------------------------
+
+  /** 1.19 unsigned chat with a decoration, which is what /say and /me produce. */
+  PLAY_DISGUISED_CHAT,
+  PLAY_DELETE_MESSAGE,
+  PLAY_CHAT_SUGGESTIONS,
+  PLAY_CHUNK_BIOMES,
+  PLAY_CLEAR_TITLES,
+  PLAY_OPEN_HORSE_SCREEN,
+  PLAY_OPEN_BOOK,
+  PLAY_PING,
+  PLAY_PONG_RESPONSE,
+  PLAY_RESET_SCORE,
+  PLAY_RESOURCE_PACK_POP,
+  PLAY_RESOURCE_PACK_PUSH,
+  PLAY_SET_ACTION_BAR,
+  PLAY_BORDER_CENTER,
+  PLAY_BORDER_LERP_SIZE,
+  PLAY_BORDER_SIZE,
+  PLAY_BORDER_WARNING_DELAY,
+  PLAY_BORDER_WARNING_DISTANCE,
+  PLAY_SET_SUBTITLE,
+  PLAY_SET_TITLE_TEXT,
+  PLAY_SET_TITLE_TIMES
 }

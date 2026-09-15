@@ -362,6 +362,22 @@ public final class Phase19_393_765_ItemTests {
     String back = ComponentCodec.nbtBytesToJson(nbt);
     require(back.contains("hello") && back.contains("red") && back.contains(" world"),
         "structure survives JSON -> NBT -> JSON, not just the plain text");
+
+    // A translation argument list holding a bare string next to a nested
+    // component. NBT lists are homogeneous, so modern Minecraft wraps each
+    // element in a compound under the empty key. Writing the list with the
+    // first element's type instead produces bytes the client cannot parse, and
+    // it reports that only as "Loading NBT data" before dropping the
+    // connection -- which is exactly what a real 1.20.4 client did here when a
+    // 1.13 server acknowledged a /give.
+    String mixed = "{\"translate\":\"commands.give.success.single\","
+        + "\"with\":[\"1\",{\"text\":\"Excalibur\",\"color\":\"gold\"},\"Steve\"]}";
+    String roundTripped = ComponentCodec.nbtBytesToJson(ComponentCodec.jsonToNbtBytes(mixed));
+    require(roundTripped.contains("commands.give.success.single"), "translation key survives");
+    require(roundTripped.contains("Excalibur") && roundTripped.contains("gold"),
+        "the nested component in a mixed list survives");
+    require(roundTripped.contains("\"1\"") && roundTripped.contains("Steve"),
+        "and so do the bare strings beside it");
   }
 
   // ------------------------------------------------- the transaction handshake

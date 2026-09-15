@@ -917,6 +917,49 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
               kind, ConnectionState.PLAY, direction, buffer.toByteArray()));
         }
       }
+      case PLAY_DISGUISED_CHAT -> {
+        // 1.19 chat that carries a decoration instead of a signature -- this is
+        // what /say and /me produce, so it is the ordinary server-announcement
+        // path, not an edge case. 1.13 has one unsigned chat packet, so the
+        // sender and the message are composed into a single component rather
+        // than dropped, which is what the decoration would have rendered.
+        if (target.version().number() > 404) {
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+        }
+        if (!target.defines(ConnectionState.PLAY, direction, PacketKind.PLAY_CHAT)) {
+          yield new TranslationResult.Dropped("no chat packet on target");
+        }
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          String message = gg.tame.conduit.protocol.text.ComponentCodec.nbtToJson(input);
+          MinecraftInput.varInt(input);                 // chat type
+          String sender = gg.tame.conduit.protocol.text.ComponentCodec.nbtToJson(input);
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(message.length() + 64);
+          DataOutputStream output = new DataOutputStream(buffer);
+          MinecraftOutput.string(output,
+              "{\"text\":\"\",\"extra\":[{\"text\":\"[\"}," + sender
+                  + ",{\"text\":\"] \"}," + message + "]}");
+          output.writeByte(1);                          // system position
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              PacketKind.PLAY_CHAT, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_DELETE_MESSAGE, PLAY_CHAT_SUGGESTIONS, PLAY_CHUNK_BIOMES, PLAY_CLEAR_TITLES,
+           PLAY_OPEN_HORSE_SCREEN, PLAY_OPEN_BOOK, PLAY_PING, PLAY_PONG_RESPONSE, PLAY_RESET_SCORE,
+           PLAY_RESOURCE_PACK_POP, PLAY_RESOURCE_PACK_PUSH, PLAY_SET_ACTION_BAR,
+           PLAY_BORDER_CENTER, PLAY_BORDER_LERP_SIZE, PLAY_BORDER_SIZE,
+           PLAY_BORDER_WARNING_DELAY, PLAY_BORDER_WARNING_DISTANCE,
+           PLAY_SET_SUBTITLE, PLAY_SET_TITLE_TEXT, PLAY_SET_TITLE_TIMES -> {
+        // 1.19/1.20 additions with no 1.13 counterpart, plus the world-border
+        // updates 1.17 split out of 1.13's action-multiplexed border packet.
+        // Recognised so the drop is deliberate rather than fatal; none of them
+        // carries state the player can lose track of.
+        if (target.version().number() > 404 && target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+        }
+        yield new TranslationResult.Dropped(kind + " has no 1.13 counterpart");
+      }
       case PLAY_SET_PASSENGERS, PLAY_SPAWN_EXPERIENCE_ORB, PLAY_ATTACH_ENTITY -> {
         // Field-for-field identical on 1.13 and 1.20.4; only the id moved.
         // Riding matters: without passengers a boat or horse carries nobody.
