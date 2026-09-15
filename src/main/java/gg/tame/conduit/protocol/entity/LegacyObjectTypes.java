@@ -61,6 +61,7 @@ public final class LegacyObjectTypes {
     NAMES.put(90, "minecraft:fishing_bobber");
     NAMES.put(91, "minecraft:spectral_arrow");
     NAMES.put(93, "minecraft:dragon_fireball");
+    NAMES.put(94, "minecraft:trident");
   }
 
   /**
@@ -77,6 +78,14 @@ public final class LegacyObjectTypes {
       "minecraft:command_block_minecart"
   };
 
+  /** Modern names that share a 1.13 object type (alias → canonical 1.13 name). */
+  private static final Map<String, String> ALIASES_765 = Map.of(
+      "minecraft:glow_item_frame", "minecraft:item_frame",
+      "minecraft:chest_boat", "minecraft:boat",
+      "minecraft:fireworks_rocket", "minecraft:firework_rocket",
+      "minecraft:commandblock_minecart", "minecraft:command_block_minecart"
+  );
+
   private static final List<String> NAMES_765 = loadNames();
   private static final Map<String, Integer> IDS_765 = index(NAMES_765);
   private static final Map<String, Integer> OBJECT_BY_NAME = new HashMap<>();
@@ -86,6 +95,10 @@ public final class LegacyObjectTypes {
     for (int variant = 1; variant < MINECARTS.length; variant++) {
       OBJECT_BY_NAME.putIfAbsent(MINECARTS[variant], 10);
     }
+    ALIASES_765.forEach((alias, canonical) -> {
+      Integer object = OBJECT_BY_NAME.get(canonical);
+      if (object != null) OBJECT_BY_NAME.putIfAbsent(alias, object);
+    });
   }
 
   private LegacyObjectTypes() {}
