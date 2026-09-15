@@ -175,6 +175,7 @@ public final class Phase19_393_765_ItemTests {
 
     var click = ContainerCodec.readClick(393, body.toByteArray());
     require(click.windowId() == 1 && click.slot() == 5 && click.mode() == 0, "click fields");
+    require(click.actionNumber() == 77, "1.13 action number preserved on read");
     require(click.carried().identifier().equals("minecraft:stone"), "clicked item");
 
     byte[] modern = ContainerCodec.writeClick(765, click, 12, 0);

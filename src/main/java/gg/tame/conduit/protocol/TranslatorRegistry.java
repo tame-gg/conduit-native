@@ -1,5 +1,6 @@
 package gg.tame.conduit.protocol;
 
+import gg.tame.conduit.protocol.translate.Protocol393To404Translator;
 import gg.tame.conduit.protocol.translate.Protocol393To765Translator;
 import gg.tame.conduit.protocol.translate.Protocol765To766Translator;
 
@@ -35,6 +36,8 @@ public final class TranslatorRegistry {
     // that must never be shared between players.
     register(393, 765, () -> Protocol393To765Translator.clientLegacy());
     register(765, 393, () -> Protocol393To765Translator.clientModern());
+    register(393, 404, () -> Protocol393To404Translator.client393());
+    register(404, 393, () -> Protocol393To404Translator.client404());
     register(765, 766, () -> Protocol765To766Translator.V765_TO_766);
     register(766, 765, () -> Protocol765To766Translator.V766_TO_765);
   }

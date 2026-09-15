@@ -1,0 +1,91 @@
+# Translated 393 -> 404 validation.
+#
+#   1.13 client (protocol 393) -> Conduit :25563 -> real 1.13.2 server :25614
+[listener]
+host = "127.0.0.1"
+port = 25563
+max-frame-bytes = 1048576
+
+[forwarding]
+mode = "none"
+
+[authentication]
+mode = "offline"
+
+[servers.lobby]
+host = "127.0.0.1"
+port = 25614
+
+[routing]
+initial = ["lobby"]
+fallback = ["lobby"]
+
+[maintenance]
+enabled = true
+active-on-start = false
+kick-message = "This network is currently under maintenance. Please try again later."
+motd = "Conduit — 393 to 404"
+allowlist = []
+
+[health]
+enabled = true
+interval-ms = 5000
+timeout-ms = 1500
+failure-threshold = 3
+success-threshold = 2
+
+[versions]
+enabled = false
+allow = []
+ping-version-name = "Conduit {versions}"
+kick-message = "This network only allows Minecraft {versions}."
+kick-message-range = "This network only allows Minecraft versions {versions}."
+
+[shutdown]
+graceful-enabled = true
+timeout-ms = 5000
+message = "Conduit is shutting down."
+
+[security.throttle]
+enabled = true
+max-attempts = 40
+window-ms = 1000
+max-concurrent = 32
+ipv4-prefix = 32
+ipv6-prefix = 64
+log-interval-ms = 5000
+
+[security.bot-filter]
+enabled = true
+strike-threshold = 10
+handshake-timeout-ms = 3000
+block-duration-ms = 60000
+strike-window-ms = 60000
+
+[security.channel-guard]
+enabled = false
+default-action = "log"
+block-list = ["wdl:init", "wdl:control"]
+log-list = ["schematica"]
+kick-list = []
+
+[security.attack-mode]
+throttle-max-attempts = 8
+bot-strike-threshold = 3
+
+[modded]
+enabled = true
+known-packs-limit = 1024
+handshake-cache = true
+handshake-cache-capacity = 4096
+handshake-cache-ttl-ms = 300000
+forge-compat = true
+neoforge-compat = true
+fabric-compat = true
+unknown-policy = "allow"
+packet-queue-enabled = true
+packet-queue-max-depth = 512
+log-mod-handshakes = false
+
+[ops]
+schema-version = 3

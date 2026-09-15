@@ -14,3 +14,6 @@ conduit-start.err.log
 
 out-run/
 out-compile/
+
+# Rotated proxy logs
+logs/*.log.gz

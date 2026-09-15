@@ -41,20 +41,19 @@ registered independently.
 ## Current state, honestly
 
 The codec foundation covers 37 of the 38 distinct protocol numbers in the
-1.13-26.2 range. Translation coverage is much narrower: **4 ordered pairs**. The
-matrix is mostly `UNSUPPORTED`, and that is the accurate picture.
+1.13-26.2 range. Translation coverage: **6 ordered pairs**. The matrix is still
+mostly `UNSUPPORTED`, and that is the accurate picture.
 
-**393 <-> 765 is verified in BOTH directions with real clients and real servers.**
-A real 1.13 client sustains play on a real 1.20.4 server, and a real 1.20.4
-client sustains play on a real 1.13 server, both with zero translation failures
-(`work/real-client-validation/RESULTS-393-765-CROSS.md`). Completeness stays
-`PARTIAL`: inventory, entity metadata, attributes, equipment, sounds and
-particles are deliberately withheld because their registries are not mapped
-across the pair. The two directions are separate implementations - the reverse
-needed configuration-state synthesis, a living-entity spawn fan-in, and a chunk
-biome-width fix that the forward direction never exercised.
+**393 ↔ 765 is verified in BOTH directions with real clients and real servers.**
+See `docs/VALIDATION_393_765.md` / `work/real-client-validation/RESULTS-393-765-CROSS.md`.
 
-765 <-> 766 remains `TRANSLATED_PARTIAL`: a translator exists and unit tests
+**393 ↔ 404 is verified in BOTH directions** (plus DIRECT 404↔404) with official
+Mojang jars and scripted protocol clients. The only gameplay-critical delta is
+Slot wire form; see `docs/DELTA_393_404.md` and `docs/VALIDATION_393_404.md`.
+Completeness stays `PARTIAL`: recipes/advancements/trades that embed Slot are
+dropped rather than rematerialised.
+
+765 ↔ 766 remains `TRANSLATED_PARTIAL`: a translator exists and unit tests
 pass, but no real cross-version run has been done.
 
 Known gaps:
@@ -64,11 +63,10 @@ Known gaps:
 - **Protocol 776 (26.2)** and **763 (1.20.1)** have thin declared tables (38 and
   21 packets). 26.2 has no published packet data yet, so it cannot be enriched
   by derivation the way the rest of the range was.
-- **Only 393 has a VERIFIED codec.** Every other protocol is `DECLARED` or
-  `DERIVED`. Note this is the *codec* axis: 765 still has only a `DECLARED`
-  codec even though the 393 <-> 765 *pairing* is `TRANSLATED_VERIFIED` in both
-  directions, because no same-version 765 <-> 765 run has been done.
-- **Entity type ids are copied numerically** across the 393 <-> 765 pair. The
+- **393 and 404 have verified pairings.** Codec status for 404 remains
+  `DERIVED` (inherited packet ids); the *pairing* axes are
+  `DIRECT_VERIFIED` / `TRANSLATED_VERIFIED`.
+- **Entity type ids are copied numerically** across the 393 ↔ 765 pair. The
   entity registry gained entries between the versions, so a mob can render as
   the wrong model while sitting at the correct position with correct motion.
   Fixable with a type-name mapping.
@@ -81,7 +79,7 @@ Known gaps:
 | ---: | --- | --- | --- | ---: | --- | --- | --- |
 | 393 | 1.13 | V1_13 | VERIFIED | 55 | no | DIRECT/FULL | authored from published 1.13 packet ids; exercised end-to-end by the official Minecraft 1.13 client against the official 1.13 server through Conduit (login, chunks, movement, combat, death, respawn, advancements; ~3 minutes, no disconnect) |
 | 401 | 1.13.1 | V1_13 | DERIVED | 55 | no | DIRECT/PARTIAL | published packet ids for 1.13.1; capabilities inherited from 1.13 (derived from 1.13) |
-| 404 | 1.13.2 | V1_13 | DERIVED | 55 | no | DIRECT/PARTIAL | published packet ids for 1.13.2; capabilities inherited from 1.13.1 (derived from 1.13.1) |
+| 404 | 1.13.2 | V1_13 | DERIVED | 55 | no | DIRECT/FULL | published packet ids for 1.13.2; capabilities inherited from 1.13.1 (derived from 1.13.1); DIRECT pairing verified — see VALIDATION_393_404.md |
 | 477 | 1.14 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14; capabilities inherited from 1.13.2 (derived from 1.13.2) |
 | 480 | 1.14.1 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14.1; capabilities inherited from 1.14 (derived from 1.14) |
 | 490 | 1.14.3 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14.3; capabilities inherited from 1.14.1 (derived from 1.14.1) |
@@ -119,14 +117,16 @@ Known gaps:
 
 ### Registered translators (ordered pairs)
 
-| Client | Backend | Support | Completeness | Notes |
-| ---: | ---: | --- | --- | --- |
-| 393 | 765 | TRANSLATED | PARTIAL | config bridge + login/join/player-info/chunks(Y0-255)/movement; entities/metadata incomplete; real-client pending |
-| 765 | 393 | TRANSLATED | PARTIAL | reverse foundation with chunk/player-info; configuration synthesis limited |
-| 765 | 766 | TRANSLATED | PARTIAL | control/login/config packets; JoinGame/player-info/registry unsupported |
-| 766 | 765 | TRANSLATED | PARTIAL | control/login/config packets; JoinGame/player-info/registry unsupported |
+| Client | Backend | Support | Completeness | Validation | Notes |
+| ---: | ---: | --- | --- | --- | --- |
+| 393 | 404 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | Slot rematerialisation; recipes/advancements/trades dropped |
+| 404 | 393 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | Slot rematerialisation; recipes/advancements/trades dropped |
+| 393 | 765 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | core gameplay verified both ways; cosmetics incomplete |
+| 765 | 393 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | configuration synthesis; core gameplay verified |
+| 765 | 766 | TRANSLATED | PARTIAL | TRANSLATED_PARTIAL | control/login/config; JoinGame/registry unsupported |
+| 766 | 765 | TRANSLATED | PARTIAL | TRANSLATED_PARTIAL | control/login/config; JoinGame/registry unsupported |
 
-protocols with codecs: 37; matrix cells: 1369; direct: 37; translated: 4; unsupported: 1328; of which partial: 36
+protocols with codecs: 37; matrix cells: 1369; direct: 37; translated: 6; unsupported: 1326
 
 
 ## Test artifacts

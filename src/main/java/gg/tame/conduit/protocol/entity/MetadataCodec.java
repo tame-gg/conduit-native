@@ -80,9 +80,19 @@ public final class MetadataCodec {
    */
   public static byte[] translate(ProtocolDefinition source, ProtocolDefinition target,
                                  byte[] body, boolean living) throws IOException {
-    boolean toModern = target.version().number() > 404;
     int fromProtocol = source.version().number();
     int toProtocol = target.version().number();
+    boolean fromLegacy = fromProtocol <= 404;
+    boolean toLegacy = toProtocol <= 404;
+
+    // 393 ↔ 404 share metadata type ids and field indices. The only payload that
+    // changes is Slot (short id → present+VarInt). Rematerialising those is enough;
+    // applying the 393↔765 index/type maps here would scramble a same-era stream.
+    if (fromLegacy && toLegacy) {
+      return translateLegacySlotOnly(fromProtocol, toProtocol, body);
+    }
+
+    boolean toModern = !toLegacy;
 
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 16);
     DataOutputStream out = new DataOutputStream(buffer);
@@ -113,6 +123,77 @@ public final class MetadataCodec {
     out.writeByte(END);
     out.flush();
     return carried == 0 ? null : buffer.toByteArray();
+  }
+
+  /**
+   * Same-era rematerialisation for protocols &le;404: type ids and indices are
+   * identical; only Slot payloads change wire form between 393 and 404.
+   */
+  private static byte[] translateLegacySlotOnly(int fromProtocol, int toProtocol, byte[] body)
+      throws IOException {
+    if (fromProtocol == toProtocol) return body;
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 16);
+    DataOutputStream out = new DataOutputStream(buffer);
+    int carried = 0;
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      while (true) {
+        int index = in.readUnsignedByte();
+        if (index == END) break;
+        int type = MinecraftInput.varInt(in);
+        out.writeByte(index);
+        MinecraftOutput.varInt(out, type);
+        if (type == 6) { // Slot on the 1.13 metadata type table
+          ItemCodec.write(toProtocol, out, ItemCodec.read(fromProtocol, in));
+        } else {
+          copyLegacyValue(out, in, type);
+        }
+        carried++;
+      }
+    }
+    out.writeByte(END);
+    out.flush();
+    return carried == 0 ? null : buffer.toByteArray();
+  }
+
+  /** Copies one non-Slot legacy metadata value without interpreting it. */
+  private static void copyLegacyValue(DataOutput out, DataInput in, int type) throws IOException {
+    switch (type) {
+      case 0 -> out.writeByte(in.readByte());
+      case 1 -> MinecraftOutput.varInt(out, MinecraftInput.varInt(in));
+      case 2 -> out.writeFloat(in.readFloat());
+      case 3, 4 -> MinecraftOutput.string(out, MinecraftInput.string(in, 262_144));
+      case 5 -> {
+        boolean present = in.readBoolean();
+        out.writeBoolean(present);
+        if (present) MinecraftOutput.string(out, MinecraftInput.string(in, 262_144));
+      }
+      case 7 -> out.writeBoolean(in.readBoolean());
+      case 8 -> {
+        for (int axis = 0; axis < 3; axis++) out.writeFloat(in.readFloat());
+      }
+      case 9 -> out.writeLong(in.readLong());
+      case 10 -> {
+        boolean present = in.readBoolean();
+        out.writeBoolean(present);
+        if (present) out.writeLong(in.readLong());
+      }
+      case 11 -> MinecraftOutput.varInt(out, MinecraftInput.varInt(in));
+      case 12 -> {
+        boolean present = in.readBoolean();
+        out.writeBoolean(present);
+        if (present) {
+          out.writeLong(in.readLong());
+          out.writeLong(in.readLong());
+        }
+      }
+      case 13 -> MinecraftOutput.varInt(out, MinecraftInput.varInt(in));
+      case 14 -> {
+        byte[] tag = gg.tame.conduit.protocol.item.ItemNbt.readTag(in, true);
+        gg.tame.conduit.protocol.item.ItemNbt.writeTag(out, tag, true);
+      }
+      case 15 -> throw new IOException("particle metadata is not copied across 393/404");
+      default -> throw new IOException("unknown legacy metadata type " + type);
+    }
   }
 
   public static int mapType393To765(int type) {

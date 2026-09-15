@@ -24,6 +24,20 @@ public final class CompatibilityRegistry {
     registerValidated(393, 393, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL,
         ValidationStatus.DIRECT_VERIFIED,
         "1.13 native — verified with the official 1.13 client and server");
+    // 404 DIRECT verified with scripted 1.13.2 client against real 1.13.2 server
+    // through Conduit (login, play, chunks/entities/inventory/keepalive).
+    registerValidated(404, 404, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL,
+        ValidationStatus.DIRECT_VERIFIED,
+        "1.13.2 native — verified with scripted protocol-404 client against official 1.13.2 server");
+    // 393↔404: Slot wire-form delta; bidirectionally verified with real jars + probes.
+    registerValidated(393, 404, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
+        ValidationStatus.TRANSLATED_VERIFIED,
+        "real 1.13 client probe sustained play on real 1.13.2 server; Slot rematerialised; "
+            + "recipes/advancements/trades dropped");
+    registerValidated(404, 393, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
+        ValidationStatus.TRANSLATED_VERIFIED,
+        "real 1.13.2 client probe sustained play on real 1.13 server; Slot rematerialised; "
+            + "recipes/advancements/trades dropped");
     register(765, 766, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         "control/login/config packets; JoinGame/player-info/registry unsupported");
     register(766, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,

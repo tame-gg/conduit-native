@@ -111,8 +111,15 @@ public final class ContainerCodec {
 
   // ---------------------------------------------------------------- clicking
 
-  /** The fields of a container click, in the form both eras can be rebuilt from. */
-  public record Click(int windowId, int slot, int button, int mode, SemanticItem carried) {}
+  /**
+   * The fields of a container click, in the form both eras can be rebuilt from.
+   *
+   * <p>{@code actionNumber} is meaningful on protocols &le;404 (the Confirm
+   * Transaction handshake). On modern clicks it is always 0 — those releases
+   * use {@code stateId} instead.
+   */
+  public record Click(int windowId, int slot, int button, int mode, int actionNumber,
+                      SemanticItem carried) {}
 
   /**
    * Click Container.
@@ -125,8 +132,10 @@ public final class ContainerCodec {
    *
    * <p>1.13's {@code action} number is the id the server echoes in its
    * transaction confirmation; 1.17 removed that handshake in favour of the
-   * state id. Neither number can be carried across, so each direction
-   * synthesises the one its target needs.
+   * state id. Across the 393/765 era boundary neither number can be carried
+   * across, so each direction synthesises the one its target needs. Across
+   * 393/404 both sides still speak the action-number handshake, so the value
+   * is preserved.
    */
   public static Click readClick(int fromProtocol, byte[] body) throws IOException {
     boolean fromModern = fromProtocol > 404;
@@ -135,7 +144,7 @@ public final class ContainerCodec {
       if (fromModern) MinecraftInput.varInt(in);              // stateId
       int slot = in.readShort();
       int button = in.readByte();
-      if (!fromModern) in.readShort();                        // action number
+      int actionNumber = fromModern ? 0 : in.readShort();
       int mode = MinecraftInput.varInt(in);
       if (fromModern) {
         int changed = MinecraftInput.varInt(in);
@@ -146,7 +155,7 @@ public final class ContainerCodec {
         }
       }
       SemanticItem carried = ItemCodec.read(fromProtocol, in);
-      return new Click(windowId, slot, button, mode, carried);
+      return new Click(windowId, slot, button, mode, actionNumber, carried);
     }
   }
 
@@ -304,15 +313,26 @@ public final class ContainerCodec {
     }
   }
 
-  /** Writes one 1.13 equipment packet body. */
-  public static byte[] writeEquipment393(Equipment change) throws IOException {
+  /**
+   * Writes one pre-1.16 equipment packet body ({@code entityId, slot, item}).
+   * Protocol selects the Slot wire form (short id on 393, present+VarInt on 404).
+   */
+  public static byte[] writeEquipment(int protocol, Equipment change) throws IOException {
+    if (protocol > 404) {
+      throw new IOException("use writeEquipment765 for modern multi-slot equipment");
+    }
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(32);
     DataOutputStream out = new DataOutputStream(buffer);
     MinecraftOutput.varInt(out, change.entityId());
     MinecraftOutput.varInt(out, change.slot());
-    ItemCodec.write(393, out, change.item());
+    ItemCodec.write(protocol, out, change.item());
     out.flush();
     return buffer.toByteArray();
+  }
+
+  /** Writes one 1.13 equipment packet body. */
+  public static byte[] writeEquipment393(Equipment change) throws IOException {
+    return writeEquipment(393, change);
   }
 
   /** Writes the whole set as one 1.20.4 equipment packet body. */
