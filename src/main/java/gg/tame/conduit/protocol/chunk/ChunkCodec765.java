@@ -63,31 +63,64 @@ public final class ChunkCodec765 {
   }
 
   private static SemanticChunkSection readSection(DataInputStream in) throws IOException {
-    short blockCount = in.readShort();
-    if (blockCount < 0 || blockCount > 4096) throw new IOException("blockCount " + blockCount);
-    int[] blocks = readPaletted(in, 4096, 8);
-    int[] biomes = readPaletted(in, 64, 3);
+    // Notchian non-air counts can exceed 4096 (fluids / double-counting). Wire is still a short;
+    // clamp for semantic use — do not fail the section.
+    int blockCount = in.readShort() & 0xffff;
+    if (blockCount > 4096) blockCount = 4096;
+    int[] blocks = readPaletted(in, 4096, 8, 15);
+    int[] biomes = readPaletted(in, 64, 3, 6);
     return new SemanticChunkSection(blockCount, blocks, biomes, new byte[0], new byte[0]);
   }
 
-  private static int[] readPaletted(DataInputStream in, int entries, int maxIndirectBits) throws IOException {
-    int bits = in.readUnsignedByte();
-    if (bits > 32) throw new IOException("palette bits " + bits);
-    if (bits == 0) {
+  /**
+   * Paletted container matching Notchian 1.18+ network rules:
+   * - bits 0 = single-valued (data length present, usually 0)
+   * - bits in 1..maxIndirect = indirect palette
+   * - otherwise direct registry ids at {@code directBits} (invalid BPEs rounded up)
+   * - data-array length may be smaller than expected (client uses expected) or larger
+   *   (client consumes declared longs then treats storage as empty/zero)
+   */
+  private static int[] readPaletted(DataInputStream in, int entries, int maxIndirectBits, int directBits)
+      throws IOException {
+    int rawBits = in.readUnsignedByte();
+    if (rawBits > 32) throw new IOException("palette bits " + rawBits);
+    if (rawBits == 0) {
       int single = MinecraftInput.varInt(in);
-      BlockStateMaps.readVarIntLongArray(in, 1);
+      consumeLongArray(in, 0); // length present; expected 0
       int[] out = new int[entries];
       java.util.Arrays.fill(out, single);
       return out;
     }
+
+    int bits;
+    boolean indirect;
+    if (rawBits >= 1 && rawBits <= maxIndirectBits) {
+      bits = rawBits;
+      // Blocks: Notchian never uses 1-3 for block states; round up to 4.
+      if (entries == 4096 && bits < 4) bits = 4;
+      indirect = true;
+    } else {
+      bits = directBits;
+      indirect = false;
+    }
+
     int[] palette = null;
-    if (bits <= maxIndirectBits) {
+    if (indirect) {
       int paletteLen = MinecraftInput.varInt(in);
       if (paletteLen < 0 || paletteLen > Math.max(entries, 4096)) throw new IOException("palette len " + paletteLen);
       palette = new int[paletteLen];
       for (int i = 0; i < paletteLen; i++) palette[i] = MinecraftInput.varInt(in);
     }
-    long[] data = BlockStateMaps.readVarIntLongArray(in, entries + 16);
+
+    int valuesPerLong = 64 / bits;
+    int expectedLongs = (entries + valuesPerLong - 1) / valuesPerLong;
+    long[] data = consumeLongArray(in, expectedLongs);
+    if (data.length == 0) {
+      // Oversized declared length: Notchian discards → all zeros / palette[0]
+      int[] out = new int[entries];
+      if (palette != null && palette.length > 0) java.util.Arrays.fill(out, palette[0]);
+      return out;
+    }
     int[] indices = BlockStateMaps.unpack(data, bits, entries, true);
     if (palette == null) return indices;
     int[] out = new int[entries];
@@ -96,6 +129,26 @@ public final class ChunkCodec765 {
       out[i] = idx >= 0 && idx < palette.length ? palette[idx] : 0;
     }
     return out;
+  }
+
+  /**
+   * Read a VarInt-prefixed long array.
+   * Notchian {@code FriendlyByteBuf.readLongArray} always consumes exactly the declared count.
+   * Oversized vs expected storage → discard values (empty result). Undersized → pad with zeros.
+   */
+  private static long[] consumeLongArray(DataInputStream in, int expectedLongs) throws IOException {
+    int declared = MinecraftInput.varInt(in);
+    if (declared < 0 || declared > 4096 + 64) throw new IOException("long array length " + declared);
+    if (declared > expectedLongs && expectedLongs > 0) {
+      for (int i = 0; i < declared; i++) in.readLong();
+      return new long[0];
+    }
+    long[] data = new long[declared];
+    for (int i = 0; i < declared; i++) data[i] = in.readLong();
+    if (declared >= expectedLongs) return data;
+    long[] padded = new long[expectedLongs];
+    System.arraycopy(data, 0, padded, 0, declared);
+    return padded;
   }
 
   public static byte[] encodeFromLegacy(SemanticChunk legacy393StatesAlready) throws IOException {

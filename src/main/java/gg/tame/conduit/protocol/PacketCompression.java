@@ -40,8 +40,16 @@ public final class PacketCompression {
       inflater.setInput(framedPayload, index, framedPayload.length - index);
       byte[] inflated = new byte[uncompressedSize];
       try {
-        int produced = inflater.inflate(inflated);
-        if (produced != uncompressedSize || !inflater.finished()) throw new IOException("truncated compressed packet");
+        int produced = 0;
+        while (produced < uncompressedSize) {
+          int n = inflater.inflate(inflated, produced, uncompressedSize - produced);
+          if (n == 0) {
+            if (inflater.finished()) break;
+            if (inflater.needsInput()) throw new IOException("truncated compressed packet");
+          }
+          produced += n;
+        }
+        if (produced != uncompressedSize) throw new IOException("truncated compressed packet");
       } catch (DataFormatException exception) { throw new IOException("malformed compressed packet", exception); }
       return inflated;
     }
