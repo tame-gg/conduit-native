@@ -71,6 +71,7 @@ public final class Phase18_393_765_WorldTests {
     require(BlockStateMaps.to393(0) == 0, "air");
     require(BlockStateMaps.to393(1) == 1, "stone");
     require(BlockStateMaps.to765(0) == 0, "air reverse");
+    require(BlockStateMaps.to393(Integer.MAX_VALUE) == 0, "oob → air not stone");
     require(BlockStateMaps.plainsBiome113() == 1, "plains");
   }
 

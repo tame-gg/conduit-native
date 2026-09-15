@@ -9,21 +9,27 @@ import java.util.Arrays;
 /**
  * Block-state ID tables generated from PrismarineJS minecraft-data (1.13 + 1.20.4).
  * Mapping is by block name + relative state offset within that block's range.
- * Blocks unique to one version fall back to stone (id 1). Air stays 0.
+ *
+ * <p>Out-of-range IDs map to air (0), not stone. Silent stone substitution corrupts
+ * gameplay semantics (solid where there should be void/unknown). Entries baked into
+ * the binary tables that still point at stone are an intentional per-block mapping
+ * choice from generation time and should be revisited when expanding coverage —
+ * they are not a generic "unknown → stone" policy in this class.
  */
 public final class BlockStateMaps {
   private static final int[] TO_393 = load("blockstates_765_to_393.bin");
   private static final int[] TO_765 = load("blockstates_393_to_765.bin");
+  private static final int AIR = 0;
 
   private BlockStateMaps() {}
 
   public static int to393(int state765) {
-    if (state765 < 0 || state765 >= TO_393.length) return 1;
+    if (state765 < 0 || state765 >= TO_393.length) return AIR;
     return TO_393[state765];
   }
 
   public static int to765(int state393) {
-    if (state393 < 0 || state393 >= TO_765.length) return 1;
+    if (state393 < 0 || state393 >= TO_765.length) return AIR;
     return TO_765[state393];
   }
 

@@ -570,6 +570,15 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
 
       case PLAY_SPAWN_ENTITY -> {
+        if (source.version().number() > 404 && target.version().number() <= 404) {
+          // 765 unified spawn → 393 living or object spawn (never copy type ids).
+          var split = unifiedSpawnTo393(PlayPackets.body(packet));
+          if (split == null) {
+            yield new TranslationResult.Dropped("spawn entity type unmapped or body not parseable for 393");
+          }
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              split.kind(), ConnectionState.PLAY, direction, split.body()));
+        }
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped("spawn entity not defined on target");
         }
@@ -892,15 +901,8 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
    *   1.20.4  entityId:VarInt uuid:UUID type:VarInt x y z:f64 pitch:i8 yaw:i8 headPitch:i8 objectData:VarInt velocity:3xi16
    * </pre>
    *
-   * <p>Three real differences: the type widened to a VarInt, a headPitch byte was
-   * inserted, and objectData changed from a fixed i32 to a VarInt.
-   *
-   * <p>Known limitation: entity type ids are registry indices and the registry
-   * gained entries between the two versions, so a numerically-copied type can
-   * name a different entity. The geometry is correct and the entity exists at
-   * the right place; its model may be wrong. That is strictly better than the
-   * entity being absent, and unlike sounds it is observable and fixable later
-   * with a type-name mapping.
+   * <p>Object-type IDs are mapped by name via {@link gg.tame.conduit.protocol.entity.EntityTypeMaps}.
+   * Unmapped types fail closed (null) rather than inventing a wrong entity.
    */
   private static byte[] translateSpawnEntity(byte[] body, int fromProtocol, int toProtocol) {
     boolean fromModern = fromProtocol > 404;
@@ -915,6 +917,15 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       out.writeLong(in.readLong());                                      // uuid low
 
       int type = fromModern ? MinecraftInput.varInt(in) : in.readUnsignedByte();
+      if (!fromModern && toModern) {
+        var mapped = gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(type);
+        if (mapped.isEmpty()) return null;
+        type = mapped.getAsInt();
+      } else if (fromModern && !toModern) {
+        var mapped = gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(type);
+        if (mapped.isEmpty()) return null;
+        type = mapped.getAsInt();
+      }
       if (toModern) MinecraftOutput.varInt(out, type); else out.writeByte(type & 0xff);
 
       for (int index = 0; index < 3; index++) out.writeDouble(in.readDouble());  // x, y, z
@@ -934,6 +945,74 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       for (int index = 0; index < 3; index++) out.writeShort(in.readShort());    // velocity
       out.flush();
       return buffer.toByteArray();
+    } catch (IOException exception) {
+      return null;
+    }
+  }
+
+  private record Spawn393(PacketKind kind, byte[] body) {}
+
+  /**
+   * Splits a 1.20.4 unified spawn into 1.13 living ({@code 0x03}) or object ({@code 0x00}) form.
+   */
+  private static Spawn393 unifiedSpawnTo393(byte[] body) {
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      int entityId = MinecraftInput.varInt(in);
+      long uuidHigh = in.readLong();
+      long uuidLow = in.readLong();
+      int type765 = MinecraftInput.varInt(in);
+      double x = in.readDouble();
+      double y = in.readDouble();
+      double z = in.readDouble();
+      byte pitch = in.readByte();
+      byte yaw = in.readByte();
+      byte headPitch = in.readByte();
+      int objectData = MinecraftInput.varInt(in);
+      short vx = in.readShort();
+      short vy = in.readShort();
+      short vz = in.readShort();
+
+      var mob = gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(type765);
+      if (mob.isPresent()) {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+        DataOutputStream out = new DataOutputStream(buffer);
+        MinecraftOutput.varInt(out, entityId);
+        out.writeLong(uuidHigh);
+        out.writeLong(uuidLow);
+        MinecraftOutput.varInt(out, mob.getAsInt());
+        out.writeDouble(x);
+        out.writeDouble(y);
+        out.writeDouble(z);
+        out.writeByte(yaw);       // 1.13 living: yaw then pitch
+        out.writeByte(pitch);
+        out.writeByte(headPitch);
+        out.writeShort(vx);
+        out.writeShort(vy);
+        out.writeShort(vz);
+        out.writeByte(0xff);      // empty metadata terminator (full metadata still withheld)
+        out.flush();
+        return new Spawn393(PacketKind.PLAY_SPAWN_LIVING_ENTITY, buffer.toByteArray());
+      }
+
+      var object = gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(type765);
+      if (object.isEmpty()) return null;
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream(64);
+      DataOutputStream out = new DataOutputStream(buffer);
+      MinecraftOutput.varInt(out, entityId);
+      out.writeLong(uuidHigh);
+      out.writeLong(uuidLow);
+      out.writeByte(object.getAsInt() & 0xff);
+      out.writeDouble(x);
+      out.writeDouble(y);
+      out.writeDouble(z);
+      out.writeByte(pitch);
+      out.writeByte(yaw);
+      out.writeInt(objectData);
+      out.writeShort(vx);
+      out.writeShort(vy);
+      out.writeShort(vz);
+      out.flush();
+      return new Spawn393(PacketKind.PLAY_SPAWN_ENTITY, buffer.toByteArray());
     } catch (IOException exception) {
       return null;
     }
@@ -1020,11 +1099,8 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
   /**
    * Converts a pre-1.19 living-entity spawn into the unified modern spawn packet.
    *
-   * <p>Entity type ids are registry indices and the entity registry gained
-   * entries between the versions, so a numerically-copied type can name a
-   * different mob. The entity still spawns at the correct position with correct
-   * motion; only its model may be wrong. That is observable and fixable later
-   * with a type-name mapping, and is better than the mob not existing at all.
+   * <p>Entity type IDs are mapped by name via {@link gg.tame.conduit.protocol.entity.EntityTypeMaps}.
+   * Unmapped mobs are suppressed (null) rather than shown as the wrong model.
    */
   private static byte[] livingSpawnToUnified(byte[] body) {
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
@@ -1034,7 +1110,10 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       MinecraftOutput.varInt(out, MinecraftInput.varInt(in));   // entityId
       out.writeLong(in.readLong());                             // uuid high
       out.writeLong(in.readLong());                             // uuid low
-      MinecraftOutput.varInt(out, MinecraftInput.varInt(in));   // type
+      int type393 = MinecraftInput.varInt(in);
+      var mapped = gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(type393);
+      if (mapped.isEmpty()) return null;
+      MinecraftOutput.varInt(out, mapped.getAsInt());
       for (int index = 0; index < 3; index++) out.writeDouble(in.readDouble());
 
       byte yaw = in.readByte();
@@ -1047,7 +1126,8 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       MinecraftOutput.varInt(out, 0);  // objectData: unused for living entities
       for (int index = 0; index < 3; index++) out.writeShort(in.readShort());
       // Trailing 1.13 metadata blob is intentionally not carried: 1.19+ sends
-      // entity metadata as its own packet, which the backend also emits.
+      // entity metadata as its own packet. Full index/type remapping is still TODO;
+      // empty spawn is preferred over wrong metadata that can NPE the client.
       out.flush();
       return buffer.toByteArray();
     } catch (IOException exception) {

@@ -1,0 +1,4 @@
+cfg-00-0x00.bin
+cfg-01-0x08.bin
+cfg-02-0x05.bin
+cfg-03-0x09.bin

@@ -538,9 +538,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    *
    * <p>Only fires for a cross-version pair where the client protocol has a
    * Configuration phase and the backend protocol does not (e.g. a 1.20.4 client
-   * on a 1.13 backend). Conduit sends the client a finish_configuration it will
-   * never receive from the backend; the client's acknowledgement then runs the
-   * normal Configuration→Play transition, which flushes the deferred Play queue.
+   * on a 1.13 backend). Before Finish Configuration, Conduit must also synthesize
+   * Registry Data / Feature Flags / Update Tags — a bare finish leaves
+   * {@code minecraft:dimension_type} null and the 1.20.4 client NPEs on Join Game.
    *
    * <p>Idempotent: the synthesis happens at most once per session.
    */
@@ -551,8 +551,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (clientState.state() != ConnectionState.CONFIGURATION) return;
     if (backendState != ConnectionState.PLAY) return;         // wait until the backend is actually in Play
     configurationFinishSynthesized = true;
-    ProtocolTrace.note("CONFIG SYNTH finish_configuration for " + clientProtocol
-        + " client on non-configuration backend " + backendProtocol);
+    var synth = gg.tame.conduit.protocol.translate.ConfigurationSynthesizer.packetsFor(clientProtocol);
+    if (synth.isEmpty()) {
+      throw new IOException("no configuration synthesizer for client protocol " + clientProtocol
+          + " on legacy backend " + backendProtocol);
+    }
+    ProtocolTrace.note("CONFIG SYNTH " + synth.size() + " registry/feature/tag packets + finish for "
+        + clientProtocol + " client on non-configuration backend " + backendProtocol);
+    for (byte[] packet : synth) {
+      writeClient(packet, true);
+    }
     writeClient(PlayPackets.idOnly(protocol.id(ConnectionState.CONFIGURATION,
         PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH)), true);
   }

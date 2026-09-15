@@ -40,6 +40,8 @@ public final class Phase17_393_765_TranslationTests {
     playerPosition();
     configurationDroppedTo393();
     configurationAbsorberKeepAliveAndFinish();
+    configurationSynthesizerLoadsRegistries();
+    entityTypeMapsByName();
     disconnect();
     unsupportedChunksFailClosed();
     differenceDatabase();
@@ -155,6 +157,32 @@ public final class Phase17_393_765_TranslationTests {
     byte[] finish = PlayPackets.withId(v765.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH), new byte[0]);
     var finishAck = absorber.onBackendPacket(finish);
     require(finishAck.isPresent() && absorber.finished(), "finish ack");
+  }
+
+  private static void configurationSynthesizerLoadsRegistries() {
+    var packets = gg.tame.conduit.protocol.translate.ConfigurationSynthesizer.packetsFor(765);
+    require(packets.size() >= 4, "brand+flags+registry+tags");
+    require(gg.tame.conduit.protocol.translate.ConfigurationSynthesizer.packetsFor(393).isEmpty(), "no synth for 393");
+    boolean sawRegistry = false;
+    for (byte[] packet : packets) {
+      int id = packet[0] & 0xff;
+      if (id == 0x05) {
+        sawRegistry = true;
+        require(packet.length > 1000, "registry payload present");
+      }
+      require(id != 0x02, "finish excluded from synth list");
+    }
+    require(sawRegistry, "registry data packet present");
+  }
+
+  private static void entityTypeMapsByName() {
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(87).orElse(-1) == 120, "zombie 393→765");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(120).orElse(-1) == 87, "zombie 765→393");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.mob393To765(10).orElse(-1) == 20, "creeper");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.object393To765(1).orElse(-1) == 9, "boat object");
+    require(gg.tame.conduit.protocol.entity.EntityTypeMaps.isLivingOn393(120), "zombie living");
+    require(!gg.tame.conduit.protocol.entity.EntityTypeMaps.toMob393(9).isPresent()
+        || gg.tame.conduit.protocol.entity.EntityTypeMaps.toObject393(9).isPresent(), "boat not living-only");
   }
 
   private static void disconnect() throws Exception {
