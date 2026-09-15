@@ -378,6 +378,15 @@ public final class Phase19_393_765_ItemTests {
         "the nested component in a mixed list survives");
     require(roundTripped.contains("\"1\"") && roundTripped.contains("Steve"),
         "and so do the bare strings beside it");
+
+    // A list of numbers, which modern NBT stores as an int array rather than a
+    // list. Discarding it produced JSON whose `with` was a string where the
+    // client requires an array, and a 1.13 client closes the connection on that
+    // -- which is what a /fill acknowledgement did to a real 1.13 client here.
+    String counted = "{\"translate\":\"commands.fill.success\",\"with\":[147]}";
+    String back2 = ComponentCodec.nbtBytesToJson(ComponentCodec.jsonToNbtBytes(counted));
+    require(back2.contains("commands.fill.success"), "translation key survives");
+    require(back2.contains("[147]"), "the numeric argument survives as an array, not a string");
   }
 
   // ------------------------------------------------- the transaction handshake

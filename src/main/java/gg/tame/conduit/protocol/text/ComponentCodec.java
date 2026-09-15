@@ -161,7 +161,7 @@ public final class ComponentCodec {
       case 4 -> (double) input.readLong();
       case 5 -> (double) input.readFloat();
       case 6 -> input.readDouble();
-      case 7 -> skipArray(input, 1);
+      case 7 -> numberArray(input, 1);
       case 8 -> input.readUTF();
       case 9 -> {
         int element = input.readUnsignedByte();
@@ -181,8 +181,8 @@ public final class ComponentCodec {
           map.put(input.readUTF(), readTag(input, child));
         }
       }
-      case 11 -> skipArray(input, 4);
-      case 12 -> skipArray(input, 8);
+      case 11 -> numberArray(input, 4);
+      case 12 -> numberArray(input, 8);
       default -> throw new IOException("unknown nbt tag type " + type);
     };
   }
@@ -194,11 +194,28 @@ public final class ComponentCodec {
     return value;
   }
 
-  private static Object skipArray(DataInput input, int width) throws IOException {
+  /**
+   * Reads a byte/int/long array as a list of numbers.
+   *
+   * <p>These are not an exotic case in text components: modern NBT encodes a
+   * homogeneous list of integers as a TAG_Int_Array, and a translation argument
+   * list of counts (commands.fill.success carries one) arrives exactly that way.
+   * Discarding the payload and substituting an empty string produced JSON whose
+   * `with` was a string where the client requires an array, and a 1.13 client
+   * closes the connection on that rather than ignoring it.
+   */
+  private static Object numberArray(DataInput input, int width) throws IOException {
     int length = input.readInt();
     if (length < 0 || length > 262_144) throw new IOException("nbt array " + length);
-    input.skipBytes(length * width);
-    return "";
+    List<Object> values = new ArrayList<>(Math.min(length, 64));
+    for (int index = 0; index < length; index++) {
+      values.add(switch (width) {
+        case 1 -> (int) input.readByte();
+        case 4 -> input.readInt();
+        default -> (int) input.readLong();
+      });
+    }
+    return values;
   }
 
   // ------------------------------------------------------- convenience buffers
