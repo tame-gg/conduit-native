@@ -290,13 +290,44 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(move);
       }
       case PLAY_SYSTEM_CHAT, PLAY_CHAT -> {
-        // Safest unsigned path: plain text system/chat without fabricating signatures.
-        String plain = extractChatPlain(source, packet);
-        byte[] encoded = encodeSystemOrChat(target, plain);
-        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
-            target.defines(ConnectionState.PLAY, direction, PacketKind.PLAY_SYSTEM_CHAT)
-                ? PacketKind.PLAY_SYSTEM_CHAT : PacketKind.PLAY_CHAT,
-            ConnectionState.PLAY, direction, PlayPackets.body(encoded)));
+        // Unsigned path in both directions: no signature is fabricated.
+        //
+        //   1.13    component:JSON string   position:i8
+        //   1.20.4  component:NBT           overlay:bool
+        //
+        // 1.20.3 moved text components from JSON to NBT. That is a change of
+        // representation, not of meaning, so the whole component crosses --
+        // colours, translation keys, hover text and the `extra` chain included.
+        // Flattening to plain text here is what made a 1.13 server's command
+        // feedback arrive on a modern client as the bare word "Server".
+        try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          String json = source.version().number() <= 404
+              ? MinecraftInput.string(input, 262_144)
+              : gg.tame.conduit.protocol.text.ComponentCodec.nbtToJson(input);
+          // 1.13's position byte: 0 chat, 1 system, 2 action bar. 1.20.4 keeps
+          // only the action-bar distinction, as a boolean.
+          boolean overlay = source.version().number() <= 404
+              ? input.available() >= 1 && input.readByte() == 2
+              : input.available() >= 1 && input.readBoolean();
+
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(json.length() + 16);
+          DataOutputStream output = new DataOutputStream(buffer);
+          PacketKind outKind;
+          if (target.version().number() <= 404) {
+            MinecraftOutput.string(output, json);
+            output.writeByte(overlay ? 2 : 1);
+            outKind = PacketKind.PLAY_CHAT;
+          } else {
+            gg.tame.conduit.protocol.text.ComponentCodec.jsonToNbt(output, json);
+            output.writeBoolean(overlay);
+            outKind = PacketKind.PLAY_SYSTEM_CHAT;
+          }
+          if (!target.defines(ConnectionState.PLAY, direction, outKind)) {
+            yield new TranslationResult.Dropped("no chat packet on target");
+          }
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              outKind, ConnectionState.PLAY, direction, buffer.toByteArray()));
+        }
       }
       case PLAY_CHAT_COMMAND -> {
         // 393 sends one Chat Message packet holding a bare string, commands included (leading '/').

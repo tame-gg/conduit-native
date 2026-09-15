@@ -18,38 +18,31 @@ import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.UUID;
 
 /**
- * Drives the SERVERBOUND inventory and block-interaction path of a real Conduit
- * against a real different-version backend.
+ * The mirror of {@link ItemGameplayProbe}: a scripted protocol-393 client
+ * driving the serverbound inventory and block path through a real Conduit into
+ * a real 1.20.4 server.
  *
- * <p>The clientbound half of this subsystem can be watched by joining with a real
- * client, but the serverbound half needs someone to click, and synthetic OS input
- * does not reach a detached Minecraft window in this environment. This probe
- * fills that gap: it is a scripted 765 client, but everything it talks to —
- * Conduit and the 1.13 server behind it — is the real thing, so the packets it
- * sends really are decoded, translated and executed by a 1.13 server.
+ * <p>The 393 side is not the 765 side with different numbers. There is no
+ * configuration phase, login start carries no UUID, the slot is a signed short,
+ * a container click carries an action number the server must confirm, and
+ * neither block placement nor digging carries the 1.19 prediction sequence. Each
+ * of those is a place where Conduit has to invent or discard a field.
  *
  * <pre>
- *   java -cp out gg.tame.conduit.tests.ItemGameplayProbe 127.0.0.1 25562 Prober
+ *   java -cp out gg.tame.conduit.tests.ItemGameplayProbe393 127.0.0.1 25561 Prober13
  * </pre>
- *
- * <p>Exits non-zero if the session dies, and prints a per-kind tally of what came
- * back so a run can be compared against the backend's own log.
  */
-public final class ItemGameplayProbe {
-  private static final ProtocolDefinition V765 = ProtocolDefinition.forVersion(765);
+public final class ItemGameplayProbe393 {
+  private static final ProtocolDefinition V393 = ProtocolDefinition.forVersion(393);
   private static final int MAX_FRAME = 8 * 1024 * 1024;
 
   public static void main(String[] arguments) throws Exception {
     String host = arguments.length > 0 ? arguments[0] : "127.0.0.1";
-    int port = arguments.length > 1 ? Integer.parseInt(arguments[1]) : 25562;
-    String name = arguments.length > 2 ? arguments[2] : "Prober";
+    int port = arguments.length > 1 ? Integer.parseInt(arguments[1]) : 25561;
+    String name = arguments.length > 2 ? arguments[2] : "Prober13";
     long idleMillis = arguments.length > 3 ? Long.parseLong(arguments[3]) : 8_000L;
-    // "place-only" leaves the placed block standing so the backend can be asked
-    // whether it is really there, which is the difference between "the packet
-    // was accepted" and "the world actually changed".
     boolean breakAfterPlacing = !(arguments.length > 4 && arguments[4].equals("place-only"));
 
     try (Socket socket = new Socket()) {
@@ -61,51 +54,34 @@ public final class ItemGameplayProbe {
       MinecraftFrames.write(out, handshake(host, port));
       MinecraftFrames.write(out, loginStart(name));
       if (!awaitLoginSuccess(in)) { System.out.println("RESULT=login-failed"); System.exit(2); }
-      MinecraftFrames.write(out, new byte[] {3});            // login acknowledged
+      System.out.println("login success");
 
-      if (!awaitConfigurationFinish(in, out)) { System.out.println("RESULT=config-failed"); System.exit(3); }
-      System.out.println("configuration complete");
-
-      if (!awaitPlayLogin(in, out)) { System.out.println("RESULT=no-play-login"); System.exit(4); }
+      if (!awaitPlayLogin(in, out)) { System.out.println("RESULT=no-play-login"); System.exit(3); }
       System.out.println("reached PLAY");
 
-      // Settle in: read until the server teleports us, so block coordinates can
-      // be chosen relative to where the backend actually put the player rather
-      // than at a guessed position it would reject as out of reach.
-      double[] where = awaitPosition(in, out, 15_000);
-      if (where == null) { System.out.println("RESULT=no-position"); System.exit(5); }
+      // 1.13 expects the client to announce its settings; a modern backend uses
+      // them to decide view distance, so send them before anything else.
+      send(out, PacketKind.PLAY_CLIENT_INFORMATION, clientSettings());
+
+      double[] where = awaitPosition(in, out, 20_000);
+      if (where == null) { System.out.println("RESULT=no-position"); System.exit(4); }
       int baseX = (int) Math.floor(where[0]);
       int baseY = (int) Math.floor(where[1]);
       int baseZ = (int) Math.floor(where[2]);
       System.out.println("player at " + baseX + "," + baseY + "," + baseZ);
 
-      // ---- serverbound gameplay -------------------------------------------
-      // Each of these crosses the translator and is executed by a 1.13 server.
-
       send(out, PacketKind.PLAY_SET_CARRIED_ITEM, carriedItem(0));
       System.out.println("sent: selected hotbar slot 0");
 
-      send(out, PacketKind.PLAY_CREATIVE_SLOT,
-          creativeSlot(36, SemanticItem.of("minecraft:diamond_sword", 1)));
-      System.out.println("sent: creative set of hotbar slot 0 to a diamond sword");
+      send(out, PacketKind.PLAY_CREATIVE_SLOT, creativeSlot(36, SemanticItem.of("minecraft:stone", 64)));
+      System.out.println("sent: creative set of hotbar slot 0 to 64 stone");
 
-      send(out, PacketKind.PLAY_CREATIVE_SLOT,
-          creativeSlot(37, SemanticItem.of("minecraft:stone", 64)));
-      System.out.println("sent: creative set of hotbar slot 1 to 64 stone");
-
-      // Click: pick the sword up off slot 36 and put it down again. A 1.13
-      // server answers each with a transaction confirmation, which a 765 client
-      // has no packet for and which Conduit must absorb.
-      send(out, PacketKind.PLAY_CLICK_WINDOW, click(0, 36, 0, 0, SemanticItem.EMPTY));
+      send(out, PacketKind.PLAY_CLICK_WINDOW, click(0, 36, 0, 1, SemanticItem.EMPTY));
       System.out.println("sent: container click on slot 36");
 
-      send(out, PacketKind.PLAY_CLOSE_WINDOW, closeWindow(0));
+      send(out, PacketKind.PLAY_CLOSE_WINDOW, new byte[] {0});
       System.out.println("sent: close container");
 
-      send(out, PacketKind.PLAY_SET_CARRIED_ITEM, carriedItem(1));   // select the stone
-      // Place a block one step north of the player, onto the top face of the
-      // block below it. This is the real block-placement path: the backend has
-      // to accept the reach, the face and the held item.
       int placeX = baseX;
       int placeY = baseY - 1;
       int placeZ = baseZ - 2;
@@ -124,9 +100,6 @@ public final class ItemGameplayProbe {
       System.out.println("sent: use held item");
 
       // ---- a real container -----------------------------------------------
-      // Put a chest down and right-click it. The backend then opens a screen and
-      // sends its contents, which is the whole container path: Open Screen with
-      // a window type, full contents, a click, and a close.
       send(out, PacketKind.PLAY_CREATIVE_SLOT, creativeSlot(38, SemanticItem.of("minecraft:chest", 1)));
       send(out, PacketKind.PLAY_SET_CARRIED_ITEM, carriedItem(2));
       int chestX = baseX + 1;
@@ -170,7 +143,19 @@ public final class ItemGameplayProbe {
 
   private static void send(java.io.OutputStream out, PacketKind kind, byte[] body) throws Exception {
     MinecraftFrames.write(out,
-        PlayPackets.withId(V765.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, kind), body));
+        PlayPackets.withId(V393.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, kind), body));
+  }
+
+  private static byte[] clientSettings() throws Exception {
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(buffer);
+    MinecraftOutput.string(out, "en_GB");
+    out.writeByte(8);                      // view distance
+    MinecraftOutput.varInt(out, 0);        // chat enabled
+    out.writeBoolean(true);                // chat colours
+    out.writeByte(0x7f);                   // all skin parts
+    MinecraftOutput.varInt(out, 1);        // right main hand
+    return buffer.toByteArray();
   }
 
   private static byte[] carriedItem(int slot) throws Exception {
@@ -183,33 +168,37 @@ public final class ItemGameplayProbe {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     out.writeShort(slot);
-    ItemCodec.write(765, out, item);
+    ItemCodec.write(393, out, item);
     return buffer.toByteArray();
   }
 
-  private static byte[] click(int window, int slot, int button, int mode, SemanticItem carried)
+  private static byte[] click(int window, int slot, int button, int action, SemanticItem clicked)
       throws Exception {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     out.writeByte(window);
-    MinecraftOutput.varInt(out, 0);        // stateId: the client echoes what it last saw
     out.writeShort(slot);
     out.writeByte(button);
-    MinecraftOutput.varInt(out, mode);
-    MinecraftOutput.varInt(out, 0);        // no optimistically-changed slots
-    ItemCodec.write(765, out, carried);
+    out.writeShort(action);                // the number the server must confirm
+    MinecraftOutput.varInt(out, 0);        // mode
+    ItemCodec.write(393, out, clicked);
     return buffer.toByteArray();
-  }
-
-  private static byte[] closeWindow(int window) {
-    return new byte[] {(byte) window};
   }
 
   private static byte[] useItem(int hand) throws Exception {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+    MinecraftOutput.varInt(new DataOutputStream(buffer), hand);
+    return buffer.toByteArray();
+  }
+
+  /** 1.13 Player Block Placement: location, face, hand, cursor. No sequence. */
+  private static byte[] blockPlace(int x, int y, int z, int face) throws Exception {
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
-    MinecraftOutput.varInt(out, hand);
-    MinecraftOutput.varInt(out, 0);        // prediction sequence
+    out.writeLong(packed113(x, y, z));
+    MinecraftOutput.varInt(out, face);
+    MinecraftOutput.varInt(out, 0);        // main hand
+    out.writeFloat(0.5f); out.writeFloat(1.0f); out.writeFloat(0.5f);
     return buffer.toByteArray();
   }
 
@@ -217,10 +206,14 @@ public final class ItemGameplayProbe {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     MinecraftOutput.varInt(out, status);
-    out.writeLong(((long) (x & 0x3FFFFFF) << 38) | ((long) (z & 0x3FFFFFF) << 12) | (y & 0xFFF));
+    out.writeLong(packed113(x, y, z));
     out.writeByte(face);
-    MinecraftOutput.varInt(out, 0);        // prediction sequence
     return buffer.toByteArray();
+  }
+
+  /** 1.13 packs a block position as x:26, y:12, z:26 — y in the middle. */
+  private static long packed113(int x, int y, int z) {
+    return ((long) (x & 0x3FFFFFF) << 38) | ((long) (y & 0xFFF) << 26) | (z & 0x3FFFFFF);
   }
 
   // ------------------------------------------------------------------ reading
@@ -230,83 +223,18 @@ public final class ItemGameplayProbe {
       byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
       int id = PlayPackets.packetId(packet);
       if (id == 2) return true;
-      if (id == 0) {
-        System.out.println("login disconnect: " + readString(packet));
-        return false;
-      }
+      if (id == 0) { System.out.println("login disconnect: " + readString(packet)); return false; }
     }
     return false;
-  }
-
-  private static boolean awaitConfigurationFinish(java.io.InputStream in, java.io.OutputStream out)
-      throws Exception {
-    for (int attempt = 0; attempt < 512; attempt++) {
-      byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
-      int id = PlayPackets.packetId(packet);
-      if (V765.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id,
-          PacketKind.CONFIGURATION_KEEP_ALIVE)) {
-        MinecraftFrames.write(out, packet);      // echo the same id back
-        continue;
-      }
-      if (V765.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id,
-          PacketKind.CONFIGURATION_FINISH)) {
-        MinecraftFrames.write(out, PlayPackets.withId(
-            V765.id(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER,
-                PacketKind.CONFIGURATION_FINISH), new byte[0]));
-        return true;
-      }
-      if (V765.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id,
-          PacketKind.CONFIGURATION_DISCONNECT)) {
-        System.out.println("configuration disconnect: " + readString(packet));
-        return false;
-      }
-    }
-    return false;
-  }
-
-  /** Reads until the backend sends an absolute position, and returns it. */
-  private static double[] awaitPosition(java.io.InputStream in, java.io.OutputStream out, long millis)
-      throws Exception {
-    long deadline = System.currentTimeMillis() + millis;
-    while (System.currentTimeMillis() < deadline) {
-      byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
-      int id = PlayPackets.packetId(packet);
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id,
-          PacketKind.PLAY_PLAYER_POSITION)) {
-        double[] where;
-        try (DataInputStream body = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
-          where = new double[] {body.readDouble(), body.readDouble(), body.readDouble()};
-        }
-        respondToKeepAliveOrTeleport(in, out, packet, id);
-        return where;
-      }
-      respondToKeepAliveOrTeleport(in, out, packet, id);
-    }
-    return null;
-  }
-
-  /** Use Item On Block, in the 1.20.4 field order. */
-  private static byte[] blockPlace(int x, int y, int z, int face) throws Exception {
-    ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-    DataOutputStream out = new DataOutputStream(buffer);
-    MinecraftOutput.varInt(out, 0);        // main hand
-    out.writeLong(((long) (x & 0x3FFFFFF) << 38) | ((long) (z & 0x3FFFFFF) << 12) | (y & 0xFFF));
-    MinecraftOutput.varInt(out, face);
-    out.writeFloat(0.5f); out.writeFloat(1.0f); out.writeFloat(0.5f);   // cursor on the face
-    out.writeBoolean(false);               // not inside the block
-    MinecraftOutput.varInt(out, 0);        // prediction sequence
-    return buffer.toByteArray();
   }
 
   private static boolean awaitPlayLogin(java.io.InputStream in, java.io.OutputStream out) throws Exception {
     for (int attempt = 0; attempt < 4096; attempt++) {
       byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
       int id = PlayPackets.packetId(packet);
-      if (respondToKeepAliveOrTeleport(in, out, packet, id)) continue;
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_LOGIN)) {
-        return true;
-      }
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DISCONNECT)) {
+      if (answer(in, out, packet, id)) continue;
+      if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_LOGIN)) return true;
+      if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DISCONNECT)) {
         System.out.println("play disconnect: " + readString(packet));
         return false;
       }
@@ -314,31 +242,63 @@ public final class ItemGameplayProbe {
     return false;
   }
 
-  /** Answers keepalives and teleports so the session stays alive while probing. */
-  private static boolean respondToKeepAliveOrTeleport(java.io.InputStream in, java.io.OutputStream out,
-                                                      byte[] packet, int id) throws Exception {
-    if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_KEEP_ALIVE)) {
+  private static double[] awaitPosition(java.io.InputStream in, java.io.OutputStream out, long millis)
+      throws Exception {
+    long deadline = System.currentTimeMillis() + millis;
+    while (System.currentTimeMillis() < deadline) {
+      byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
+      int id = PlayPackets.packetId(packet);
+      if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_PLAYER_POSITION)) {
+        double[] where;
+        try (DataInputStream body = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
+          where = new double[] {body.readDouble(), body.readDouble(), body.readDouble()};
+        }
+        answer(in, out, packet, id);
+        return where;
+      }
+      answer(in, out, packet, id);
+    }
+    return null;
+  }
+
+  /** Keeps the session alive: keepalives, teleport confirmations, transactions. */
+  private static boolean answer(java.io.InputStream in, java.io.OutputStream out, byte[] packet, int id)
+      throws Exception {
+    if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_KEEP_ALIVE)) {
       ByteArrayOutputStream buffer = new ByteArrayOutputStream();
       DataOutputStream reply = new DataOutputStream(buffer);
       MinecraftOutput.varInt(reply,
-          V765.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE));
+          V393.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE));
       reply.write(PlayPackets.body(packet));
       MinecraftFrames.write(out, buffer.toByteArray());
       return true;
     }
-    if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id,
-        PacketKind.PLAY_PLAYER_POSITION)) {
+    if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_PLAYER_POSITION)) {
       try (DataInputStream body = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
         body.readDouble(); body.readDouble(); body.readDouble();
         body.readFloat(); body.readFloat(); body.readByte();
         int teleportId = MinecraftInput.varInt(body);
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         DataOutputStream reply = new DataOutputStream(buffer);
-        MinecraftOutput.varInt(reply, V765.id(ConnectionState.PLAY,
+        MinecraftOutput.varInt(reply, V393.id(ConnectionState.PLAY,
             PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TELEPORT_CONFIRM));
         MinecraftOutput.varInt(reply, teleportId);
         MinecraftFrames.write(out, buffer.toByteArray());
       }
+      return true;
+    }
+    if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id,
+        PacketKind.PLAY_CONFIRM_TRANSACTION)) {
+      // Echo it back: a 1.13 client that does not is locked out of its own
+      // inventory. Here the confirmation is Conduit's, synthesised because a
+      // 1.20.4 backend has no such packet.
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+      DataOutputStream reply = new DataOutputStream(buffer);
+      MinecraftOutput.varInt(reply, V393.id(ConnectionState.PLAY,
+          PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIRM_TRANSACTION));
+      reply.write(PlayPackets.body(packet));
+      MinecraftFrames.write(out, buffer.toByteArray());
+      System.out.println("received and echoed a Confirm Transaction (window/action/accepted)");
       return true;
     }
     return false;
@@ -357,25 +317,26 @@ public final class ItemGameplayProbe {
         break;
       }
       int id = PlayPackets.packetId(packet);
-      respondToKeepAliveOrTeleport(in, out, packet, id);
-      String kind = describe(id);
-      seen.merge(kind, 1, Integer::sum);
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_OPEN_WINDOW)) {
+      answer(in, out, packet, id);
+      seen.merge(describe(id), 1, Integer::sum);
+      if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_OPEN_WINDOW)) {
         try (DataInputStream body = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
-          int window = MinecraftInput.varInt(body);
-          int menu = MinecraftInput.varInt(body);
-          System.out.println("OPENED window=" + window + " menu=" + menu);
-          // Click the first slot of the container, then close it.
+          int window = body.readUnsignedByte();
+          String type = MinecraftInput.string(body, 32767);
+          String title = MinecraftInput.string(body, 262_144);
+          int slots = body.readUnsignedByte();
+          System.out.println("OPENED window=" + window + " type=" + type + " slots=" + slots
+              + " title=" + title);
           MinecraftFrames.write(out, PlayPackets.withId(
-              V765.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLICK_WINDOW),
-              click(window, 0, 0, 0, SemanticItem.EMPTY)));
+              V393.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLICK_WINDOW),
+              click(window, 0, 0, 2, SemanticItem.EMPTY)));
           MinecraftFrames.write(out, PlayPackets.withId(
-              V765.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLOSE_WINDOW),
-              closeWindow(window)));
+              V393.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLOSE_WINDOW),
+              new byte[] {(byte) window}));
           System.out.println("sent: click slot 0 of the open container, then close it");
         }
       }
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DISCONNECT)) {
+      if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DISCONNECT)) {
         seen.merge("DISCONNECT:" + readString(packet), 1, Integer::sum);
         break;
       }
@@ -385,7 +346,7 @@ public final class ItemGameplayProbe {
 
   private static String describe(int id) {
     for (PacketKind kind : PacketKind.values()) {
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, kind)) return kind.name();
+      if (V393.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, kind)) return kind.name();
     }
     return "unmapped 0x" + Integer.toHexString(id);
   }
@@ -402,23 +363,21 @@ public final class ItemGameplayProbe {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     MinecraftOutput.varInt(out, 0);
-    MinecraftOutput.varInt(out, 765);
+    MinecraftOutput.varInt(out, 393);
     MinecraftOutput.string(out, host);
     out.writeShort(port);
     MinecraftOutput.varInt(out, 2);
     return buffer.toByteArray();
   }
 
+  /** 1.13 login start is the username alone — no UUID field. */
   private static byte[] loginStart(String name) throws Exception {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     MinecraftOutput.varInt(out, 0);
     MinecraftOutput.string(out, name);
-    UUID uuid = UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-    out.writeLong(uuid.getMostSignificantBits());
-    out.writeLong(uuid.getLeastSignificantBits());
     return buffer.toByteArray();
   }
 
-  private ItemGameplayProbe() {}
+  private ItemGameplayProbe393() {}
 }
