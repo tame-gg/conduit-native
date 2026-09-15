@@ -10,6 +10,10 @@ public final class MinecraftOutput {
     while ((value & ~0x7f) != 0) { output.writeByte((value & 0x7f) | 0x80); value >>>= 7; }
     output.writeByte(value);
   }
+  public static void varLong(DataOutput output, long value) throws IOException {
+    while ((value & ~0x7fL) != 0) { output.writeByte((int) (value & 0x7f) | 0x80); value >>>= 7; }
+    output.writeByte((int) value);
+  }
   public static void string(DataOutput output, String value) throws IOException {
     byte[] bytes = value.getBytes(StandardCharsets.UTF_8); varInt(output, bytes.length); output.write(bytes);
   }

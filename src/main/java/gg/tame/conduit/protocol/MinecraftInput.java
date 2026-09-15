@@ -16,6 +16,15 @@ public final class MinecraftInput {
     }
     throw new IOException("VarInt exceeds five bytes");
   }
+  public static long varLong(DataInput input) throws IOException {
+    long value = 0;
+    for (int index = 0; index < 10; index++) {
+      int current = input.readUnsignedByte();
+      value |= (long) (current & 0x7f) << (index * 7);
+      if ((current & 0x80) == 0) return value;
+    }
+    throw new IOException("VarLong exceeds ten bytes");
+  }
   public static String string(DataInput input, int maximumBytes) throws IOException {
     int length = varInt(input);
     if (length < 0 || length > maximumBytes) throw new IOException("string length exceeds limit");

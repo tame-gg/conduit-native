@@ -20,5 +20,11 @@ public enum PacketKind {
   PLAY_UPDATE_VIEW_POSITION, PLAY_UPDATE_VIEW_DISTANCE, PLAY_SIMULATION_DISTANCE,
   PLAY_CHUNK_BATCH_START, PLAY_CHUNK_BATCH_FINISHED, PLAY_UNLOCK_RECIPES,
   PLAY_ENTITY_STATUS,
+  /** Server MOTD / icon / secure-chat flag. Added in 1.19; absent from 1.13. */
+  PLAY_SERVER_DATA,
+  /** Initialize world border. Multiplexed behind an action enum on 1.13; standalone on 1.17+. */
+  PLAY_WORLD_BORDER_INIT,
+  /** World age + time of day. Identical two-long layout on 1.13 and 1.20.4. */
+  PLAY_UPDATE_TIME,
   PLAY_ENTITY_DESTROY
 }

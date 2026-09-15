@@ -84,6 +84,9 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       int id = PlayPackets.packetId(packet);
       Optional<PacketKind> kindOpt = from.identify(state, direction, id);
       if (kindOpt.isEmpty()) {
+        // Emit the body so the packet can be identified from the real wire rather than guessed.
+        ProtocolTrace.note("UNIDENTIFIED " + fromProtocol + " " + state + " " + direction
+            + " 0x" + Integer.toHexString(id) + " body=" + ProtocolTrace.hex(PlayPackets.body(packet), 64));
         throw new TranslationException("unsupported " + fromProtocol + " " + state
             + " packet id 0x" + Integer.toHexString(id) + " toward " + toProtocol);
       }
@@ -246,7 +249,8 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Unsupported("update light toward modern not implemented");
       }
       case PLAY_DECLARE_RECIPES, PLAY_TAGS, PLAY_UPDATE_VIEW_POSITION, PLAY_UPDATE_VIEW_DISTANCE,
-           PLAY_SIMULATION_DISTANCE, PLAY_CHUNK_BATCH_START, PLAY_CHUNK_BATCH_FINISHED, PLAY_UNLOCK_RECIPES -> {
+           PLAY_SIMULATION_DISTANCE, PLAY_CHUNK_BATCH_START, PLAY_CHUNK_BATCH_FINISHED, PLAY_UNLOCK_RECIPES,
+           PLAY_SERVER_DATA -> {
         // Modern-only or schema-incompatible with 393. Safe to omit for initial world entry.
         if (target.version().number() <= 404) {
           yield new TranslationResult.Dropped(kind + " dropped for 393 (no compatible wire form / optional for entry)");
@@ -269,13 +273,21 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, body));
       }
-      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS -> {
+      case PLAY_UNLOAD_CHUNK, PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_TELEPORT_CONFIRM, PLAY_HELD_ITEM, PLAY_ENTITY_STATUS, PLAY_UPDATE_TIME -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped(kind + " missing on target");
         }
         // These packets share compatible field layouts between 393 and 765 for the fields we care about.
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+      }
+      case PLAY_WORLD_BORDER_INIT -> {
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("world border missing on target");
+        }
+        // Field-level: the two warning values are ordered differently per era.
+        yield new TranslationResult.Translated(
+            gg.tame.conduit.protocol.codec.WorldBorderCodec.decodeInit(source, direction, packet));
       }
       case PLAY_SPAWN_POSITION -> {
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
@@ -325,6 +337,9 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
     if (semantic instanceof DisconnectPacket disconnect) return JoinGameCodec.encodeDisconnect(codec.protocol(), disconnect);
     if (semantic instanceof PlayerPositionPacket pos) return JoinGameCodec.encodePlayerPosition(codec.protocol(), pos);
     if (semantic instanceof MovementPacket move) return JoinGameCodec.encodeMovement(codec.protocol(), move);
+    if (semantic instanceof gg.tame.conduit.protocol.semantic.WorldBorderInitPacket border) {
+      return gg.tame.conduit.protocol.codec.WorldBorderCodec.encodeInit(codec.protocol(), border);
+    }
     if (semantic instanceof gg.tame.conduit.protocol.semantic.SemanticPlayerInfo info) {
       return gg.tame.conduit.protocol.codec.PlayerInfoCodec.encode(codec.protocol(), info);
     }

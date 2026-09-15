@@ -4,6 +4,8 @@ import gg.tame.conduit.login.ProfileProperty;
 import gg.tame.conduit.protocol.CompatibilityCompleteness;
 import gg.tame.conduit.protocol.CompatibilityRegistry;
 import gg.tame.conduit.protocol.ConnectionState;
+import gg.tame.conduit.protocol.MinecraftInput;
+import gg.tame.conduit.protocol.MinecraftOutput;
 import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
 import gg.tame.conduit.protocol.PlayPackets;
@@ -36,6 +38,9 @@ public final class Phase18_393_765_WorldTests {
     setCompressionDroppedToward393();
     heldItemTranslated();
     declareRecipesDroppedToward393();
+    serverDataDroppedToward393();
+    worldBorderInitTranslatedToward393();
+    updateTimeRemappedToward393();
     difficultyTrimmedToward393();
     entityStatusRemapped();
     malformedChunkRejected();
@@ -180,6 +185,85 @@ public final class Phase18_393_765_WorldTests {
     byte[] modern = PlayPackets.withId(0x1D, new byte[] {0, 0, 0, 1, 24});
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     require(legacy != null && PlayPackets.packetId(legacy) == 0x1C, "393 entity_status id");
+  }
+
+  /**
+   * Regression: Paper sent server_data (765 0x49) right after Synchronize Player Position.
+   * Body below is the real captured wire form: NBT TAG_String MOTD, no icon, secure chat off.
+   * 393 has no server_data (added in 1.19), so it must be dropped rather than reach the client.
+   */
+  private static void serverDataDroppedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    byte[] motd = "Conduit 765 backend".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    body.write(0x08);                       // NBT TAG_String
+    body.write(0x00);                       // length high byte
+    body.write(motd.length);                // length low byte (19)
+    body.write(motd, 0, motd.length);
+    body.write(0x00);                       // icon present = false
+    body.write(0x00);                       // enforces secure chat = false
+    byte[] modern = PlayPackets.withId(0x49, body.toByteArray());
+    require(t.backendToClient(ConnectionState.PLAY, modern) == null, "server data dropped");
+  }
+
+  /**
+   * Regression: Paper sent Initialize World Border (765 0x23) during world entry.
+   * Bytes below are the real captured wire form (vanilla defaults: diameter 59999968,
+   * portal boundary 29999984, warningBlocks 5, warningTime 15).
+   *
+   * <p>393 carries the border behind an action enum and orders warningTime before
+   * warningBlocks, so a byte-for-byte forward would silently swap 5 and 15.
+   */
+  private static void worldBorderInitTranslatedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    out.writeDouble(0.0);                    // center X
+    out.writeDouble(0.0);                    // center Z
+    out.writeDouble(59999968.0);             // old diameter
+    out.writeDouble(59999968.0);             // new diameter
+    MinecraftOutput.varLong(out, 0L);        // speed
+    MinecraftOutput.varInt(out, 29999984);   // portal teleport boundary
+    MinecraftOutput.varInt(out, 5);          // warning blocks
+    MinecraftOutput.varInt(out, 15);         // warning time
+    byte[] modern = PlayPackets.withId(0x23, body.toByteArray());
+
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
+    require(legacy != null, "world border translated");
+    require(PlayPackets.packetId(legacy) == 0x3B, "393 world border id");
+
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(legacy)));
+    require(MinecraftInput.varInt(in) == 3, "393 INITIALIZE action");
+    require(in.readDouble() == 0.0, "center x");
+    require(in.readDouble() == 0.0, "center z");
+    require(in.readDouble() == 59999968.0, "old diameter");
+    require(in.readDouble() == 59999968.0, "new diameter");
+    require(MinecraftInput.varLong(in) == 0L, "speed");
+    require(MinecraftInput.varInt(in) == 29999984, "portal boundary");
+    // The swap guard: 393 emits warningTime first, then warningBlocks.
+    require(MinecraftInput.varInt(in) == 15, "393 warning time first");
+    require(MinecraftInput.varInt(in) == 5, "393 warning blocks second");
+    require(in.available() == 0, "no trailing bytes");
+  }
+
+  /**
+   * Regression: Paper sent Update Time (765 0x62) during world entry. Layout is two big-endian
+   * longs on both eras, so only the id changes — but the values must survive intact.
+   */
+  private static void updateTimeRemappedToward393() throws Exception {
+    ProtocolTranslator t = Translators.forPair(393, 765);
+    java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(body);
+    out.writeLong(47391L);  // world age, as captured
+    out.writeLong(47391L);  // time of day, as captured
+    byte[] legacy = t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x62, body.toByteArray()));
+    require(legacy != null && PlayPackets.packetId(legacy) == 0x4A, "393 update_time id");
+    java.io.DataInputStream in =
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(legacy)));
+    require(in.readLong() == 47391L, "world age preserved");
+    require(in.readLong() == 47391L, "time of day preserved");
+    require(in.available() == 0, "no trailing bytes");
   }
 
   private static void malformedChunkRejected() {

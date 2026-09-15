@@ -39,4 +39,22 @@ public final class ProtocolTrace {
     if (!ENABLED) return;
     System.out.println("TRACE " + message);
   }
+
+  /**
+   * Renders up to {@code limit} bytes of a packet body as hex for diagnosis of an unidentified
+   * packet id. Used to identify packets from real wire traces instead of guessing their layout.
+   */
+  public static String hex(byte[] data, int limit) {
+    if (data == null) return "<null>";
+    int count = Math.min(data.length, limit);
+    StringBuilder text = new StringBuilder(count * 3 + 16);
+    for (int index = 0; index < count; index++) {
+      if (index > 0) text.append(' ');
+      int value = data[index] & 0xFF;
+      if (value < 0x10) text.append('0');
+      text.append(Integer.toHexString(value));
+    }
+    if (data.length > count) text.append(" ... (").append(data.length).append(" bytes)");
+    return text.toString();
+  }
 }
