@@ -69,10 +69,10 @@ public final class ItemGameplayProbe {
       if (!awaitPlayLogin(in, out)) { System.out.println("RESULT=no-play-login"); System.exit(4); }
       System.out.println("reached PLAY");
 
-      // Settle in: read until the server teleports us, so block coordinates can
-      // be chosen relative to where the backend actually put the player rather
-      // than at a guessed position it would reject as out of reach.
-      double[] where = awaitPosition(in, out, 15_000);
+      // Settle in: the first teleport often arrives in the same burst as Join Game,
+      // so awaitPlayLogin may already have confirmed it. Capture coordinates from
+      // any teleport we see next, without requiring a second one.
+      double[] where = awaitPosition(in, out, 20_000);
       if (where == null) { System.out.println("RESULT=no-position"); System.exit(5); }
       int baseX = (int) Math.floor(where[0]);
       int baseY = (int) Math.floor(where[1]);
@@ -138,11 +138,15 @@ public final class ItemGameplayProbe {
       // Switch to an empty hotbar slot first: right-clicking a chest while
       // holding a placeable block can place the block instead of opening it.
       send(out, PacketKind.PLAY_SET_CARRIED_ITEM, carriedItem(8));
-      // Stand next to the chest and look at it.
+      // Stand south of the chest and look north (yaw 180). Modern servers check
+      // the eye ray; yaw 0 looks the wrong way and rejects the open.
       send(out, PacketKind.PLAY_POSITION_LOOK,
-          positionLook(chestX + 0.5, where[1], chestZ + 1.5, 0f, 0f));
+          positionLook(chestX + 0.5, where[1], chestZ + 1.5, 180f, 20f));
+      Thread.sleep(200);
+      send(out, PacketKind.PLAY_POSITION_LOOK,
+          positionLook(chestX + 0.5, where[1], chestZ + 1.5, 180f, 20f));
       Thread.sleep(400);
-      send(out, PacketKind.PLAY_BLOCK_PLACE, blockPlace(chestX, chestY + 1, chestZ, 2));
+      send(out, PacketKind.PLAY_BLOCK_PLACE, blockPlaceFace(chestX, chestY + 1, chestZ, 3, 0.5f, 0.5f, 1.0f));
       System.out.println("sent: right-click the chest to open it");
       Thread.sleep(500);
 
@@ -264,39 +268,26 @@ public final class ItemGameplayProbe {
     return false;
   }
 
-  /** Reads until the backend sends an absolute position, and returns it. */
-  private static double[] awaitPosition(java.io.InputStream in, java.io.OutputStream out, long millis)
-      throws Exception {
-    long deadline = System.currentTimeMillis() + millis;
-    while (System.currentTimeMillis() < deadline) {
-      byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
-      int id = PlayPackets.packetId(packet);
-      if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id,
-          PacketKind.PLAY_PLAYER_POSITION)) {
-        double[] where;
-        try (DataInputStream body = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
-          where = new double[] {body.readDouble(), body.readDouble(), body.readDouble()};
-        }
-        respondToKeepAliveOrTeleport(in, out, packet, id);
-        return where;
-      }
-      respondToKeepAliveOrTeleport(in, out, packet, id);
-    }
-    return null;
-  }
-
   /** Use Item On Block, in the 1.20.4 field order. */
   private static byte[] blockPlace(int x, int y, int z, int face) throws Exception {
+    return blockPlaceFace(x, y, z, face, 0.5f, 1.0f, 0.5f);
+  }
+
+  private static byte[] blockPlaceFace(int x, int y, int z, int face, float cx, float cy, float cz)
+      throws Exception {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     MinecraftOutput.varInt(out, 0);        // main hand
     out.writeLong(((long) (x & 0x3FFFFFF) << 38) | ((long) (z & 0x3FFFFFF) << 12) | (y & 0xFFF));
     MinecraftOutput.varInt(out, face);
-    out.writeFloat(0.5f); out.writeFloat(1.0f); out.writeFloat(0.5f);   // cursor on the face
+    out.writeFloat(cx); out.writeFloat(cy); out.writeFloat(cz);
     out.writeBoolean(false);               // not inside the block
     MinecraftOutput.varInt(out, 0);        // prediction sequence
     return buffer.toByteArray();
   }
+
+  private static final double[] LAST_POSITION = new double[3];
+  private static boolean HAVE_POSITION;
 
   private static boolean awaitPlayLogin(java.io.InputStream in, java.io.OutputStream out) throws Exception {
     for (int attempt = 0; attempt < 4096; attempt++) {
@@ -329,7 +320,10 @@ public final class ItemGameplayProbe {
     if (V765.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id,
         PacketKind.PLAY_PLAYER_POSITION)) {
       try (DataInputStream body = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet)))) {
-        body.readDouble(); body.readDouble(); body.readDouble();
+        LAST_POSITION[0] = body.readDouble();
+        LAST_POSITION[1] = body.readDouble();
+        LAST_POSITION[2] = body.readDouble();
+        HAVE_POSITION = true;
         body.readFloat(); body.readFloat(); body.readByte();
         int teleportId = MinecraftInput.varInt(body);
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
@@ -342,6 +336,19 @@ public final class ItemGameplayProbe {
       return true;
     }
     return false;
+  }
+
+  private static double[] awaitPosition(java.io.InputStream in, java.io.OutputStream out, long millis)
+      throws Exception {
+    if (HAVE_POSITION) return LAST_POSITION.clone();
+    long deadline = System.currentTimeMillis() + millis;
+    while (System.currentTimeMillis() < deadline) {
+      byte[] packet = MinecraftFrames.read(in, MAX_FRAME);
+      int id = PlayPackets.packetId(packet);
+      respondToKeepAliveOrTeleport(in, out, packet, id);
+      if (HAVE_POSITION) return LAST_POSITION.clone();
+    }
+    return HAVE_POSITION ? LAST_POSITION.clone() : null;
   }
 
   private static Map<String, Integer> drain(java.io.InputStream in, java.io.OutputStream out, long millis)

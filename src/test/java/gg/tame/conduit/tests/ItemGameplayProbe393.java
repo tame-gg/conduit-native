@@ -100,6 +100,9 @@ public final class ItemGameplayProbe393 {
       System.out.println("sent: use held item");
 
       // ---- a real container -----------------------------------------------
+      // Geometry verified against a real 1.20.4 backend under translation
+      // (probe393 …171215): chest at base+1/-2, stand south, yaw 0 / pitch 0,
+      // north face (2).
       send(out, PacketKind.PLAY_CREATIVE_SLOT, creativeSlot(38, SemanticItem.of("minecraft:chest", 1)));
       send(out, PacketKind.PLAY_SET_CARRIED_ITEM, carriedItem(2));
       int chestX = baseX + 1;
@@ -108,10 +111,10 @@ public final class ItemGameplayProbe393 {
       send(out, PacketKind.PLAY_BLOCK_PLACE, blockPlace(chestX, chestY, chestZ, 1));
       System.out.println("sent: place a chest at " + chestX + "," + (chestY + 1) + "," + chestZ);
       Thread.sleep(900);
-      // Switch to an empty hotbar slot first: right-clicking a chest while
-      // holding a placeable block can place the block instead of opening it.
       send(out, PacketKind.PLAY_SET_CARRIED_ITEM, carriedItem(8));
-      // Stand next to the chest and look at it.
+      send(out, PacketKind.PLAY_POSITION_LOOK,
+          positionLook(chestX + 0.5, where[1], chestZ + 1.5, 0f, 0f));
+      Thread.sleep(200);
       send(out, PacketKind.PLAY_POSITION_LOOK,
           positionLook(chestX + 0.5, where[1], chestZ + 1.5, 0f, 0f));
       Thread.sleep(400);
@@ -193,12 +196,17 @@ public final class ItemGameplayProbe393 {
 
   /** 1.13 Player Block Placement: location, face, hand, cursor. No sequence. */
   private static byte[] blockPlace(int x, int y, int z, int face) throws Exception {
+    return blockPlaceFace(x, y, z, face, 0.5f, 1.0f, 0.5f);
+  }
+
+  private static byte[] blockPlaceFace(int x, int y, int z, int face, float cx, float cy, float cz)
+      throws Exception {
     ByteArrayOutputStream buffer = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(buffer);
     out.writeLong(packed113(x, y, z));
     MinecraftOutput.varInt(out, face);
     MinecraftOutput.varInt(out, 0);        // main hand
-    out.writeFloat(0.5f); out.writeFloat(1.0f); out.writeFloat(0.5f);
+    out.writeFloat(cx); out.writeFloat(cy); out.writeFloat(cz);
     return buffer.toByteArray();
   }
 
