@@ -167,20 +167,29 @@ public final class ConduitViaSession implements AutoCloseable {
   }
 
   /**
-   * Aligns Via's view of the <em>client-facing</em> state with Conduit's.
+   * Aligns Via's view of the client-facing state with Conduit's, but only until Via has one of
+   * its own.
    *
-   * <p>Only the client half is ever forced. The server half belongs to Via: the protocols in the
-   * path move the backend between LOGIN, CONFIGURATION and PLAY as they observe the packets that
-   * cause those transitions, and overwriting it from Conduit's single connection state destroys
-   * the split (old client in PLAY, modern backend in CONFIGURATION) that the 1.20.2 boundary is
-   * built around. The client half is safe to force because Conduit owns the client handshake and
-   * login, which Via does not see.
+   * <p>Neither half of the state belongs to Conduit once login is over. Via moves the client
+   * between LOGIN, CONFIGURATION and PLAY as it writes the packets that cause those transitions —
+   * it is the thing that produced the client's Login Success — and it moves the backend the same
+   * way. Conduit's own view is a single connection state owned by whichever thread last touched
+   * it, and forcing it onto Via breaks both halves in turn: it collapses the split the 1.20.2
+   * boundary is built around (old client in Play, modern backend still in Configuration), and it
+   * loses races. A 1.13 backend answers Login Success with Join Game immediately, on the backend
+   * reader thread, while the client's own Login Acknowledged is still in flight to the client
+   * reader; Conduit still reads LOGIN, Via is told LOGIN, and the one Join Game of the session is
+   * decoded in the wrong state and dropped. The client then waits forever for a Finish
+   * Configuration that the packet it was buffered behind would have produced.
+   *
+   * <p>So this only primes: it seeds the client state while Via is still in the handshake it was
+   * opened with, and says nothing after that.
    */
   public void syncClientState(ConnectionState state) {
-    State via = ConduitViaStates.toVia(state);
-    if (connection.getProtocolInfo().getClientState() != via) {
-      connection.getProtocolInfo().setClientState(via);
+    if (connection.getProtocolInfo().getClientState() != State.HANDSHAKE) {
+      return;
     }
+    connection.getProtocolInfo().setClientState(ConduitViaStates.toVia(state));
   }
 
   /**
