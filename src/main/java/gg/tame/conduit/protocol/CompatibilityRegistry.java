@@ -50,13 +50,16 @@ public final class CompatibilityRegistry {
         ValidationStatus.TRANSLATED_VERIFIED,
         "scripted 1.14 probe sustained play on real 1.13.2 server through Conduit; "
             + "Update Light/View absorbed; Use Bed dropped; inverse field rematerialisation; "
-            + "NOT real-client verified — a real 1.14 client crashes on arrow metadata "
-            + "because per-entity-class metadata layouts are unmodelled");
+            + "Spawn Object resolved through each side's own namespace and entity metadata "
+            + "aligned against measured per-entity layouts — verified by comparing every "
+            + "field a 477 client receives through Conduit against what a real 1.14 server "
+            + "sends, across 86 entity types; still not real-client verified only because "
+            + "the 1.14.0 client cannot render in this environment even with no proxy");
     registerValidated(477, 477, TranslationSupport.DIRECT, CompatibilityCompleteness.PARTIAL,
         ValidationStatus.DIRECT_VERIFIED,
         "1.14 native — scripted protocol-477 client against official 1.14 server through "
-            + "Conduit; a real 1.14 client crashes rendering even on a byte-identical "
-            + "passthrough stream, so this rests on the probe");
+            + "Conduit; a real 1.14 client crashes in its own block tesselator even with no "
+            + "proxy in the path at all, so this rests on the probe");
     register(765, 766, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         "control/login/config packets; JoinGame/player-info/registry unsupported");
     register(766, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,

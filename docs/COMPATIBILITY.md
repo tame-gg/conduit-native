@@ -65,10 +65,17 @@ only 748 of 8599 block states, 108 of 790 items and 6 of 95 entity types keep
 their meaning across this pair.
 
 Additionally, **404 → 477 is real-client core-gameplay verified**: a real 1.13.2
-client held a real 1.14 server through a full gameplay burst, 34,234 packets, no
-translation or decoder faults. **477 → 404 is not real-client verified** — a real
-1.14 client crashes on arrow metadata, because 1.14 reshaped `AbstractArrow`'s
-own fields and entity metadata is modelled per pair rather than per entity class.
+client held a real 1.14 server through a full gameplay burst, 51,175 packets, no
+translation or decoder faults.
+
+**477 → 404 remains scripted-probe verified.** The arrow crash that blocked it is
+fixed — 1.14 had changed Spawn Object's type from the legacy object enumeration
+to the entity registry id, so a dropped item arrived as an arrow — and entity
+metadata is now aligned against measured per-entity layouts. Every field a 477
+client receives through Conduit was compared against what a real 1.14 server
+sends for the same entity, across 86 entity types, with zero mismatches. It is
+not upgraded further only because the real 1.14.0 client cannot render in this
+environment even with no proxy in the path; see `docs/METADATA_404_477.md`.
 
 See `docs/DELTA_404_477.md`, `docs/VALIDATION_404_477.md` and
 `work/real-client-validation/RESULTS-477-REALCLIENT.md`. Completeness stays

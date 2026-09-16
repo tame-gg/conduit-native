@@ -1,6 +1,6 @@
 # Validation: protocol 477 (1.14) and 404↔477
 
-Starting commit: `730f7b3`. Current: `fd9f1f8`.
+Starting commit: `730f7b3`. Current: `c6bd061`.
 
 ## Artifacts
 
@@ -34,29 +34,39 @@ Scripted probes exercised: login, play join, position, creative inventory, conta
 
 ## Known limitations
 
-- **477 → 404 is not real-client verified.** A real 1.14 client on a 1.13.2
-  backend crashes with `ClassCastException` on `minecraft:arrow`. 1.14 reshaped
-  `AbstractArrow`'s own metadata fields, and withholding subclass metadata for
-  object entities did not clear it, so the bad field reaches the client by
-  another path. This is the top open item.
-- **Entity metadata above the base-class region is modelled per pair, not per
-  entity class.** The two insertions 1.14 made (`Entity.pose`,
-  `LivingEntity.sleepingPos`) describe every entity's base region, but a subclass
-  that changed independently is not covered. Object entities therefore carry
-  subclass metadata only where the layout is known unchanged — a dropped item's
-  stack is allowed, everything else is withheld. That costs those entities their
-  subclass display state; it never produces a wrong field. A per-class metadata
-  table is the real fix.
-- Particle metadata values are not copied across this pair (they throw rather
-  than risk a mis-parsed stream), matching the 393 ↔ 404 behaviour.
+- **The real 1.14.0 client cannot render in this environment.** It crashes with
+  `NullPointerException: Tesselating block model` on ordinary blocks
+  (`minecraft:stone`, `minecraft:gravel`) — and does so with **no proxy in the
+  path at all**, connecting straight to the real 1.14 server
+  (`scripts/_control-114-noproxy.ps1`). The client jar is genuine (SHA-1 matches
+  Mojang's manifest). This caps what real-1.14-client testing can demonstrate
+  here, in either direction, and is not attributable to translation.
+- **Particle metadata is not translated.** Its payload shape depends on a
+  particle id 1.14 also renumbered. An unreadable value truncates the remainder
+  of that entity's metadata block rather than ending the session.
+- Entities with no measured metadata layout fall back to the base classes and
+  lose their concrete class's own fields. 80 of 404's and 86 of 477's entity
+  types have a measured layout; see `docs/METADATA_404_477.md`.
 - Recipes / advancements / tags / trade lists dropped as optional.
 - Use Bed absorbed (removed in 1.14); Update Light, View Position and View
   Distance are absorbed toward 404 and synthesised toward 477.
 - Heightmaps are sent to 1.14 as an empty compound; the client builds its own.
-- Velocity compat jars are optional at runtime; missing them only logs an
-  install error and does not block native Conduit.
+- Velocity compat jars are optional at runtime.
 
-### Resolved in this milestone
+### Resolved
+
+- **The 1.14 arrow crash.** 1.14 changed Spawn Object's type from the legacy
+  object enumeration to the entity registry id; Conduit had only widened the
+  field. A dropped item therefore arrived as an arrow and its stack was read as
+  the arrow's flags. Root cause and the replacement metadata architecture are
+  written up in `docs/METADATA_404_477.md`.
+- **Entity metadata is aligned against measured per-entity layouts** rather than
+  a pair-wide index rule, which could not express 1.14's mid-block changes to
+  AbstractArrow, villagers, zombies, horses and firework rockets.
+- **Update View Position** was being sent per chunk carrying that chunk's
+  coordinates; it is now derived from the player's position.
+
+### Resolved earlier in this milestone
 
 - Block states, items and entity types are no longer passed through numerically.
   Only 748 of 8599 block states, 108 of 790 items and 6 of 95 entity types
