@@ -293,6 +293,56 @@ already gone.
 `adoptStates` cannot fix this. It sets `ProtocolInfo` client/server state; the
 bridge phase is separate storage and is what governs the queueing.
 
+### Ruled out: native translation contaminating the switched Via session
+
+Tested directly, because it is the obvious next suspicion. It is **disproven**.
+
+Conduit selects exactly one `ProtocolTranslator` per session. Under `via-preferred`
+`Translators.forPair` returns a `ConduitViaTranslator` whenever Via can do the
+pair, and the native registry is never consulted. The run's own log shows both
+translations chosen that way, with no native translator built at any point:
+
+```
+session translation 765→393 TRANSLATED (ViaVersion)     # initial
+session translation 765→404 TRANSLATED (ViaVersion)     # after /server smp, 26 → 25 protocols
+```
+
+`install()` swaps support, backend protocol, backend definition and translator
+together, and closes the one it replaces, so no 393 packet table or Via
+`UserConnection` outlives the commit. The prepared translation is passed
+explicitly into `completeBackendLogin` and `replayClientInformation`, so the new
+backend's login is spoken with the new translator rather than the session's.
+
+The native compensations — `BrandRewriter`, `maybeMergeCommands`,
+`synthesizeConfigurationFinishIfNeeded`, `deferPlayUntilReady` — all sit **below**
+an `if (viaEngine()) { … continue; }` early return in the backend reader, and the
+serverbound path only ever calls `towardBackend` plus the extras flush. Nothing
+adds to `deferredPlay` in a Via session, and `ProtocolProfileAdapter` is bypassed
+in `writeClient` by passing `CLOSED`. No packet is translated twice in either
+direction.
+
+The decisive evidence is that the fault reproduces with **none of that machinery
+present at all**: the offline harness has no `PlayerSession`, no
+`BackendConnection`, no packet table, and it emits the same `0x67` then `0x0b`
+from a synthetic 1.13.2 Join Game.
+
+### The same packet, both runs, two different phases
+
+Comparing the control's trace with the switch's is the clearest statement of the
+fault. Both are one ViaVersion translator, 765 → 404, same backend, same code:
+
+```
+direct   extra →client id=0x8  0x5  0x9  0x2      # configuration bundle
+direct   extra →client id=0xb len=3   … later …   # Change Difficulty, replayed in PLAY
+switch   extra →client id=0x67 len=1              # Start Configuration
+switch   extra →client id=0xb  len=3              # Change Difficulty, in CONFIGURATION
+```
+
+Identical packet, identical generator, identical Conduit handling. The control
+replays it in Play, where `0x0b` is Change Difficulty. The switch lets it out in
+Configuration, where `0x0b` does not exist. The only variable is Via's
+configuration-bridge phase.
+
 ### Reproducing the offline lifecycle comparison
 
 The harness is not committed. It opens two `ConduitViaTranslator`s for 765 → 404,
