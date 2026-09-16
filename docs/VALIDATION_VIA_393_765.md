@@ -151,21 +151,66 @@ With all three fixed, the sequence observed on the wire is:
 | Translator replays the held world stream | **fails** |
 | Client reaches Play on the new backend | **no** |
 
-The remaining failure is inside the translator's own chunk rewriting, reported by
-Via as
+### The first divergence, against a control
+
+The chunk rewriting errors reported by Via — `ERROR IN Protocol1_19_4To1_20 IN
+REMAP OF LEVEL_CHUNK_WITH_LIGHT (0x24)` and friends — are a consequence, not the
+fault. The fault is earlier, and a control run pins it down.
+
+**Control:** `config/conduit-via-765-to-404.toml` puts the same 1.20.4 client on
+the same real 1.13.2 server directly, no switch, same engine. It **works**:
+`ViaDirect joined the game`, 183 serverbound packets, **zero** Via remap errors,
+zero translation failures, session stable for the length of the run. So the
+765 → 404 pair is not the problem, and neither is Via's ability to build a
+Configuration phase for a backend that has none. Switching is.
+
+Putting the two traces side by side, the first divergence is exactly one thing —
+what the translator emits for the client's Configuration phase.
+
+| | Direct 765 → 404 (works) | After `/server smp` (fails) |
+|---|---|---|
+| Feature Flags `0x08` | 20 bytes | **absent** |
+| Registry Data `0x05` | 38 962 bytes | 38 962 bytes |
+| Update Tags `0x09` | 103 bytes | **absent** |
+| **Finish Configuration `0x02`** | **1 byte** | **absent** |
+
+The client is never given Finish Configuration, so it cannot leave the phase, so
+`configurationAck` never arrives and the switch times out. Every chunk the
+translator is handed after that is one it is being asked to rewrite for a client
+it still believes is mid-configuration, which is where the remap errors come
+from.
+
+The other visible difference is what the translator's client half is when the
+backend's Join Game reaches it. Directly it is `CONFIGURATION/PLAY` and the whole
+bundle follows. After a switch it is `PLAY/PLAY`, the translator asks for a
+reconfiguration of its own (`0x67` Start Configuration), the client acknowledges,
+and only Registry Data follows.
+
+Two candidate causes were tested and **ruled out**:
+
+* *Output stuck on the embedded channel's task queue.* Pumping that queue
+  repeatedly until it stops producing changes nothing: the remaining three
+  packets are never produced at all, not merely undrained.
+* *The 765 → 404 pair.* The control above.
+
+What has **not** been established is why the translator stops after Registry
+Data on this path. An attempt to make the switch resemble the control more
+closely — showing the translator the backend Login Success that Conduit performs
+on the player's behalf and withholds from the client, so it moves itself on from
+Login rather than being told where it is — did not take effect and regressed the
+run into a fallback loop; it was reverted rather than left in. No conclusion
+about Via's reconfiguration path is recorded here as fact, because none has been
+proven.
+
+### Reproducing the comparison
 
 ```
-ERROR IN Protocol1_19_4To1_20 IN REMAP OF LEVEL_CHUNK_WITH_LIGHT (0x24)
+powershell -File run-via-765-404.ps1 -PlaySeconds 200    # control: works
+powershell -File run-via-765-switch.ps1 -PlaySeconds 400 # switch: fails
 ```
 
-Before translator access was serialised the same failure appeared one stage
-lower, as `ERROR IN Protocol1_13_2To1_14 IN REMAP OF LEVEL_CHUNK (0x22)`. That it
-moved under a concurrency fix says the earlier one was at least partly Conduit's
-races; that it did not go away says something remains. It has **not** been
-established whether what remains is Conduit feeding the replay wrongly or a
-limitation of driving this path mid-session, and no guess about it is recorded
-here as fact. Nothing was worked around by reimplementing the rewriter, and no
-ViaVersion fork was made.
+Then compare `extra →client` lines in the two proxy traces. The control shows
+`0x8`, `0x5`, `0x9`, `0x2`; the switch shows `0x67`, `0xb`, `0x5`.
 
 **Server switching under Via: rebinding VERIFIED, completion UNVERIFIED — PARTIAL.**
 The client is disconnected cleanly with `Could not connect to smp.` rather than
