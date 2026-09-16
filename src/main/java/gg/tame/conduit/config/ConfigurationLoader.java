@@ -69,7 +69,18 @@ public final class ConfigurationLoader {
 
   private static OpsSettings ops(Map<String, String> values) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
-    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values));
+    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values));
+  }
+
+  private static TranslationSettings translation(Map<String, String> values) {
+    return new TranslationSettings(
+        optionalBoolean(values, "translation.enabled", false),
+        TranslationSettings.TranslationEngine.parse(
+            optionalString(values, "translation.engine", "via-preferred")),
+        optionalBoolean(values, "translation.via-backwards", true),
+        optionalBoolean(values, "translation.via-rewind", true),
+        optionalBoolean(values, "translation.via-legacy", false),
+        optionalString(values, "translation.data-folder", "via"));
   }
 
   private static ModdedSettings modded(Map<String, String> values) {

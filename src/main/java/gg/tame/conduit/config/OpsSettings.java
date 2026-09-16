@@ -8,9 +8,10 @@ public record OpsSettings(
     VersionGateSettings versions,
     ShutdownSettings shutdown,
     SecuritySettings security,
-    ModdedSettings modded
+    ModdedSettings modded,
+    TranslationSettings translation
 ) {
-  public static final int CURRENT_SCHEMA = 3;
+  public static final int CURRENT_SCHEMA = 4;
 
   public OpsSettings {
     if (schemaVersion < 0) throw new IllegalArgumentException("ops.schema-version must be >= 0");
@@ -20,6 +21,7 @@ public record OpsSettings(
     if (shutdown == null) shutdown = ShutdownSettings.defaults();
     if (security == null) security = SecuritySettings.defaults();
     if (modded == null) modded = ModdedSettings.defaults();
+    if (translation == null) translation = TranslationSettings.defaults();
   }
 
   public static OpsSettings defaults() {
@@ -29,6 +31,7 @@ public record OpsSettings(
         VersionGateSettings.defaults(),
         ShutdownSettings.defaults(),
         SecuritySettings.defaults(),
-        ModdedSettings.defaults());
+        ModdedSettings.defaults(),
+        TranslationSettings.defaults());
   }
 }
