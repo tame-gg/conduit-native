@@ -19,3 +19,4 @@ out-compile/
 # Rotated proxy logs
 logs/*.log.gz
 tools/__pycache__/
+config/via/

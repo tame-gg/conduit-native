@@ -82,6 +82,8 @@ public final class AllTests {
     Phase22_404_477_SemanticTests.run();
     ViaIntegrationTests.run();
     System.out.println("All Conduit foundation tests passed.");
+    // Release Via's non-daemon platform executors so this JVM can exit on its own.
+    gg.tame.conduit.viaversion.ConduitViaBootstrap.stop();
   }
   private static void decodeFramesWithoutOverAllocation() {
     VarIntFrameDecoder decoder = new VarIntFrameDecoder(16);

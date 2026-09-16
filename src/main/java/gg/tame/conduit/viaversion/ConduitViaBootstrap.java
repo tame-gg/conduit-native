@@ -3,7 +3,6 @@ package gg.tame.conduit.viaversion;
 import com.viaversion.viaversion.ViaManagerImpl;
 import com.viaversion.viaversion.api.Via;
 import com.viaversion.viaversion.commands.ViaCommandHandler;
-import com.viaversion.viaversion.platform.NoopInjector;
 import com.viaversion.viabackwards.api.ViaBackwardsPlatform;
 import com.viaversion.viarewind.api.ViaRewindPlatform;
 import gg.tame.conduit.config.TranslationSettings;
@@ -21,6 +20,7 @@ import net.raphimc.vialegacy.platform.ViaLegacyPlatform;
  */
 public final class ConduitViaBootstrap {
   private static final AtomicBoolean STARTED = new AtomicBoolean();
+  private static final AtomicBoolean SHUTDOWN_HOOK = new AtomicBoolean();
   private static volatile TranslationSettings settings = TranslationSettings.defaults();
   private static volatile boolean available;
 
@@ -70,12 +70,15 @@ public final class ConduitViaBootstrap {
 
       ViaManagerImpl.initAndLoad(
           platform,
-          new NoopInjector(),
+          new ConduitViaInjector(),
           new ViaCommandHandler(false),
           new ConduitViaPlatformLoader(),
           enableListeners.toArray(Runnable[]::new));
 
       available = Via.isLoaded();
+      if (SHUTDOWN_HOOK.compareAndSet(false, true)) {
+        Runtime.getRuntime().addShutdownHook(new Thread(ConduitViaBootstrap::stop, "conduit-via-shutdown"));
+      }
       ConduitLog.info("ViaVersion platform ready (version "
           + Via.getAPI().getVersion()
           + ", backwards=" + settings.loadViaBackwards()
@@ -85,6 +88,29 @@ public final class ConduitViaBootstrap {
       available = false;
       STARTED.set(false);
       ConduitLog.error("ViaVersion platform failed to start", failure);
+    }
+  }
+
+  /**
+   * Shuts the Via platform down.
+   *
+   * <p>Via's platform executors are not daemon threads, so a process that started Via and never
+   * stopped it stays alive after its last foreground thread finishes. Conduit therefore owns an
+   * explicit stop, and registers it as a shutdown hook so an abrupt exit still releases them.
+   */
+  public static synchronized void stop() {
+    if (!STARTED.get()) {
+      return;
+    }
+    available = false;
+    try {
+      if (Via.isLoaded() && Via.getManager() instanceof ViaManagerImpl manager) {
+        manager.destroy();
+      }
+    } catch (Throwable failure) {
+      ConduitLog.warn("ViaVersion shutdown reported " + failure);
+    } finally {
+      STARTED.set(false);
     }
   }
 
