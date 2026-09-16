@@ -21,6 +21,21 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     return "ViaVersion";
   }
 
+  /** Announces a backend state transition Conduit performed itself. */
+  public void backendEntered(ConnectionState state) {
+    session.setServerState(state);
+  }
+
+  /** Handler names on this session's channel, in pipeline order. */
+  public java.util.List<String> pipelineHandlerNames() {
+    return session.pipelineHandlerNames();
+  }
+
+  /** Via's own client/server state pair, for diagnostics and traces. */
+  public String stateDescription() {
+    return session.stateDescription();
+  }
+
   public void rebindBackend(int backendProtocol, String host, int port) {
     this.session = session.rebindBackend(backendProtocol, host, port);
   }

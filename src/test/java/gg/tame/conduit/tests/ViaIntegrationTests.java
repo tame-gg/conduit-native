@@ -43,10 +43,24 @@ public final class ViaIntegrationTests {
           "Via 765→776 TRANSLATED when path exists");
     }
 
+    // Via addresses a connection by the handler names its injector reports. If those stop matching
+    // the names the session actually puts on its channel, every packet Via generates itself dies
+    // in a null lookup — which is invisible until a real client asks for one.
+    var injector = com.viaversion.viaversion.api.Via.getManager().getInjector();
+    require("via-decoder".equals(injector.getDecoderName()), "injector decoder name");
+    require("via-encoder".equals(injector.getEncoderName()), "injector encoder name");
+    require(!injector.getServerProtocolVersions().isEmpty(), "injector reports a protocol range");
+
     try (ConduitViaTranslator translator = ConduitViaTranslator.create(393, 765, "127.0.0.1", 25565)) {
       require(translator.engineName().equals("ViaVersion"), "engine name");
       require(translator.drainToClient() != null, "drain client API");
       require(translator.drainToBackend() != null, "drain backend API");
+      require(translator.pipelineHandlerNames().contains(injector.getDecoderName()),
+          "session channel carries the decoder the injector names");
+      require(translator.pipelineHandlerNames().contains(injector.getEncoderName()),
+          "session channel carries the encoder the injector names");
+      require(translator.pipelineHandlerNames().indexOf(injector.getDecoderName()) > 0,
+          "decoder has a predecessor for Via to fire reads at");
     }
 
     require(Translators.forPair(393, 765, "127.0.0.1", 25565) instanceof ConduitViaTranslator,

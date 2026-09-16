@@ -31,6 +31,14 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * transform emits extra packets.
  */
 public final class ConduitViaSession implements AutoCloseable {
+  /**
+   * Handler names Via looks the pipeline up by. They must agree with what
+   * {@link ConduitViaInjector} reports, which is how Via finds the two ends of this session.
+   */
+  static final String HEAD_HANDLER = "conduit-head";
+  static final String DECODER_HANDLER = ConduitViaInjector.DECODER_NAME;
+  static final String ENCODER_HANDLER = ConduitViaInjector.ENCODER_NAME;
+
   private final EmbeddedChannel channel;
   private final UserConnection connection;
   private final ConcurrentLinkedQueue<byte[]> extrasToClient = new ConcurrentLinkedQueue<>();
@@ -58,17 +66,32 @@ public final class ConduitViaSession implements AutoCloseable {
     }
 
     EmbeddedChannel channel = new EmbeddedChannel();
-    channel.pipeline().addLast("via-decoder", new ChannelInboundHandlerAdapter() {
+    // Via addresses the serverbound side by asking its injector for the decoder's handler name and
+    // then firing a read at whatever sits *before* it. A pipeline whose first entry is the decoder
+    // has nothing before it, and the lookup fails, so this anchor exists purely to be that
+    // predecessor. It carries no behaviour of its own.
+    channel.pipeline().addLast(HEAD_HANDLER, new ChannelInboundHandlerAdapter());
+    channel.pipeline().addLast(DECODER_HANDLER, new ChannelInboundHandlerAdapter() {
       @Override
       public void channelRead(ChannelHandlerContext ctx, Object msg) {
         if (msg instanceof ByteBuf buf) {
           try {
-            byte[] copy = new byte[buf.readableBytes()];
-            buf.getBytes(buf.readerIndex(), copy);
-            Object session = ctx.channel().attr(ConduitViaSessionHolder.KEY).get();
-            if (session instanceof ConduitViaSession via) {
-              via.extrasToBackend.offer(copy);
+            Object holder = ctx.channel().attr(ConduitViaSessionHolder.KEY).get();
+            if (holder instanceof ConduitViaSession via) {
+              // Extra serverbound packets arrive carrying Via's passthrough marker, which says
+              // "already in the backend's dialect, do not translate again". Handing the buffer
+              // back to Via is what consumes that marker and leaves the packet body behind;
+              // stripping it here by hand would both duplicate Via's framing and leak the
+              // one-shot token it just issued.
+              via.connection.transformServerbound(buf, CancelDecoderException::generate);
+              if (buf.isReadable()) {
+                byte[] copy = new byte[buf.readableBytes()];
+                buf.getBytes(buf.readerIndex(), copy);
+                via.extrasToBackend.offer(copy);
+              }
             }
+          } catch (Exception cancelledOrFailed) {
+            // A cancelled extra is simply not forwarded.
           } finally {
             buf.release();
           }
@@ -77,7 +100,7 @@ public final class ConduitViaSession implements AutoCloseable {
         ctx.fireChannelRead(msg);
       }
     });
-    channel.pipeline().addLast("via-encoder", new ChannelOutboundHandlerAdapter() {
+    channel.pipeline().addLast(ENCODER_HANDLER, new ChannelOutboundHandlerAdapter() {
       @Override
       public void write(ChannelHandlerContext ctx, Object msg, ChannelPromise promise) {
         if (msg instanceof ByteBuf buf) {
@@ -143,19 +166,52 @@ public final class ConduitViaSession implements AutoCloseable {
     return session;
   }
 
-  public void syncState(ConnectionState state) {
+  /**
+   * Aligns Via's view of the <em>client-facing</em> state with Conduit's.
+   *
+   * <p>Only the client half is ever forced. The server half belongs to Via: the protocols in the
+   * path move the backend between LOGIN, CONFIGURATION and PLAY as they observe the packets that
+   * cause those transitions, and overwriting it from Conduit's single connection state destroys
+   * the split (old client in PLAY, modern backend in CONFIGURATION) that the 1.20.2 boundary is
+   * built around. The client half is safe to force because Conduit owns the client handshake and
+   * login, which Via does not see.
+   */
+  public void syncClientState(ConnectionState state) {
     State via = ConduitViaStates.toVia(state);
-    connection.getProtocolInfo().setClientState(via);
-    connection.getProtocolInfo().setServerState(via);
+    if (connection.getProtocolInfo().getClientState() != via) {
+      connection.getProtocolInfo().setClientState(via);
+    }
+  }
+
+  /**
+   * Tells Via that the backend half moved on without it.
+   *
+   * <p>Via normally learns the backend state from the packets that cause the transition, but
+   * Conduit owns the backend login: it writes Login Acknowledged itself, from the backend's own
+   * protocol definition, and that packet never reaches Via. Without this, Via keeps decoding the
+   * backend as if it were still in Login and mis-reads the first Configuration packet it is given.
+   */
+  public void setServerState(ConnectionState state) {
+    connection.getProtocolInfo().setServerState(ConduitViaStates.toVia(state));
+  }
+
+  /** Handler names on this session's channel, in pipeline order. */
+  public List<String> pipelineHandlerNames() {
+    return new ArrayList<>(channel.pipeline().names());
+  }
+
+  /** Via's own view of the connection, as {@code client/server}. Diagnostics only. */
+  public String stateDescription() {
+    return connection.getProtocolInfo().getClientState() + "/" + connection.getProtocolInfo().getServerState();
   }
 
   public byte[] transformClientToBackend(ConnectionState state, byte[] packet) {
-    syncState(state);
+    syncClientState(state);
     return transform(packet, true);
   }
 
   public byte[] transformBackendToClient(ConnectionState state, byte[] packet) {
-    syncState(state);
+    syncClientState(state);
     return transform(packet, false);
   }
 
@@ -186,6 +242,16 @@ public final class ConduitViaSession implements AutoCloseable {
   }
 
   private void drainEmbeddedOutbound() {
+    // Via does not always emit an extra packet inline: some paths hand it to the channel's event
+    // loop instead. An EmbeddedChannel runs that queue only when asked, so without this the packet
+    // sits there until some unrelated later operation happens to drain it, and Conduit forwards it
+    // in a state where its id means something else entirely — a Login Acknowledged arriving after
+    // the backend reached Play reads as a packet with a body and kills the connection.
+    try {
+      channel.runPendingTasks();
+    } catch (RuntimeException ignored) {
+      // A failed extra must not take the packet that produced it down with it.
+    }
     Object outbound;
     while ((outbound = channel.readOutbound()) != null) {
       if (outbound instanceof ByteBuf buf) {
