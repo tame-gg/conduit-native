@@ -231,6 +231,68 @@ No fix for either is implemented here: the Feature Flags cause is proven but the
 write failure behind the lost Update Tags and Finish Configuration is not, and
 one unproven half is not a basis for changing the switch path.
 
+### The first divergence, named from a real run
+
+Run `run-via-765-switch.ps1`, `/server smp`, commit `c80a144` with the drop
+warning in place. The proxy's **stderr** log carries the answer:
+
+```
+WARN Dropped clientbound extra id=0x5 len=38962 while lifecycle=CONNECTED clientState=PLAY;
+     the rest of the queue is discarded with it:
+     java.io.IOException: An established connection was aborted by the software in your host machine
+WARN Switch to smp failed: client did not finish configuration
+```
+
+So Registry Data was **passed to the socket writer and the write failed**. It
+never reached the client. Update Tags and Finish Configuration were discarded
+behind it. The write did not block and no thread deadlocked; a virtual-thread
+dump of the proxy shows no session thread at all by then.
+
+The client says why it aborted:
+
+```
+Client disconnected with reason: Internal Exception:
+io.netty.handler.codec.DecoderException:
+java.lang.IndexOutOfBoundsException: Index 11 out of bounds for length 10
+```
+
+Index **11** is `0x0b`; length **10** is the 1.20.4 clientbound Configuration
+table, `0x00`–`0x09`. The client was handed packet `0x0b` while in Configuration,
+where no such id exists. The proxy trace shows exactly that packet going out,
+two lines after the phase began:
+
+```
+extra →client id=0x67 len=1    # Start Configuration
+extra →client id=0xb  len=3    # <-- a PLAY packet, written after the client left PLAY
+```
+
+`0x0b`/3 bytes is **Change Difficulty**. `Protocol1_13_2To1_14` reads the
+difficulty field out of the 1.13.2 Join Game — 19w11a removed it from that packet
+— and re-emits it as its own `CHANGE_DIFFICULTY` with `scheduleSend`.
+
+### Root cause: one bridge phase, two symptoms
+
+Both faults are the same fault. On a real login the configuration bridge is at
+`PROFILE_SENT`, so everything Via emits inline while handling Join Game is
+**queued** by `Protocol1_20To1_20_2.transform` and replayed in the right phase. On
+the switch path Conduit performs the backend login itself, Via never sees a Login
+Success, and the bridge is still at `NONE`, so that queueing does not happen:
+
+* **Feature Flags** meets `cancelClientbound` and is dropped.
+* **Change Difficulty** is let straight through, lands after Start Configuration,
+  and is undecodable in the phase the client has just entered — so the client
+  aborts the connection.
+
+The Registry Data write failure is therefore **downstream**, not the cause. The
+ordering is: Via emits Start Configuration and Change Difficulty → both are
+written → the client acknowledges the phase and then chokes on `0x0b` and resets
+→ Conduit's next write, Registry Data, fails with `WSAECONNABORTED` → Update Tags
+and Finish Configuration go with it → the switch times out on a client that is
+already gone.
+
+`adoptStates` cannot fix this. It sets `ProtocolInfo` client/server state; the
+bridge phase is separate storage and is what governs the queueing.
+
 ### Reproducing the offline lifecycle comparison
 
 The harness is not committed. It opens two `ConduitViaTranslator`s for 765 → 404,

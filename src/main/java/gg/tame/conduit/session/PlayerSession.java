@@ -378,7 +378,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         try { id = "0x" + Integer.toHexString(PlayPackets.packetId(extra)); }
         catch (Exception unreadable) { id = "(unreadable)"; }
         gg.tame.conduit.log.ConduitLog.warn("Dropped clientbound extra id=" + id
-            + " len=" + extra.length + " and the rest of the queue: " + exception);
+            + " len=" + extra.length + " while lifecycle=" + lifecycle.get()
+            + " clientState=" + clientState.state()
+            + "; the rest of the queue is discarded with it: " + exception);
         return toBackend;
       }
     }
