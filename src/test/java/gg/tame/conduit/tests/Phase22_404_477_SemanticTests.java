@@ -47,6 +47,7 @@ public final class Phase22_404_477_SemanticTests {
     chunkTranslationRemapsPalette();
     chunkSectionCarriesBlockCount();
     spawnMobTranslatesTrailingMetadata();
+    arrowSubclassMetadataIsDropped();
     blockUpdateRemapsState();
     System.out.println("Phase22_404_477_SemanticTests passed.");
   }
@@ -354,6 +355,58 @@ public final class Phase22_404_477_SemanticTests {
     int index = in.readUnsignedByte();
     require(index == 7, "hand states moved off 1.14's Pose index 6, to 7; got " + index);
     require(MinecraftInput.varInt(in) == 0, "still a Byte");
+  }
+
+  /**
+   * 1.14's AbstractArrow reshaped its own fields, so a 1.13.2 arrow's subclass
+   * metadata lands on 1.14 fields of a different type — the real client dies with
+   * {@code ClassCastException} on the arrow's first tick. The base-class region
+   * still crosses; only the subclass fields are withheld.
+   */
+  private static void arrowSubclassMetadataIsDropped() throws Exception {
+    ProtocolDefinition v404 = ProtocolDefinition.forVersion(404);
+    Protocol404To477Translator translator = Protocol404To477Translator.client477();
+
+    // Spawn Object for an arrow: legacy object type 60.
+    ByteArrayOutputStream spawn = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(spawn);
+    MinecraftOutput.varInt(out, 77);
+    out.writeLong(0L); out.writeLong(0L);
+    out.writeByte(60);
+    out.writeDouble(1); out.writeDouble(64); out.writeDouble(2);
+    out.writeByte(0); out.writeByte(0);
+    out.writeInt(0);
+    out.writeShort(0); out.writeShort(0); out.writeShort(0);
+    byte[] spawnPacket = PlayPackets.withId(v404.id(ConnectionState.PLAY,
+        PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_ENTITY), spawn.toByteArray());
+    require(translator.backendToClient(ConnectionState.PLAY, spawnPacket) != null, "arrow spawned");
+
+    // Metadata: a base-class field (custom name visible, index 3) and a subclass
+    // field (index 7, the tipped arrow's colour on 1.13.2).
+    ByteArrayOutputStream meta = new ByteArrayOutputStream();
+    DataOutputStream metaOut = new DataOutputStream(meta);
+    MinecraftOutput.varInt(metaOut, 77);
+    metaOut.writeByte(3);
+    MinecraftOutput.varInt(metaOut, 7);        // Boolean
+    metaOut.writeBoolean(true);
+    metaOut.writeByte(7);
+    MinecraftOutput.varInt(metaOut, 1);        // VarInt colour
+    MinecraftOutput.varInt(metaOut, 0x996633);
+    metaOut.writeByte(0xff);
+
+    byte[] packet = PlayPackets.withId(v404.id(ConnectionState.PLAY,
+        PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA), meta.toByteArray());
+    byte[] translated = translator.backendToClient(ConnectionState.PLAY, packet);
+    require(translated != null, "arrow metadata still delivered");
+
+    DataInputStream in = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(translated)));
+    require(MinecraftInput.varInt(in) == 77, "entity id preserved");
+    int first = in.readUnsignedByte();
+    require(first == 3, "base-class field crosses unchanged; got index " + first);
+    require(MinecraftInput.varInt(in) == 7, "still a Boolean");
+    require(in.readBoolean(), "value preserved");
+    require(in.readUnsignedByte() == 0xff,
+        "the arrow's subclass field is withheld rather than landed on a 1.14 field");
   }
 
   private static void blockUpdateRemapsState() throws Exception {

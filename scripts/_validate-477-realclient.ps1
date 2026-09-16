@@ -109,12 +109,24 @@ function Start-Client([string]$Version, [string]$AssetIndex, [string]$User, [int
   $cp = (Get-Content (Join-Path $client "classpath.txt") -Raw).Trim()
   $gameDir = Join-Path $client "game"
   New-Item -ItemType Directory -Force -Path $gameDir | Out-Null
+  @(
+    "version:1"
+    "renderDistance:4"
+    "graphicsMode:0"
+    "ao:0"
+    "maxFps:60"
+    "enableVsync:false"
+    "guiScale:2"
+    "particles:2"
+    "pauseOnLostFocus:false"
+    "tutorialStep:none"
+  ) | Set-Content (Join-Path $gameDir "options.txt")
   $log = Join-Path $logDir "client-$Label-$stamp.log"
   $err = Join-Path $logDir "client-$Label-$stamp.err.log"
   $args = @(
     "-Djava.library.path=$(Join-Path $client 'natives')",
     "-Dorg.lwjgl.opengl.Display.allowSoftwareOpenGL=true",
-    "-Xms512M", "-Xmx1G",
+    "-Xms1G", "-Xmx3G",
     "-cp", $cp,
     "net.minecraft.client.main.Main",
     "--username", $User,
@@ -133,6 +145,32 @@ function Start-Client([string]$Version, [string]$AssetIndex, [string]$User, [int
     -RedirectStandardOutput $log -RedirectStandardError $err
   Write-Host "  client $Version PID $($proc.Id) -> 127.0.0.1:$Port"
   return @{ Proc = $proc; Log = $log; Err = $err }
+}
+
+# Blocks until the backend reports this player joined, so the gameplay burst
+# cannot run against an empty server and be mistaken for a passing result.
+function Wait-Joined($backend, [string]$User, [int]$Seconds = 150) {
+  for ($i = 0; $i -lt $Seconds; $i++) {
+    $text = Get-Content $backend.Log -Raw -ErrorAction SilentlyContinue
+    if ($text -and ($text -match "$User joined the game")) {
+      Write-Host "  $User joined after ${i}s"
+      return $true
+    }
+    Start-Sleep 1
+  }
+  Write-Host "  $User NEVER JOINED"
+  return $false
+}
+
+# True when the player is still connected, i.e. has joined and not since been
+# reported lost. This is what separates "the burst ran" from "the burst ran and
+# the client was there to receive it".
+function Still-Connected($backend, [string]$User) {
+  $text = Get-Content $backend.Log -Raw -ErrorAction SilentlyContinue
+  if (-not $text) { return $false }
+  $joins = ([regex]::Matches($text, "$User joined the game")).Count
+  $losses = ([regex]::Matches($text, "$User lost connection")).Count
+  return ($joins -gt 0 -and $joins -gt $losses)
 }
 
 function Stop-Safe($p) {
@@ -176,7 +214,7 @@ function Drive-Gameplay($backend, [string]$User, [bool]$Modern) {
   Start-Sleep 5
 }
 
-function Summarise([string]$Label, $client, $conduit, $backend) {
+function Summarise([string]$Label, $client, $conduit, $backend, $connectedBefore, $connectedAfter) {
   $clientText = (Get-Content $client.Log -Raw -ErrorAction SilentlyContinue) + "`n" +
                 (Get-Content $client.Err -Raw -ErrorAction SilentlyContinue)
   $conduitText = (Get-Content $conduit.Log -Raw -ErrorAction SilentlyContinue) + "`n" +
@@ -188,16 +226,17 @@ function Summarise([string]$Label, $client, $conduit, $backend) {
   $decoderFault = $clientText -match "DecoderException|Loading NBT|Internal Exception|ReadTimeout|Badly compressed"
   $translationFault = $conduitText -match "TranslationException|no semantic mapping|translation failed"
   $drops = ([regex]::Matches($conduitText, "DROP ")).Count
-  $translations = ([regex]::Matches($conduitText, "TRANSLATE ")).Count
+  $translations = ([regex]::Matches($conduitText, "(?m)^TRACE ")).Count
   $disconnect = $backendText -match "lost connection"
 
   Write-Host "--- $Label ---"
   Write-Host "  joined=$joined burst=$burst clientDecoderFault=$decoderFault translationFault=$translationFault"
-  Write-Host "  translations=$translations drops=$drops lostConnection=$disconnect"
+  Write-Host "  traced=$translations drops=$drops connectedBefore=$connectedBefore connectedAfter=$connectedAfter"
   return [ordered]@{
     label = $Label; joined = $joined; burst = $burst
     clientDecoderFault = $decoderFault; translationFault = $translationFault
-    translations = $translations; drops = $drops; lostConnection = $disconnect
+    tracedPackets = $translations; drops = $drops
+    connectedBeforeBurst = $connectedBefore; connectedAfterBurst = $connectedAfter
     clientLog = $client.Log; conduitLog = $conduit.Log; backendLog = $backend.Log
   }
 }
@@ -222,10 +261,14 @@ $results = @()
 Write-Host "=== DIRECT: 1.14 client -> Conduit -> 1.14 server ==="
 $c = Start-Conduit "config\conduit-477-native.toml" "477-native"
 $cl = Start-Client "1.14" "1.14" "Direct114" $c.Port "477-direct"
-Start-Sleep 75
+$joinedOk = Wait-Joined $b477 "Direct114"
+Start-Sleep 8
+$connectedBefore = Still-Connected $b477 "Direct114"
 Drive-Gameplay $b477 "Direct114" $true
+$connectedAfter = Still-Connected $b477 "Direct114"
+Write-Host "  connectedBeforeBurst=$connectedBefore connectedAfterBurst=$connectedAfter"
 Start-Sleep 5
-$results += Summarise "DIRECT_477_477" $cl $c $b477
+$results += Summarise "DIRECT_477_477" $cl $c $b477 $connectedBefore $connectedAfter
 Stop-Safe $cl.Proc; Stop-Safe $c.Proc
 Start-Sleep 5
 
@@ -233,10 +276,14 @@ Start-Sleep 5
 Write-Host "=== TRANSLATED: 1.13.2 client -> Conduit -> 1.14 server ==="
 $c = Start-Conduit "config\conduit-404-to-477.toml" "404-to-477"
 $cl = Start-Client "1.13.2" "1.13.1" "Trans404" $c.Port "404-to-477"
-Start-Sleep 75
+$joinedOk = Wait-Joined $b477 "Trans404"
+Start-Sleep 8
+$connectedBefore = Still-Connected $b477 "Trans404"
 Drive-Gameplay $b477 "Trans404" $true
+$connectedAfter = Still-Connected $b477 "Trans404"
+Write-Host "  connectedBeforeBurst=$connectedBefore connectedAfterBurst=$connectedAfter"
 Start-Sleep 5
-$results += Summarise "TRANSLATED_404_477" $cl $c $b477
+$results += Summarise "TRANSLATED_404_477" $cl $c $b477 $connectedBefore $connectedAfter
 Stop-Safe $cl.Proc; Stop-Safe $c.Proc
 Start-Sleep 5
 
@@ -244,10 +291,14 @@ Start-Sleep 5
 Write-Host "=== TRANSLATED: 1.14 client -> Conduit -> 1.13.2 server ==="
 $c = Start-Conduit "config\conduit-477-to-404.toml" "477-to-404"
 $cl = Start-Client "1.14" "1.14" "Trans477" $c.Port "477-to-404"
-Start-Sleep 75
+$joinedOk = Wait-Joined $b404 "Trans477"
+Start-Sleep 8
+$connectedBefore = Still-Connected $b404 "Trans477"
 Drive-Gameplay $b404 "Trans477" $false
+$connectedAfter = Still-Connected $b404 "Trans477"
+Write-Host "  connectedBeforeBurst=$connectedBefore connectedAfterBurst=$connectedAfter"
 Start-Sleep 5
-$results += Summarise "TRANSLATED_477_404" $cl $c $b404
+$results += Summarise "TRANSLATED_477_404" $cl $c $b404 $connectedBefore $connectedAfter
 Stop-Safe $cl.Proc; Stop-Safe $c.Proc
 
 Write-Host "=== cleanup ==="

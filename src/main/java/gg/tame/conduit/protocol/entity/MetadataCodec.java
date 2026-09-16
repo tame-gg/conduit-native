@@ -97,7 +97,7 @@ public final class MetadataCodec {
     // OptVarInt (17) and Pose (18); the 765 type table would renumber Float and
     // desynchronise the stream. Indices shift by one insertion, not two.
     if (is114Pair(fromProtocol, toProtocol)) {
-      return translate114(fromProtocol, toProtocol, body, living);
+      return translate114(fromProtocol, toProtocol, body, living, true);
     }
 
     boolean toModern = !toLegacy;
@@ -222,8 +222,8 @@ public final class MetadataCodec {
    * above those points shifts; nothing else moves. Types and fields that exist
    * only on 1.14 are consumed and dropped on the way down rather than guessed.
    */
-  private static byte[] translate114(int fromProtocol, int toProtocol, byte[] body, boolean living)
-      throws IOException {
+  public static byte[] translate114(int fromProtocol, int toProtocol, byte[] body, boolean living,
+                                    boolean subclassFields) throws IOException {
     boolean up = toProtocol == 477;
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 16);
     DataOutputStream out = new DataOutputStream(buffer);
@@ -234,6 +234,12 @@ public final class MetadataCodec {
         if (index == END) break;
         int type = MinecraftInput.varInt(in);
         int targetIndex = up ? mapIndexTo114(index, living) : mapIndexFrom114(index, living);
+        // Fields below the subclass boundary are described by the two base-class
+        // insertions this pair made. Above it the layout belongs to the concrete
+        // entity class, and 1.14 reshaped some of those independently, so for
+        // entities whose class is known to have changed the subclass fields are
+        // dropped rather than landed on a field of a different type.
+        if (!subclassFields && index >= (living ? 11 : 6)) targetIndex = -1;
 
         ByteArrayOutputStream value = new ByteArrayOutputStream(16);
         DataOutputStream valueOut = new DataOutputStream(value);

@@ -19,6 +19,7 @@ import gg.tame.conduit.protocol.codec.BlockPositionCodec;
 import gg.tame.conduit.protocol.codec.JoinGameCodec;
 import gg.tame.conduit.protocol.codec.SemanticCodec;
 import gg.tame.conduit.protocol.entity.EntityTypeMaps;
+import gg.tame.conduit.protocol.entity.LegacyObjectTypes;
 import gg.tame.conduit.protocol.entity.MetadataCodec;
 import gg.tame.conduit.protocol.inventory.ContainerCodec;
 import gg.tame.conduit.protocol.semantic.EmptyPacket;
@@ -26,6 +27,7 @@ import gg.tame.conduit.protocol.semantic.JoinGamePacket;
 import gg.tame.conduit.protocol.semantic.KeepAlivePacket;
 import gg.tame.conduit.protocol.semantic.OpaquePacket;
 import gg.tame.conduit.protocol.semantic.PluginMessagePacket;
+import gg.tame.conduit.protocol.semantic.SemanticBlockChanges;
 import gg.tame.conduit.protocol.semantic.SemanticPacket;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -80,6 +82,28 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
    * than growing for the life of the session.
    */
   private final Set<Integer> livingEntities = new HashSet<>();
+  /**
+   * Entities whose concrete class reshaped its own metadata fields in 1.14, so
+   * only the base-class region can be carried across for them.
+   *
+   * <p>The two insertions this pair made ({@code Entity.pose} and
+   * {@code LivingEntity.sleepingPos}) describe the base-class region for every
+   * entity, but they say nothing about a subclass that changed independently.
+   * 1.14's AbstractArrow is one: it dropped the shooter UUID and added a pierce
+   * level, so a 1.13.2 arrow's own fields land on 1.14 fields of a different
+   * type and the client dies with a ClassCastException the first tick.
+   *
+   * <p>The default is therefore to withhold an object entity's subclass fields
+   * and allow them only where the layout is known to be unchanged. A dropped
+   * item's stack is the one that visibly matters and is the same Slot at the
+   * same offset on both sides, so it is allowed; everything else fails closed.
+   * See docs/VALIDATION_404_477.md. Withholding costs an entity its subclass
+   * display state; it never produces a wrong field.
+   */
+  private static final Set<String> OBJECT_SUBCLASS_ALLOWED = Set.of(
+      "minecraft:item");
+
+  private final Set<Integer> reshapedEntities = new HashSet<>();
   private int lastViewDistance = 10;
 
   private Protocol404To477Translator(int source, int target) {
@@ -162,6 +186,11 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
       case PLAY_LOGIN -> {
         JoinGamePacket join = JoinGameCodec.decode(sourceDef, packet);
         lastViewDistance = Math.max(2, join.viewDistance());
+        // The player's own entity is a LivingEntity but never arrives through a
+        // spawn packet — its id comes from Join Game. Without this it is treated
+        // as a plain Entity, its own metadata is shifted by the wrong amount, and
+        // the client dies casting one of its fields the first time it ticks.
+        livingEntities.add(join.entityId());
         yield new TranslationResult.Translated(join);
       }
       case PLAY_RESPAWN -> {
@@ -251,7 +280,8 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
           int entityId = MinecraftInput.varInt(in);
           byte[] meta = in.readAllBytes();
-          byte[] translated = MetadataCodec.translate(sourceDef, targetDef, meta, living(entityId));
+          byte[] translated = MetadataCodec.translate114(
+              fromProtocol, toProtocol, meta, living(entityId), !reshapedEntities.contains(entityId));
           if (translated == null) yield new TranslationResult.Dropped("no metadata fields survived");
           ByteArrayOutputStream buffer = new ByteArrayOutputStream(translated.length + 5);
           DataOutputStream out = new DataOutputStream(buffer);
@@ -269,6 +299,7 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, reshaped));
       }
       case PLAY_SPAWN_ENTITY -> {
+        noteObjectEntity(body, fromProtocol);
         yield new TranslationResult.Translated(new OpaquePacket(
             kind, state, direction, translateSpawnObject(body, fromProtocol, toProtocol)));
       }
@@ -293,7 +324,9 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
           int count = MinecraftInput.varInt(in);
           for (int i = 0; i < count && in.available() > 0; i++) {
-            livingEntities.remove(MinecraftInput.varInt(in));
+            int destroyed = MinecraftInput.varInt(in);
+            livingEntities.remove(destroyed);
+            reshapedEntities.remove(destroyed);
           }
         }
         yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, body));
@@ -347,6 +380,11 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
 
   private static byte[] encodeSemantic(SemanticCodec codec, SemanticPacket semantic) throws IOException {
     if (semantic instanceof JoinGamePacket join) return JoinGameCodec.encode(codec.protocol(), join);
+    if (semantic instanceof SemanticBlockChanges changes) {
+      // The record layout differs across the pair, so this cannot go through the
+      // generic codec. A /fill is the first thing that reaches this path.
+      return BlockChangesCodec.encode(codec.protocol(), changes);
+    }
     return codec.encode(semantic);
   }
 
@@ -487,5 +525,23 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
    */
   private boolean living(int entityId) {
     return livingEntities.contains(entityId);
+  }
+
+  /**
+   * Records an object entity whose concrete class reshaped its metadata in 1.14.
+   * Spawn Object carries no metadata itself, so the decision has to be remembered
+   * for the Set Entity Metadata packets that follow.
+   */
+  private void noteObjectEntity(byte[] body, int fromProtocol) throws IOException {
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      int entityId = MinecraftInput.varInt(in);
+      in.readLong();
+      in.readLong();
+      int type = fromProtocol >= 477 ? MinecraftInput.varInt(in) : in.readByte() & 0xff;
+      in.readNBytes(3 * 8 + 2);            // x, y, z, pitch, yaw
+      int objectData = in.available() >= 4 ? in.readInt() : 0;
+      String name = LegacyObjectTypes.name(type, objectData).orElse("");
+      if (!OBJECT_SUBCLASS_ALLOWED.contains(name)) reshapedEntities.add(entityId);
+    }
   }
 }
