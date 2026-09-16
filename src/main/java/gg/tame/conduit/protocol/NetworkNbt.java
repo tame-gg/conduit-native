@@ -35,6 +35,19 @@ public final class NetworkNbt {
     output.writeByte(type);
     copyPayload(input, output, type);
   }
+
+  /** Copies a named (disk-style) NBT value: type, modified UTF-8 name, payload. */
+  public static void copyNamed(DataInput input, DataOutput output) throws IOException {
+    int type = input.readUnsignedByte();
+    output.writeByte(type);
+    if (type == 0) return;
+    int nameLength = input.readUnsignedShort();
+    output.writeShort(nameLength);
+    if (nameLength < 0 || nameLength > 65535) throw new IOException("nbt name length");
+    copyBytes(input, output, nameLength);
+    copyPayload(input, output, type);
+  }
+
   private static void skipPayload(DataInput input, int type) throws IOException { copyPayload(input, null, type); }
   private static void copyPayload(DataInput input, DataOutput output, int type) throws IOException {
     switch (type) {

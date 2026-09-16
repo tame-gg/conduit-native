@@ -2,6 +2,7 @@ package gg.tame.conduit.protocol.inventory;
 
 import gg.tame.conduit.protocol.MinecraftInput;
 import gg.tame.conduit.protocol.MinecraftOutput;
+import gg.tame.conduit.protocol.ProtocolEras;
 import gg.tame.conduit.protocol.item.ItemCodec;
 import gg.tame.conduit.protocol.item.SemanticItem;
 import gg.tame.conduit.protocol.text.ComponentCodec;
@@ -50,8 +51,8 @@ public final class ContainerCodec {
    */
   public static byte[] containerContent(int fromProtocol, int toProtocol, byte[] body, int stateId)
       throws IOException {
-    boolean fromModern = fromProtocol > 404;
-    boolean toModern = toProtocol > 404;
+    boolean fromModern = ProtocolEras.containerStateId(fromProtocol);
+    boolean toModern = ProtocolEras.containerStateId(toProtocol);
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
       int windowId = in.readUnsignedByte();
       if (fromModern) MinecraftInput.varInt(in);              // stateId: regenerated below
@@ -90,8 +91,8 @@ public final class ContainerCodec {
    */
   public static byte[] containerSlot(int fromProtocol, int toProtocol, byte[] body, int stateId)
       throws IOException {
-    boolean fromModern = fromProtocol > 404;
-    boolean toModern = toProtocol > 404;
+    boolean fromModern = ProtocolEras.containerStateId(fromProtocol);
+    boolean toModern = ProtocolEras.containerStateId(toProtocol);
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
       int windowId = in.readByte();
       if (fromModern) MinecraftInput.varInt(in);
@@ -138,7 +139,7 @@ public final class ContainerCodec {
    * is preserved.
    */
   public static Click readClick(int fromProtocol, byte[] body) throws IOException {
-    boolean fromModern = fromProtocol > 404;
+    boolean fromModern = ProtocolEras.containerStateId(fromProtocol);
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
       int windowId = in.readUnsignedByte();
       if (fromModern) MinecraftInput.varInt(in);              // stateId
@@ -161,7 +162,7 @@ public final class ContainerCodec {
 
   public static byte[] writeClick(int toProtocol, Click click, int stateId, int actionNumber)
       throws IOException {
-    boolean toModern = toProtocol > 404;
+    boolean toModern = ProtocolEras.containerStateId(toProtocol);
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(48);
     DataOutputStream out = new DataOutputStream(buffer);
     out.writeByte(click.windowId());
@@ -248,37 +249,56 @@ public final class ContainerCodec {
    * Open Window / Open Screen.
    *
    * <pre>
-   *   393   windowId:u8  type:String  title:Chat(JSON)  slots:u8  [entityId:i32]
-   *   765   windowId:VarInt  type:VarInt(menu registry)  title:Chat(NBT)
+   *   ≤404   windowId:u8  type:String  title:Chat(JSON)  slots:u8  [entityId:i32]
+   *   477+   windowId:VarInt  type:VarInt(menu)  title:Chat(JSON)     until 1.20.2
+   *   765+   windowId:VarInt  type:VarInt(menu)  title:Chat(NBT)
    * </pre>
    *
    * @return the translated body, or null when the target has no such screen
    */
   public static byte[] openWindow(int fromProtocol, int toProtocol, byte[] body) throws IOException {
-    boolean fromModern = fromProtocol > 404;
+    boolean fromMenu = ProtocolEras.openWindowMenuId(fromProtocol);
+    boolean toMenu = ProtocolEras.openWindowMenuId(toProtocol);
+    boolean fromNbt = ProtocolEras.openWindowNbtTitle(fromProtocol);
+    boolean toNbt = ProtocolEras.openWindowNbtTitle(toProtocol);
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
       ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 32);
       DataOutputStream out = new DataOutputStream(buffer);
-      if (fromModern) {
+      if (fromMenu) {
         int windowId = MinecraftInput.varInt(in);
         int menu = MinecraftInput.varInt(in);
-        String title = ComponentCodec.nbtToJson(in);
-        var legacy = windowType393(menu);
-        if (legacy.isEmpty()) return null;
-        out.writeByte(windowId);
-        MinecraftOutput.string(out, legacy.get()[0]);
-        MinecraftOutput.string(out, title);
-        out.writeByte(Integer.parseInt(legacy.get()[1]));
+        String title = fromNbt ? ComponentCodec.nbtToJson(in) : MinecraftInput.string(in, 262_144);
+        if (!toMenu) {
+          var legacy = windowType393(menu);
+          if (legacy.isEmpty()) return null;
+          out.writeByte(windowId);
+          MinecraftOutput.string(out, legacy.get()[0]);
+          MinecraftOutput.string(out, title);
+          out.writeByte(Integer.parseInt(legacy.get()[1]));
+        } else {
+          MinecraftOutput.varInt(out, windowId);
+          MinecraftOutput.varInt(out, menu);
+          if (toNbt) ComponentCodec.jsonToNbt(out, title);
+          else MinecraftOutput.string(out, title);
+        }
       } else {
         int windowId = in.readUnsignedByte();
         String type = MinecraftInput.string(in, 32767);
         String title = MinecraftInput.string(in, 262_144);
         int slots = in.readUnsignedByte();
-        var menu = menuId(type, slots);
-        if (menu.isEmpty()) return null;
-        MinecraftOutput.varInt(out, windowId);
-        MinecraftOutput.varInt(out, menu.get());
-        ComponentCodec.jsonToNbt(out, title);
+        if (!toMenu) {
+          out.writeByte(windowId);
+          MinecraftOutput.string(out, type);
+          MinecraftOutput.string(out, title);
+          out.writeByte(slots);
+        } else {
+          var menu = menuId(type, slots);
+          if (menu.isEmpty()) return null;
+          MinecraftOutput.varInt(out, windowId);
+          MinecraftOutput.varInt(out, menu.get());
+          if (toNbt) ComponentCodec.jsonToNbt(out, title);
+          else MinecraftOutput.string(out, title);
+        }
       }
       out.flush();
       return buffer.toByteArray();
@@ -295,7 +315,7 @@ public final class ContainerCodec {
    * carry a top-bit-terminated array, so a modern packet can yield up to six.
    */
   public static List<Equipment> readEquipment(int fromProtocol, byte[] body) throws IOException {
-    boolean fromModern = fromProtocol > 404;
+    boolean fromModern = ProtocolEras.equipmentArray(fromProtocol);
     List<Equipment> changes = new ArrayList<>(fromModern ? 6 : 1);
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
       int entityId = MinecraftInput.varInt(in);
@@ -318,7 +338,7 @@ public final class ContainerCodec {
    * Protocol selects the Slot wire form (short id on 393, present+VarInt on 404).
    */
   public static byte[] writeEquipment(int protocol, Equipment change) throws IOException {
-    if (protocol > 404) {
+    if (ProtocolEras.equipmentArray(protocol)) {
       throw new IOException("use writeEquipment765 for modern multi-slot equipment");
     }
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(32);

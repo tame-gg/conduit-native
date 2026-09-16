@@ -53,6 +53,12 @@ Slot wire form; see `docs/DELTA_393_404.md` and `docs/VALIDATION_393_404.md`.
 Completeness stays `PARTIAL`: recipes/advancements/trades that embed Slot are
 dropped rather than rematerialised.
 
+**404 ↔ 477 is verified in BOTH directions** (plus DIRECT 477↔477) with official
+Mojang jars and scripted protocol clients. Core deltas: Join Game/Respawn, Open
+Window menu ids, chunk heightmaps + Update Light, Position packing, Block Place.
+See `docs/DELTA_404_477.md` and `docs/VALIDATION_404_477.md`. Completeness stays
+`PARTIAL`: block-state ids are numeric passthrough; recipes/tags/advancements dropped.
+
 765 ↔ 766 remains `TRANSLATED_PARTIAL`: a translator exists and unit tests
 pass, but no real cross-version run has been done.
 
@@ -80,7 +86,7 @@ Known gaps:
 | 393 | 1.13 | V1_13 | VERIFIED | 55 | no | DIRECT/FULL | authored from published 1.13 packet ids; exercised end-to-end by the official Minecraft 1.13 client against the official 1.13 server through Conduit (login, chunks, movement, combat, death, respawn, advancements; ~3 minutes, no disconnect) |
 | 401 | 1.13.1 | V1_13 | DERIVED | 55 | no | DIRECT/PARTIAL | published packet ids for 1.13.1; capabilities inherited from 1.13 (derived from 1.13) |
 | 404 | 1.13.2 | V1_13 | DERIVED | 55 | no | DIRECT/FULL | published packet ids for 1.13.2; capabilities inherited from 1.13.1 (derived from 1.13.1); DIRECT pairing verified — see VALIDATION_393_404.md |
-| 477 | 1.14 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14; capabilities inherited from 1.13.2 (derived from 1.13.2) |
+| 477 | 1.14 | V1_14 | DERIVED | 64+ | no | DIRECT/PARTIAL | published packet ids for 1.14; DIRECT pairing script-verified — see VALIDATION_404_477.md |
 | 480 | 1.14.1 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14.1; capabilities inherited from 1.14 (derived from 1.14) |
 | 490 | 1.14.3 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14.3; capabilities inherited from 1.14.1 (derived from 1.14.1) |
 | 498 | 1.14.4 | V1_14 | DERIVED | 64 | no | DIRECT/PARTIAL | published packet ids for 1.14.4; capabilities inherited from 1.14.3 (derived from 1.14.3) |

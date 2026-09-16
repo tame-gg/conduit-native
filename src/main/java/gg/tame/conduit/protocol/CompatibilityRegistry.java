@@ -38,6 +38,19 @@ public final class CompatibilityRegistry {
         ValidationStatus.TRANSLATED_VERIFIED,
         "real 1.13.2 client probe sustained play on real 1.13 server; Slot rematerialised; "
             + "recipes/advancements/trades dropped");
+    // 404↔477: scripted probes vs real 1.14 / 1.13.2 jars (see VALIDATION_404_477.md).
+    registerValidated(404, 477, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
+        ValidationStatus.TRANSLATED_VERIFIED,
+        "scripted 1.13.2 probe sustained play on real 1.14 server through Conduit; "
+            + "Join Game/Respawn/Open Window/chunks/light/position/block place rematerialised; "
+            + "block-state ids numeric passthrough; recipes/tags/advancements dropped");
+    registerValidated(477, 404, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
+        ValidationStatus.TRANSLATED_VERIFIED,
+        "scripted 1.14 probe sustained play on real 1.13.2 server through Conduit; "
+            + "Update Light/View absorbed; Use Bed dropped; inverse field rematerialisation");
+    registerValidated(477, 477, TranslationSupport.DIRECT, CompatibilityCompleteness.PARTIAL,
+        ValidationStatus.DIRECT_VERIFIED,
+        "1.14 native — scripted protocol-477 client against official 1.14 server through Conduit");
     register(765, 766, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         "control/login/config packets; JoinGame/player-info/registry unsupported");
     register(766, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,

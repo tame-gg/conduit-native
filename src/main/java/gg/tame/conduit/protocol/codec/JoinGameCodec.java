@@ -13,6 +13,7 @@ import gg.tame.conduit.protocol.PacketKind;
 import gg.tame.conduit.protocol.PlayPackets;
 import gg.tame.conduit.protocol.ProtocolCapabilities;
 import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.protocol.ProtocolEras;
 import gg.tame.conduit.protocol.semantic.DisconnectPacket;
 import gg.tame.conduit.protocol.semantic.JoinGamePacket;
 import gg.tame.conduit.protocol.semantic.LoginStartPacket;
@@ -39,7 +40,9 @@ public final class JoinGameCodec {
   public static JoinGamePacket decode(ProtocolDefinition protocol, byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
-      if (protocol.version().number() <= 404) return decode113(input);
+      int number = protocol.version().number();
+      if (number <= 404) return decode113(input);
+      if (ProtocolEras.joinGame114(number)) return decode114(input, number);
       return decodeModern(input);
     }
   }
@@ -56,6 +59,28 @@ public final class JoinGameCodec {
     return new JoinGamePacket(PacketDirection.SERVER_TO_CLIENT, entityId, false, gameMode, -1, dimension,
         world, world, List.of(world), 0L, maxPlayers, 10, 10, reduced, true, false,
         "flat".equalsIgnoreCase(levelType), difficulty, levelType, false, 0);
+  }
+
+  /**
+   * 1.14–1.15 Join Game: numeric dimension, optional hashed seed (1.15+), viewDistance,
+   * optional enableRespawnScreen (1.15+). Still nothing like the 1.16 registry form.
+   */
+  private static JoinGamePacket decode114(DataInputStream input, int protocol) throws IOException {
+    int entityId = input.readInt();
+    int gameMode = input.readUnsignedByte();
+    int dimension = input.readInt();
+    long seed = 0L;
+    if (protocol >= 573) seed = input.readLong();
+    int maxPlayers = input.readUnsignedByte();
+    String levelType = MinecraftInput.string(input, 16);
+    int viewDistance = MinecraftInput.varInt(input);
+    boolean reduced = input.readBoolean();
+    boolean enableRespawn = true;
+    if (protocol >= 573) enableRespawn = input.readBoolean();
+    String world = JoinGamePacket.dimensionNameFromId(dimension);
+    return new JoinGamePacket(PacketDirection.SERVER_TO_CLIENT, entityId, false, gameMode, -1, dimension,
+        world, world, List.of(world), seed, maxPlayers, viewDistance, viewDistance, reduced, enableRespawn, false,
+        "flat".equalsIgnoreCase(levelType), (byte) 2, levelType, false, 0);
   }
 
   private static JoinGamePacket decodeModern(DataInputStream input) throws IOException {
@@ -94,7 +119,9 @@ public final class JoinGameCodec {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, id);
-      if (protocol.version().number() <= 404) encode113(output, join);
+      int number = protocol.version().number();
+      if (number <= 404) encode113(output, join);
+      else if (ProtocolEras.joinGame114(number)) encode114(output, join, number);
       else encodeModern(output, join);
     }
     return bytes.toByteArray();
@@ -108,6 +135,18 @@ public final class JoinGameCodec {
     output.writeByte(Math.min(255, Math.max(0, join.maxPlayers())));
     MinecraftOutput.string(output, join.levelType());
     output.writeBoolean(join.reducedDebugInfo());
+  }
+
+  private static void encode114(DataOutputStream output, JoinGamePacket join, int protocol) throws IOException {
+    output.writeInt(join.entityId());
+    output.writeByte(join.gameMode() & 0xff);
+    output.writeInt(join.dimensionId());
+    if (protocol >= 573) output.writeLong(join.hashedSeed());
+    output.writeByte(Math.min(255, Math.max(0, join.maxPlayers())));
+    MinecraftOutput.string(output, join.levelType());
+    MinecraftOutput.varInt(output, Math.max(2, join.viewDistance()));
+    output.writeBoolean(join.reducedDebugInfo());
+    if (protocol >= 573) output.writeBoolean(join.enableRespawnScreen());
   }
 
   private static void encodeModern(DataOutputStream output, JoinGamePacket join) throws IOException {
@@ -153,8 +192,8 @@ public final class JoinGameCodec {
    * @return the target-era body, or null when it cannot be parsed
    */
   public static byte[] encodeRespawn(ProtocolDefinition source, ProtocolDefinition target, byte[] body) {
-    boolean fromModern = source.version().number() > 404;
-    boolean toModern = target.version().number() > 404;
+    boolean fromModern = ProtocolEras.joinGameRegistry(source.version().number());
+    boolean toModern = ProtocolEras.joinGameRegistry(target.version().number());
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
       int dimensionId;
       String worldName;
@@ -170,6 +209,13 @@ public final class JoinGameCodec {
         input.readByte();                                // previous game mode
         input.readBoolean();                             // is debug
         flat = input.readBoolean();
+      } else if (ProtocolEras.joinGame114(source.version().number())) {
+        dimensionId = input.readInt();
+        if (source.version().number() >= 573) input.readLong(); // hashed seed
+        gameMode = input.readUnsignedByte();
+        String levelType = MinecraftInput.string(input, 16);
+        flat = "flat".equalsIgnoreCase(levelType);
+        worldName = JoinGamePacket.dimensionNameFromId(dimensionId);
       } else {
         dimensionId = input.readInt();
         difficulty = input.readByte();
@@ -192,6 +238,11 @@ public final class JoinGameCodec {
         output.writeBoolean(false);                      // no death location
         MinecraftOutput.varInt(output, 0);               // no portal cooldown
         output.writeByte(0x03);                          // keep attributes and metadata
+      } else if (ProtocolEras.joinGame114(target.version().number())) {
+        output.writeInt(dimensionId);
+        if (target.version().number() >= 573) output.writeLong(0L);
+        output.writeByte(gameMode & 0xff);
+        MinecraftOutput.string(output, flat ? "flat" : "default");
       } else {
         output.writeInt(dimensionId);
         output.writeByte(difficulty);

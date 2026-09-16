@@ -1,5 +1,6 @@
 package gg.tame.conduit.protocol.item;
 
+import gg.tame.conduit.protocol.ProtocolEras;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -36,7 +37,7 @@ public final class ItemRegistries {
 
   /** The identifier this protocol gives that numeric item id, if it has one. */
   public static Optional<String> name(int protocol, int id) {
-    List<String> names = protocol <= 404 ? NAMES_393 : NAMES_765;
+    List<String> names = ProtocolEras.flatteningItemTable(protocol) ? NAMES_393 : NAMES_765;
     if (id < 0 || id >= names.size()) return Optional.empty();
     String name = names.get(id);
     return name.isEmpty() ? Optional.empty() : Optional.of(name);
@@ -44,21 +45,26 @@ public final class ItemRegistries {
 
   /** The numeric id this protocol gives that identifier, if it has one. */
   public static OptionalInt id(int protocol, String name) {
-    Integer id = (protocol <= 404 ? IDS_393 : IDS_765).get(name);
+    Integer id = (ProtocolEras.flatteningItemTable(protocol) ? IDS_393 : IDS_765).get(name);
     return id == null ? OptionalInt.empty() : OptionalInt.of(id);
   }
 
   /** Translates a numeric item id across the pair, by name. Empty when unmapped. */
   public static OptionalInt translate(int fromProtocol, int toProtocol, int id) {
     if (fromProtocol == toProtocol) return OptionalInt.of(id);
-    int[] table = toProtocol <= 404 ? TO_393 : TO_765;
+    // Pre-1.16 flattening tables share enough early ids that numeric passthrough
+    // is the honest choice until dedicated 477 maps exist.
+    if (ProtocolEras.flatteningItemTable(fromProtocol) && ProtocolEras.flatteningItemTable(toProtocol)) {
+      return OptionalInt.of(id);
+    }
+    int[] table = ProtocolEras.flatteningItemTable(toProtocol) ? TO_393 : TO_765;
     if (id < 0 || id >= table.length) return OptionalInt.empty();
     int mapped = table[id];
     return mapped < 0 ? OptionalInt.empty() : OptionalInt.of(mapped);
   }
 
   public static int size(int protocol) {
-    return (protocol <= 404 ? NAMES_393 : NAMES_765).size();
+    return (ProtocolEras.flatteningItemTable(protocol) ? NAMES_393 : NAMES_765).size();
   }
 
   private static Map<String, Integer> index(List<String> names) {

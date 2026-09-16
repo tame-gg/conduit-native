@@ -1,0 +1,83 @@
+package gg.tame.conduit.protocol;
+
+/**
+ * Wire-era boundaries used by codecs and delta translators.
+ *
+ * <p>Prefer these over raw {@code > 404} checks. Protocol 477 (1.14) sits between
+ * the 1.13.x Slot reform and the 1.16+ registry Join Game; treating everything
+ * after 404 as “modern 765” silently corrupts Join Game, containers, equipment
+ * and block place when speaking 1.14.
+ */
+public final class ProtocolEras {
+  private ProtocolEras() {}
+
+  /** Highest protocol that still packs Y in the middle of a Position long. */
+  public static final int LEGACY_POSITION_MAX = 404;
+
+  /** First protocol with heightmaps NBT on Chunk Data and no section-embedded light. */
+  public static final int CHUNK_HEIGHTMAPS_FROM = 477;
+
+  /** First protocol with Open Window menu registry ids (title still JSON until 765). */
+  public static final int OPEN_WINDOW_MENU_FROM = 477;
+
+  /** First protocol with multi-slot Entity Equipment arrays. */
+  public static final int EQUIPMENT_ARRAY_FROM = 735;
+
+  /** First protocol with container stateId (1.17). */
+  public static final int CONTAINER_STATE_FROM = 755;
+
+  /** First protocol with block-place prediction sequence (1.19). */
+  public static final int BLOCK_PLACE_SEQUENCE_FROM = 759;
+
+  /** First protocol with NBT text components on Open Window (1.20.3 / 765). */
+  public static final int OPEN_WINDOW_NBT_TITLE_FROM = 765;
+
+  /** First protocol with registry-based Join Game (1.16). */
+  public static final int JOIN_GAME_REGISTRY_FROM = 735;
+
+  public static boolean legacyPosition(int protocol) {
+    return protocol <= LEGACY_POSITION_MAX;
+  }
+
+  public static boolean chunkHeightmaps(int protocol) {
+    return protocol >= CHUNK_HEIGHTMAPS_FROM;
+  }
+
+  public static boolean sectionEmbeddedLight(int protocol) {
+    return protocol < CHUNK_HEIGHTMAPS_FROM;
+  }
+
+  public static boolean openWindowMenuId(int protocol) {
+    return protocol >= OPEN_WINDOW_MENU_FROM;
+  }
+
+  public static boolean openWindowNbtTitle(int protocol) {
+    return protocol >= OPEN_WINDOW_NBT_TITLE_FROM;
+  }
+
+  public static boolean equipmentArray(int protocol) {
+    return protocol >= EQUIPMENT_ARRAY_FROM;
+  }
+
+  public static boolean containerStateId(int protocol) {
+    return protocol >= CONTAINER_STATE_FROM;
+  }
+
+  public static boolean blockPlaceSequence(int protocol) {
+    return protocol >= BLOCK_PLACE_SEQUENCE_FROM;
+  }
+
+  /** 1.14–1.15 Join Game: numeric dimension, viewDistance, no registry worlds. */
+  public static boolean joinGame114(int protocol) {
+    return protocol >= CHUNK_HEIGHTMAPS_FROM && protocol < JOIN_GAME_REGISTRY_FROM;
+  }
+
+  public static boolean joinGameRegistry(int protocol) {
+    return protocol >= JOIN_GAME_REGISTRY_FROM;
+  }
+
+  /** Item/block numeric ids still closer to the 1.13 flattening table than to 1.20.4. */
+  public static boolean flatteningItemTable(int protocol) {
+    return protocol < JOIN_GAME_REGISTRY_FROM;
+  }
+}
