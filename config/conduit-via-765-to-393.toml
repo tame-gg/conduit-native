@@ -1,0 +1,111 @@
+# Reverse cross-version: 1.20.4 client (765) -> Conduit -> real 1.13 server (393).
+# A separate translation problem from 393->765: the configuration state exists
+# only on the client side and must be synthesised, and fields the 1.13 backend
+# never sends must be invented rather than dropped.
+[listener]
+host = "127.0.0.1"
+port = 25572
+max-frame-bytes = 1048576
+
+[forwarding]
+mode = "none"
+
+[authentication]
+mode = "offline"
+
+[servers.lobby]
+host = "127.0.0.1"
+port = 25613
+
+[routing]
+initial = ["lobby"]
+fallback = ["lobby"]
+
+# Conduit Ops defaults (schema 3)
+[maintenance]
+enabled = true
+active-on-start = false
+kick-message = "This network is currently under maintenance. Please try again later."
+motd = "Conduit — under maintenance"
+allowlist = []
+
+# Conduit Ops defaults (schema 3)
+[health]
+enabled = true
+interval-ms = 10000
+timeout-ms = 1500
+failure-threshold = 3
+success-threshold = 2
+
+# Conduit Ops defaults (schema 3)
+[versions]
+enabled = false
+allow = []
+ping-version-name = "Conduit {versions}"
+kick-message = "This network only allows Minecraft {versions}."
+kick-message-range = "This network only allows Minecraft versions {versions}."
+
+# Conduit Ops defaults (schema 3)
+[shutdown]
+graceful-enabled = true
+timeout-ms = 5000
+message = "Conduit is shutting down."
+
+# Conduit Ops defaults (schema 3)
+[security.throttle]
+enabled = true
+max-attempts = 40
+window-ms = 1000
+max-concurrent = 32
+ipv4-prefix = 32
+ipv6-prefix = 64
+log-interval-ms = 5000
+
+# Conduit Ops defaults (schema 3)
+[security.bot-filter]
+enabled = true
+strike-threshold = 10
+handshake-timeout-ms = 3000
+block-duration-ms = 60000
+strike-window-ms = 60000
+
+# Conduit Ops defaults (schema 3)
+[security.channel-guard]
+enabled = false
+default-action = "log"
+block-list = ["wdl:init", "wdl:control"]
+log-list = ["schematica"]
+kick-list = []
+
+# Conduit Ops defaults (schema 3)
+[security.attack-mode]
+throttle-max-attempts = 8
+bot-strike-threshold = 3
+
+# Conduit Ops defaults (schema 3)
+[modded]
+enabled = true
+known-packs-limit = 1024
+handshake-cache = true
+handshake-cache-capacity = 4096
+handshake-cache-ttl-ms = 300000
+forge-compat = true
+neoforge-compat = true
+fabric-compat = true
+unknown-policy = "allow"
+packet-queue-enabled = true
+packet-queue-max-depth = 512
+log-mod-handshakes = false
+
+# Conduit Ops schema
+[ops]
+schema-version = 3
+
+# Phase: ViaVersion as the translation engine for this pair.
+[translation]
+enabled = true
+engine = "via-preferred"
+via-backwards = true
+via-rewind = true
+via-legacy = false
+data-folder = "via"
