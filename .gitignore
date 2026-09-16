@@ -9,6 +9,7 @@ sources.txt
 test-sources.txt
 main-sources.txt
 lib/*.jar
+lib/via/
 conduit-start.log
 conduit-start.err.log
 

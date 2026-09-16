@@ -23,3 +23,13 @@ port = 25566
 [routing]
 initial = ["lobby"]
 fallback = ["lobby"]
+
+# Optional ViaVersion ecosystem translation (disabled by default).
+# See docs/VIAVERSION.md and docs/LICENSING_VIA.md (GPLv3 Via* artifacts).
+[translation]
+enabled = false
+engine = "via-preferred"
+via-backwards = true
+via-rewind = true
+via-legacy = false
+data-folder = "via"
