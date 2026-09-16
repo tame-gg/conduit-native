@@ -106,6 +106,27 @@ Netty, Guava, Fastutil (as required by those artifacts).
 | modern → 5 | TRANSLATED (ViaLegacy) | later / UNVERIFIED |
 | * → 26.3 / 26.3 → * | UNSUPPORTED on Via 5.11.0 | document only |
 
+## Where this actually stands
+
+The plan above is the design. What a real 1.13 client and a real 1.20.4 server
+found when it was first exercised end to end, and what had to change, is
+recorded in `work/real-client-validation/RESULTS-VIA-393-765.md`. In short:
+seven faults in Conduit's integration were found and fixed, in the order a real
+client hits them — Via never being shut down, the native configuration absorber
+starving Via of registry data, Via's backend state never leaving Login, Via's
+injector being the no-op one so every packet Via generated died in a null
+lookup, those packets then arriving several packets late, a duplicated Login
+Acknowledged, and Conduit's native compensation layer rewriting Via's output.
+
+After those, the pair reaches the world and translates. It is still
+**UNVERIFIED**: it ends on a ViaBackwards fault in the Declare Recipes
+downgrade, which is not worked around inside Conduit and did not require a
+ViaVersion fork.
+
+Steps not yet reached: real 765 → 393, server switching under Via, 1.7.6 through
+ViaRewind, and any decision about whether ViaLegacy is required. None of those
+should be claimed until they have been run against real endpoints.
+
 ## Licensing
 
 Via* common artifacts are GPLv3. Conduit’s integration module that links

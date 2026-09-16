@@ -14,13 +14,22 @@ fallback/experimental.
 | Client → Backend | Mode | Verification |
 |---|---|---|
 | same protocol (codec present) | DIRECT | VERIFIED / codec-dependent |
-| 393 → 765 (Via enabled) | TRANSLATED | UNVERIFIED via Via (native path has separate VERIFIED notes) |
-| 765 → 393 (Via enabled) | TRANSLATED | UNVERIFIED via Via |
-| 1.7.6 (5) → modern (Via+Rewind) | TRANSLATED | UNVERIFIED |
-| modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNVERIFIED |
+| 393 → 765 (Via enabled) | TRANSLATED | UNVERIFIED — real 1.13 client joins a real 1.20.4 world through Via, then disconnects on Via's Declare Recipes downgrade |
+| 765 → 393 (Via enabled) | TRANSLATED | UNVERIFIED — no real-endpoint run yet |
+| 1.7.6 (5) → modern (Via+Rewind) | TRANSLATED | UNVERIFIED — no real-client run yet |
+| modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNVERIFIED — ViaLegacy not loaded; not shown to be required |
 | * → 26.3 / 26.3 → * on Via 5.11.0 | UNSUPPORTED | Via does not register 26.3 |
 
-Do not read Via dependency presence as VERIFIED gameplay.
+Do not read Via dependency presence as VERIFIED gameplay. The 393 → 765 Via run
+above reaches the world and translates in both structural directions with zero
+translation failures reported by Conduit, and is still UNVERIFIED: no gameplay
+was exercised, and the session ends on a malformed packet. Details, including
+the exact bytes and why the fault sits outside Conduit, are in
+`work/real-client-validation/RESULTS-VIA-393-765.md`.
+
+The native 393 ↔ 765 path is unaffected by the Via work and was re-checked with
+a real 1.13 client against a real 1.20.4 server after it: in-world, rendering,
+command tree intact.
 
 ## What the statuses mean
 
