@@ -12,11 +12,18 @@ Current version: **0.9.0**. Native plugin API version: **1**.
 Requires a JDK capable of compiling Java 21 source. On Windows:
 
 ```powershell
+./scripts/fetch-via.ps1   # optional ViaVersion ecosystem jars
 ./scripts/test.ps1
 ./scripts/run.ps1 -ConfigPath run/conduit.toml
 ```
 
 `--check-config <path>` validates a configuration without binding a listener.
+
+### Optional ViaVersion translation
+
+Set `[translation] enabled = true` to use ViaVersion / ViaBackwards / ViaRewind as the
+preferred cross-version engine. See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`.
+Native translators are kept as fallback. **Minecraft 26.3 is not supported by Via 5.11.0.**
 
 ## Supported Minecraft versions
 

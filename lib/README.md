@@ -1,17 +1,8 @@
-# Velocity API jars for compiling src/compat-velocity (not shipped as Conduit core).
-#
-# Populate with:
-#   ./scripts/fetch-velocity-compat.ps1
-#
-# Required:
-#   velocity-api (PaperMC snapshot)
-#   slf4j-api + slf4j-nop
-#   javax.inject
-#   adventure-api / adventure-key / plain+gson+legacy serializers
-#   examination-api / examination-string
-#   guava + failureaccess
-#   gson
-#   brigadier
-#
-# Conduit core never depends on these jars at compile time. They are only on the
-# classpath when building the Velocity compatibility layer and Phase9 tests.
+# lib/
+
+Jars in this directory are fetched by scripts, not committed.
+
+- `./scripts/fetch-velocity-compat.ps1` — Velocity API jars for the optional compat layer
+- `./scripts/fetch-via.ps1` — ViaVersion / ViaBackwards / ViaRewind / ViaLegacy + Netty/Guava/Fastutil
+
+Via* artifacts are third-party (GPLv3 for ViaVersion/Backwards/Rewind). See `docs/LICENSING_VIA.md`.

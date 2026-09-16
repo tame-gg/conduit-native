@@ -3,7 +3,24 @@
 Generated from the live registries, not hand-maintained: every row is what
 `CompatibilityRegistry.resolve(client, backend)` would tell a real session.
 Regenerate after any protocol change. 1.12.2 and older are deliberately out of
-scope for this program.
+scope for this program's *native* codecs.
+
+## ViaVersion ecosystem (optional)
+
+When `[translation] enabled = true`, Conduit prefers the ViaVersion graph for
+TRANSLATED pairs (see `docs/VIAVERSION.md`). Native translators remain as
+fallback/experimental.
+
+| Client → Backend | Mode | Verification |
+|---|---|---|
+| same protocol (codec present) | DIRECT | VERIFIED / codec-dependent |
+| 393 → 765 (Via enabled) | TRANSLATED | UNVERIFIED via Via (native path has separate VERIFIED notes) |
+| 765 → 393 (Via enabled) | TRANSLATED | UNVERIFIED via Via |
+| 1.7.6 (5) → modern (Via+Rewind) | TRANSLATED | UNVERIFIED |
+| modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNVERIFIED |
+| * → 26.3 / 26.3 → * on Via 5.11.0 | UNSUPPORTED | Via does not register 26.3 |
+
+Do not read Via dependency presence as VERIFIED gameplay.
 
 ## What the statuses mean
 
