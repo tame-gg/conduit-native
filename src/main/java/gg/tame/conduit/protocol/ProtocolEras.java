@@ -76,8 +76,9 @@ public final class ProtocolEras {
     return protocol >= JOIN_GAME_REGISTRY_FROM;
   }
 
-  /** Item/block numeric ids still closer to the 1.13 flattening table than to 1.20.4. */
-  public static boolean flatteningItemTable(int protocol) {
-    return protocol < JOIN_GAME_REGISTRY_FROM;
-  }
+  // There is deliberately no "flattening item table" predicate here. Item and
+  // block-state ids are not an era property: 1.13.1 and 1.14 each reshuffled
+  // them mid-era, so a single pre-1.16 bucket maps most of the registry to the
+  // wrong item. Registry selection lives in ItemRegistries/BlockStateMaps, per
+  // protocol, backed by generated tables.
 }

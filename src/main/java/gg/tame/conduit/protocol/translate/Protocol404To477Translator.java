@@ -11,11 +11,15 @@ import gg.tame.conduit.protocol.ProtocolEras;
 import gg.tame.conduit.protocol.ProtocolTrace;
 import gg.tame.conduit.protocol.ProtocolTranslator;
 import gg.tame.conduit.protocol.chunk.ChunkCodec393;
+import gg.tame.conduit.protocol.chunk.BlockStateMaps;
 import gg.tame.conduit.protocol.chunk.ChunkCodec477;
+import gg.tame.conduit.protocol.codec.BlockChangesCodec;
 import gg.tame.conduit.protocol.codec.BlockPlaceCodec;
 import gg.tame.conduit.protocol.codec.BlockPositionCodec;
 import gg.tame.conduit.protocol.codec.JoinGameCodec;
 import gg.tame.conduit.protocol.codec.SemanticCodec;
+import gg.tame.conduit.protocol.entity.EntityTypeMaps;
+import gg.tame.conduit.protocol.entity.MetadataCodec;
 import gg.tame.conduit.protocol.inventory.ContainerCodec;
 import gg.tame.conduit.protocol.semantic.EmptyPacket;
 import gg.tame.conduit.protocol.semantic.JoinGamePacket;
@@ -31,6 +35,7 @@ import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Queue;
 import java.util.Set;
@@ -68,6 +73,13 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
   private final SemanticCodec targetCodec;
   private final Queue<byte[]> toClient = new ArrayDeque<>();
   private final Queue<byte[]> toBackend = new ArrayDeque<>();
+  /**
+   * Entities known to be LivingEntity, for the 1.14 metadata index shift. Bounded
+   * by the entities actually in view: entries are added by Spawn Mob / Spawn
+   * Player and removed by Destroy Entities, so it tracks the client's view rather
+   * than growing for the life of the session.
+   */
+  private final Set<Integer> livingEntities = new HashSet<>();
   private int lastViewDistance = 10;
 
   private Protocol404To477Translator(int source, int target) {
@@ -166,6 +178,12 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         var chunk = ProtocolEras.sectionEmbeddedLight(fromProtocol)
             ? ChunkCodec393.decode(body)
             : ChunkCodec477.decode(body);
+        // Block-state ids are not stable across this pair: 1.14 expanded the
+        // note-block instruments, so only 748 of 1.13.2's 8599 states keep their
+        // meaning. Forwarding the palette unchanged would rebuild the world out
+        // of the wrong blocks from id 748 upward.
+        chunk = chunk.remapBlockStates(
+            blockState -> BlockStateMaps.translate(fromProtocol, toProtocol, blockState));
         byte[] encoded = ProtocolEras.chunkHeightmaps(toProtocol)
             ? ChunkCodec477.encode(chunk)
             : ChunkCodec393.encodeLegacy(chunk);
@@ -187,15 +205,88 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         byte[] reshaped = BlockPlaceCodec.translate(body, sourceDef, targetDef);
         yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, reshaped));
       }
-      case PLAY_PLAYER_DIGGING, PLAY_BLOCK_UPDATE, PLAY_SPAWN_POSITION,
+      case PLAY_PLAYER_DIGGING, PLAY_SPAWN_POSITION,
            PLAY_OPEN_SIGN_EDITOR, PLAY_BLOCK_BREAK_ANIMATION, PLAY_BLOCK_ACTION,
            PLAY_BLOCK_ENTITY_DATA -> {
         yield new TranslationResult.Translated(new OpaquePacket(
             kind, state, direction, rematerialiseLeadingPosition(body, sourceDef, targetDef, kind)));
       }
+      case PLAY_BLOCK_UPDATE -> {
+        // Position packing AND the state id both change across this pair.
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+          long packed = in.readLong();
+          int blockState = MinecraftInput.varInt(in);
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(12);
+          DataOutputStream out = new DataOutputStream(buffer);
+          out.writeLong(BlockPositionCodec.translate(sourceDef, targetDef, packed));
+          MinecraftOutput.varInt(out, BlockStateMaps.translate(fromProtocol, toProtocol, blockState));
+          out.flush();
+          yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_MULTI_BLOCK_CHANGE -> {
+        var batch = BlockChangesCodec.decode(sourceDef, direction, packet);
+        yield new TranslationResult.Translated(batch.mapStates(
+            blockState -> BlockStateMaps.translate(fromProtocol, toProtocol, blockState)));
+      }
+      case PLAY_SET_CONTAINER_CONTENT -> new TranslationResult.Translated(new OpaquePacket(
+          kind, state, direction, ContainerCodec.containerContent(fromProtocol, toProtocol, body, 0)));
+      case PLAY_SET_CONTAINER_SLOT -> new TranslationResult.Translated(new OpaquePacket(
+          kind, state, direction, ContainerCodec.containerSlot(fromProtocol, toProtocol, body, 0)));
+      case PLAY_CLICK_WINDOW -> {
+        var click = ContainerCodec.readClick(fromProtocol, body);
+        yield new TranslationResult.Translated(new OpaquePacket(
+            kind, state, direction, ContainerCodec.writeClick(toProtocol, click, 0, click.actionNumber())));
+      }
+      case PLAY_CREATIVE_SLOT -> new TranslationResult.Translated(new OpaquePacket(
+          kind, state, direction, ContainerCodec.creativeSlot(fromProtocol, toProtocol, body)));
+      case PLAY_ENTITY_EQUIPMENT -> {
+        var changes = ContainerCodec.readEquipment(fromProtocol, body);
+        if (changes.isEmpty()) yield new TranslationResult.Dropped("empty equipment");
+        // Both sides are pre-735: one slot per packet, so the array form is not in play.
+        yield new TranslationResult.Translated(new OpaquePacket(
+            kind, state, direction, ContainerCodec.writeEquipment(toProtocol, changes.get(0))));
+      }
+      case PLAY_SET_ENTITY_METADATA -> {
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+          int entityId = MinecraftInput.varInt(in);
+          byte[] meta = in.readAllBytes();
+          byte[] translated = MetadataCodec.translate(sourceDef, targetDef, meta, living(entityId));
+          if (translated == null) yield new TranslationResult.Dropped("no metadata fields survived");
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(translated.length + 5);
+          DataOutputStream out = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(out, entityId);
+          out.write(translated);
+          out.flush();
+          yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, buffer.toByteArray()));
+        }
+      }
+      case PLAY_SPAWN_LIVING_ENTITY -> {
+        byte[] reshaped = translateSpawnMob(body, fromProtocol, toProtocol);
+        if (reshaped == null) {
+          yield new TranslationResult.Dropped("living entity type has no counterpart on " + toProtocol);
+        }
+        yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, reshaped));
+      }
       case PLAY_SPAWN_ENTITY -> {
         yield new TranslationResult.Translated(new OpaquePacket(
             kind, state, direction, translateSpawnObject(body, fromProtocol, toProtocol)));
+      }
+      case PLAY_SPAWN_PLAYER -> {
+        // Players are LivingEntity; the layout is otherwise unchanged.
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+          livingEntities.add(MinecraftInput.varInt(in));
+        }
+        yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, body));
+      }
+      case PLAY_ENTITY_DESTROY -> {
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+          int count = MinecraftInput.varInt(in);
+          for (int i = 0; i < count && in.available() > 0; i++) {
+            livingEntities.remove(MinecraftInput.varInt(in));
+          }
+        }
+        yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, body));
       }
       case PLAY_DIFFICULTY -> {
         byte[] reshaped = body;
@@ -207,23 +298,21 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         }
         yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, reshaped));
       }
-      case PLAY_SET_CONTAINER_CONTENT, PLAY_SET_CONTAINER_SLOT, PLAY_CLICK_WINDOW,
-           PLAY_CREATIVE_SLOT, PLAY_ENTITY_EQUIPMENT, PLAY_CONFIRM_TRANSACTION,
+      case PLAY_CONFIRM_TRANSACTION,
            PLAY_CLOSE_WINDOW, PLAY_CLOSE_WINDOW_CLIENTBOUND, PLAY_WINDOW_PROPERTY,
            PLAY_KEEP_ALIVE, PLAY_CHAT, PLAY_SYSTEM_CHAT, PLAY_PLUGIN_MESSAGE,
            PLAY_FLYING, PLAY_POSITION, PLAY_LOOK, PLAY_POSITION_LOOK,
            PLAY_PLAYER_POSITION, PLAY_TELEPORT_CONFIRM, PLAY_UNLOAD_CHUNK,
            PLAY_GAME_EVENT, PLAY_ABILITIES, PLAY_HELD_ITEM, PLAY_SET_CARRIED_ITEM,
            PLAY_UPDATE_HEALTH, PLAY_SET_EXPERIENCE, PLAY_UPDATE_TIME,
-           PLAY_ENTITY_DESTROY, PLAY_ENTITY_STATUS, PLAY_SWING_ARM,
+           PLAY_ENTITY_STATUS, PLAY_SWING_ARM,
            PLAY_CLIENT_INFORMATION, PLAY_USE_ITEM, PLAY_CLIENT_COMMAND,
            PLAY_ENTITY_ACTION, PLAY_INTERACT_ENTITY, PLAY_DISCONNECT,
-           PLAY_SPAWN_LIVING_ENTITY, PLAY_SPAWN_PLAYER, PLAY_SPAWN_EXPERIENCE_ORB,
+           PLAY_SPAWN_EXPERIENCE_ORB,
            PLAY_ENTITY_RELATIVE_MOVE, PLAY_ENTITY_MOVE_LOOK, PLAY_ENTITY_LOOK,
            PLAY_ENTITY_HEAD_ROTATION, PLAY_ENTITY_VELOCITY, PLAY_ENTITY_TELEPORT,
            PLAY_COLLECT_ITEM, PLAY_SET_PASSENGERS, PLAY_ANIMATION, PLAY_COMBAT_EVENT,
-           PLAY_UPDATE_ATTRIBUTES, PLAY_SET_ENTITY_METADATA, PLAY_PLAYER_INFO_UPDATE,
-           PLAY_MULTI_BLOCK_CHANGE, PLAY_WORLD_EVENT,
+           PLAY_UPDATE_ATTRIBUTES, PLAY_PLAYER_INFO_UPDATE, PLAY_WORLD_EVENT,
            PLAY_EXPLOSION, PLAY_RESOURCE_PACK_SEND, PLAY_RESOURCE_PACK_STATUS,
            PLAY_TAB_COMPLETE, PLAY_TAB_COMPLETE_REQUEST, PLAY_DECLARE_COMMANDS -> {
         // Same field layout (or Slot-identical). Ids remapped by encode.
@@ -302,6 +391,15 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
     }
   }
 
+  /**
+   * Spawn Object.
+   *
+   * <p>The width changed (byte → VarInt in 1.14) but the <em>namespace</em> did
+   * not: both sides carry the legacy object enumeration, where a boat is 1 and an
+   * arrow is 60. That enumeration was never reindexed, so the value itself
+   * crosses unchanged — unlike Spawn Mob, which carries a registry index that
+   * 1.14 did reshuffle.
+   */
   private static byte[] translateSpawnObject(byte[] body, int fromProtocol, int toProtocol)
       throws IOException {
     boolean fromVar = fromProtocol >= 477;
@@ -320,5 +418,42 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
       out.flush();
       return buffer.toByteArray();
     }
+  }
+
+  /**
+   * Spawn Mob. The type is an entity <em>registry</em> index, and 1.14 inserted
+   * {@code cat} at 6, so 89 of 95 types land on a different mob unless the index
+   * is resolved by name. Returns null when the type has no counterpart, so the
+   * caller drops the spawn rather than inventing a mob.
+   */
+  private byte[] translateSpawnMob(byte[] body, int fromProtocol, int toProtocol)
+      throws IOException {
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      int entityId = MinecraftInput.varInt(in);
+      long uuidHigh = in.readLong();
+      long uuidLow = in.readLong();
+      int type = MinecraftInput.varInt(in);
+      var mapped = EntityTypeMaps.translateRegistry(fromProtocol, toProtocol, type);
+      if (mapped.isEmpty()) return null;
+      livingEntities.add(entityId);
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 4);
+      DataOutputStream out = new DataOutputStream(buffer);
+      MinecraftOutput.varInt(out, entityId);
+      out.writeLong(uuidHigh);
+      out.writeLong(uuidLow);
+      MinecraftOutput.varInt(out, mapped.getAsInt());
+      out.write(in.readAllBytes());   // position, rotation, velocity, trailing metadata
+      out.flush();
+      return buffer.toByteArray();
+    }
+  }
+
+  /**
+   * Whether this entity is a LivingEntity, which decides where the 1.14 metadata
+   * index shift falls. Tracked from the spawn packet that introduced it; unknown
+   * ids are treated as non-living, matching the Entity base layout.
+   */
+  private boolean living(int entityId) {
+    return livingEntities.contains(entityId);
   }
 }

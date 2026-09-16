@@ -92,6 +92,14 @@ public final class MetadataCodec {
       return translateLegacySlotOnly(fromProtocol, toProtocol, body);
     }
 
+    // 404 ↔ 477 is its own era and must not borrow the 393↔765 maps. 1.14 kept
+    // metadata types 0..15 byte-identical and merely appended VillagerData (16),
+    // OptVarInt (17) and Pose (18); the 765 type table would renumber Float and
+    // desynchronise the stream. Indices shift by one insertion, not two.
+    if (is114Pair(fromProtocol, toProtocol)) {
+      return translate114(fromProtocol, toProtocol, body, living);
+    }
+
     boolean toModern = !toLegacy;
 
     ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 16);
@@ -196,6 +204,93 @@ public final class MetadataCodec {
     }
   }
 
+  private static boolean is114Pair(int fromProtocol, int toProtocol) {
+    return (fromProtocol <= 404 && toProtocol == 477) || (fromProtocol == 477 && toProtocol <= 404);
+  }
+
+  /**
+   * 1.13.2 ↔ 1.14 metadata.
+   *
+   * <p>Types 0..15 are identical on both sides (confirmed against the 1.13.2 and
+   * 1.14 protocol schemas), so each value is copied in its own form rather than
+   * renumbered — except Slot, whose payload is unchanged here too since both
+   * sides use the present-flag form, and which still needs its item <em>id</em>
+   * remapped because 678 of 790 item ids moved in 1.14.
+   *
+   * <p>1.14 inserted exactly two fields: {@code Entity.pose} at index 6, and
+   * {@code LivingEntity.sleepingPos} after the arrow count. Everything at or
+   * above those points shifts; nothing else moves. Types and fields that exist
+   * only on 1.14 are consumed and dropped on the way down rather than guessed.
+   */
+  private static byte[] translate114(int fromProtocol, int toProtocol, byte[] body, boolean living)
+      throws IOException {
+    boolean up = toProtocol == 477;
+    ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 16);
+    DataOutputStream out = new DataOutputStream(buffer);
+    int carried = 0;
+    try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
+      while (true) {
+        int index = in.readUnsignedByte();
+        if (index == END) break;
+        int type = MinecraftInput.varInt(in);
+        int targetIndex = up ? mapIndexTo114(index, living) : mapIndexFrom114(index, living);
+
+        ByteArrayOutputStream value = new ByteArrayOutputStream(16);
+        DataOutputStream valueOut = new DataOutputStream(value);
+        boolean representable = type <= 15;   // 16..18 exist only on 1.14
+        if (type == 6) {
+          ItemCodec.write(toProtocol, valueOut, ItemCodec.read(fromProtocol, in));
+        } else if (representable) {
+          copyLegacyValue(valueOut, in, type);
+        } else {
+          consume114Only(in, type);
+        }
+        valueOut.flush();
+        if (!representable || targetIndex < 0) continue;
+
+        out.writeByte(targetIndex);
+        MinecraftOutput.varInt(out, type);
+        out.write(value.toByteArray());
+        carried++;
+      }
+    }
+    out.writeByte(END);
+    out.flush();
+    return carried == 0 ? null : buffer.toByteArray();
+  }
+
+  /** Consumes a 1.14-only metadata value so the entries after it stay aligned. */
+  private static void consume114Only(DataInput in, int type) throws IOException {
+    switch (type) {
+      case 16 -> {                                        // VillagerData
+        MinecraftInput.varInt(in);
+        MinecraftInput.varInt(in);
+        MinecraftInput.varInt(in);
+      }
+      case 17 -> {                                        // OptVarInt
+        MinecraftInput.varInt(in);
+      }
+      case 18 -> MinecraftInput.varInt(in);               // Pose
+      default -> throw new IOException("unknown 1.14 metadata type " + type);
+    }
+  }
+
+  public static int mapIndexTo114(int index, boolean living) {
+    if (index <= 5) return index;                         // Entity base unchanged
+    if (!living) return index + 1;                        // pose inserted at 6
+    if (index <= 10) return index + 1;                    // LivingEntity block, pose only
+    return index + 2;                                     // + sleepingPos
+  }
+
+  public static int mapIndexFrom114(int index, boolean living) {
+    if (index <= 5) return index;
+    if (index == 6) return -1;                            // pose: no 1.13.2 field
+    if (!living) return index - 1;
+    if (index <= 11) return index - 1;
+    if (index == 12) return -1;                           // sleepingPos: no 1.13.2 field
+    return index - 2;
+  }
+
   public static int mapType393To765(int type) {
     return type >= 0 && type < TYPE_393_TO_765.length ? TYPE_393_TO_765[type] : -1;
   }
@@ -284,7 +379,7 @@ public final class MetadataCodec {
       case BLOCK_STATE -> {
         int state = MinecraftInput.varInt(in);
         if (!emit) return false;
-        int mapped = translateState(state, toProtocol);
+        int mapped = translateState(state, fromProtocol, toProtocol);
         // 1.13's only block-state metadata type is OPTIONAL; a non-optional
         // modern BlockState becomes an explicitly-present optional.
         if (targetType == 13 && fromModern) out.writeBoolean(true);
@@ -293,7 +388,7 @@ public final class MetadataCodec {
       case OPT_BLOCK_STATE -> {
         // 1.13 encodes "absent" as state 0; 1.20.4 uses a VarInt where 0 means absent too.
         int state = MinecraftInput.varInt(in);
-        if (emit) MinecraftOutput.varInt(out, state == 0 ? 0 : translateState(state, toProtocol));
+        if (emit) MinecraftOutput.varInt(out, state == 0 ? 0 : translateState(state, fromProtocol, toProtocol));
       }
       case NBT -> {
         // 1.13 writes a named root, 1.20.2+ a nameless one.
@@ -330,8 +425,14 @@ public final class MetadataCodec {
     return true;
   }
 
-  private static int translateState(int state, int toProtocol) {
-    return toProtocol <= 404 ? BlockStateMaps.to393(state) : BlockStateMaps.to765(state);
+  /**
+   * Block states carried inside entity metadata (falling blocks, minecart display
+   * blocks) cross the version boundary through the same generated per-pair table
+   * the chunk path uses. Picking a table from the target alone was only ever
+   * right for the 393↔765 pair.
+   */
+  private static int translateState(int state, int fromProtocol, int toProtocol) {
+    return BlockStateMaps.translate(fromProtocol, toProtocol, state);
   }
 
   private enum Kind {

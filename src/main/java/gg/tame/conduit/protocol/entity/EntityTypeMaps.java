@@ -1,7 +1,14 @@
 package gg.tame.conduit.protocol.entity;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.OptionalInt;
 
 /**
@@ -73,6 +80,74 @@ public final class EntityTypeMaps {
     if (isLiving765(type765)) return toMob393(type765).isPresent();
     // Non-living 765 types should use object spawn when possible.
     return toObject393(type765).isEmpty() && toMob393(type765).isPresent();
+  }
+
+  /**
+   * Entity registry index across the 404 ↔ 477 pair, resolved by identifier.
+   *
+   * <p>1.14 inserted {@code cat} at index 6, so 89 of 1.13.2's 95 entity types
+   * arrive as a different mob if the id is forwarded unchanged. Both tables are
+   * plain index→name lists, so the crossing is a name lookup, never an offset.
+   *
+   * <p>Empty when the type has no counterpart, so callers suppress the spawn
+   * rather than showing the player the wrong mob.
+   */
+  public static OptionalInt translateRegistry(int fromProtocol, int toProtocol, int type) {
+    if (fromProtocol == toProtocol) return OptionalInt.of(type);
+    List<String> from = registryNames(fromProtocol);
+    Map<String, Integer> to = registryIndex(toProtocol);
+    if (from == null || to == null || type < 0 || type >= from.size()) return OptionalInt.empty();
+    String name = from.get(type);
+    if (name.isEmpty()) return OptionalInt.empty();
+    Integer mapped = to.get(name);
+    return mapped == null ? OptionalInt.empty() : OptionalInt.of(mapped);
+  }
+
+  /** True when both protocols have a generated entity registry for this pair. */
+  public static boolean supportsRegistry(int fromProtocol, int toProtocol) {
+    return fromProtocol == toProtocol
+        || (registryNames(fromProtocol) != null && registryNames(toProtocol) != null);
+  }
+
+  private static List<String> registryNames(int protocol) {
+    return REGISTRY_NAMES.get(protocol);
+  }
+
+  private static Map<String, Integer> registryIndex(int protocol) {
+    return REGISTRY_INDEX.get(protocol);
+  }
+
+  private static final Map<Integer, List<String>> REGISTRY_NAMES = Map.of(
+      404, loadNames("entitytypes_404_names.txt"),
+      477, loadNames("entitytypes_477_names.txt"));
+
+  private static final Map<Integer, Map<String, Integer>> REGISTRY_INDEX = index(REGISTRY_NAMES);
+
+  private static Map<Integer, Map<String, Integer>> index(Map<Integer, List<String>> names) {
+    Map<Integer, Map<String, Integer>> indexed = new HashMap<>();
+    names.forEach((protocol, list) -> {
+      Map<String, Integer> ids = new HashMap<>(list.size() * 2);
+      for (int id = 0; id < list.size(); id++) {
+        if (!list.get(id).isEmpty()) ids.putIfAbsent(list.get(id), id);
+      }
+      indexed.put(protocol, Map.copyOf(ids));
+    });
+    return Map.copyOf(indexed);
+  }
+
+  private static List<String> loadNames(String name) {
+    String path = "/gg/tame/conduit/protocol/entity/" + name;
+    try (InputStream in = EntityTypeMaps.class.getResourceAsStream(path)) {
+      if (in == null) throw new IllegalStateException("missing resource " + path);
+      List<String> names = new ArrayList<>();
+      BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+      for (String line = reader.readLine(); line != null; line = reader.readLine()) {
+        names.add(line.trim());
+      }
+      return List.copyOf(names);
+    } catch (IOException exception) {
+      throw new IllegalStateException("cannot load " + name, exception);
+    }
   }
 
   private static OptionalInt lookup(int[] table, int id) {
