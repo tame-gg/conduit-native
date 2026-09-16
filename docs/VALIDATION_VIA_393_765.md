@@ -343,6 +343,73 @@ replays it in Play, where `0x0b` is Change Difficulty. The switch lets it out in
 Configuration, where `0x0b` does not exist. The only variable is Via's
 configuration-bridge phase.
 
+### The bridge phase cannot be set, and setting it would not help
+
+Asked as a fix question: can Conduit put the switched `UserConnection` into the
+phase a fresh one reaches, through a public API? **No, and it should not want to.**
+
+**Who owns the state.** `ConfigurationState`, with the `BridgePhase` enum
+`NONE / PROFILE_SENT / CONFIGURATION / REENTERING_CONFIGURATION`, is a
+`StorableObject` on the `UserConnection`, put there by
+`Protocol1_20To1_20_2.init`. It ships in **viaversion-common-5.11.0.jar** — the
+implementation jar — and not in **viaversion-api-5.11.0.jar**. `UserConnection.get`
+and `put` are public, but naming the type is a dependency on an internal Via
+class, so the state is not publicly reachable. `ProtocolInfo`'s public surface is
+client state, server state, versions, username, uuid, compression and pipeline;
+it has no concept of the bridge.
+
+**What moves it.** One clientbound `LOGIN_FINISHED` decoded in `State.LOGIN`:
+
+```java
+registerClientbound(State.LOGIN, ClientboundLoginPackets.LOGIN_FINISHED, wrapper -> {
+    wrapper.user().get(ConfigurationState.class).setBridgePhase(BridgePhase.PROFILE_SENT);
+    wrapper.user().getProtocolInfo().setServerState(State.PLAY);
+});
+```
+
+**Feeding it the real Login Success does work — and deadlocks the switch.** A
+session opened at `LOGIN/LOGIN` and handed the 1.13.2 backend's own Login Success
+moves exactly as the direct path does. What follows is the problem:
+
+```
+feed backend LOGIN SUCCESS   [via=LOGIN/LOGIN bridge=NONE]    -> [via=LOGIN/PLAY bridge=PROFILE_SENT]
+feed backend JOIN_GAME       cancelled, no extras             -> bridge=PROFILE_SENT   (queued, waiting)
+feed client CONFIG ACK 0x0b  forwarded to the backend, no extras -> bridge=PROFILE_SENT (nothing happens)
+
+control: the same, but the client sends LOGIN ACKNOWLEDGED
+feed client LOGIN ACK 0x03   -> 0x8, 0x5, 0x9, 0x2            -> [via=CONFIGURATION/PLAY bridge=CONFIGURATION]
+```
+
+`PROFILE_SENT` holds the whole stream until the **client** sends Login
+Acknowledged. A switched client is already in Play and never sends one; its
+Configuration Acknowledged is not that packet and is simply passed through. So the
+fresh lifecycle is not merely unavailable mid-session, it is gated on a client
+login handshake that cannot happen. That is why the earlier attempt regressed into
+a fallback loop: the right packet into a lifecycle with no reachable exit.
+
+**Conduit's attachment point is already the correct one.** Taking the four phases
+in turn at Join Game time: `PROFILE_SENT` and `REENTERING_CONFIGURATION` both queue
+the packet and never emit Start Configuration; `CONFIGURATION` sends the bundle
+without ever telling the client to enter the phase; only `NONE` takes the
+`REENTERING_CONFIGURATION` branch that reconfigures a client already in Play. That
+branch is Via's own mechanism for a mid-session server change, and it is the one
+Conduit takes.
+
+**So the two defects live inside that branch, in Via**, not in where Conduit
+attaches:
+
+* `cancelClientbound(ClientboundPackets1_19_4.UPDATE_ENABLED_FEATURES)` — carrying
+  the comment `// TODO Sad emoji` — drops Feature Flags whenever the bridge is not
+  queueing.
+* The Change Difficulty that `Protocol1_13_2To1_14` lifts out of Join Game is
+  emitted into the Configuration phase the same branch has just asked the client to
+  enter, where `0x0b` is not a valid id.
+
+No Conduit-side lifecycle change can reach either without touching Via internals.
+**Switching stays PARTIAL**, and the limitation is now specific: not "Conduit
+primes Via wrongly", but "Via's reentering-configuration branch emits a Play packet
+into the phase it just opened, and cancels Feature Flags there".
+
 ### Reproducing the offline lifecycle comparison
 
 The harness is not committed. It opens two `ConduitViaTranslator`s for 765 → 404,
