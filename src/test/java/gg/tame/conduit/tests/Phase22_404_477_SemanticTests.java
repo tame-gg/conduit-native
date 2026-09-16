@@ -12,6 +12,7 @@ import gg.tame.conduit.protocol.chunk.ChunkCodec393;
 import gg.tame.conduit.protocol.chunk.ChunkCodec477;
 import gg.tame.conduit.protocol.chunk.SemanticChunk;
 import gg.tame.conduit.protocol.chunk.SemanticChunkSection;
+import gg.tame.conduit.protocol.entity.EntityMetadataSchemas;
 import gg.tame.conduit.protocol.entity.EntityTypeMaps;
 import gg.tame.conduit.protocol.entity.MetadataCodec;
 import gg.tame.conduit.protocol.item.ItemCodec;
@@ -47,7 +48,9 @@ public final class Phase22_404_477_SemanticTests {
     chunkTranslationRemapsPalette();
     chunkSectionCarriesBlockCount();
     spawnMobTranslatesTrailingMetadata();
-    arrowSubclassMetadataIsDropped();
+    spawnObjectResolvesByIdentifier();
+    metadataSchemasPerEntity();
+    metadataCrossesForEveryFamily();
     blockUpdateRemapsState();
     System.out.println("Phase22_404_477_SemanticTests passed.");
   }
@@ -358,55 +361,175 @@ public final class Phase22_404_477_SemanticTests {
   }
 
   /**
-   * 1.14's AbstractArrow reshaped its own fields, so a 1.13.2 arrow's subclass
-   * metadata lands on 1.14 fields of a different type — the real client dies with
-   * {@code ClassCastException} on the arrow's first tick. The base-class region
-   * still crosses; only the subclass fields are withheld.
+   * The crash this whole layer was rebuilt for.
+   *
+   * <p>1.14 changed Spawn Object's type from the legacy object enumeration to
+   * the entity registry id. Forwarding the number turned a 1.13.2 dropped item
+   * (object type 2) into a 1.14 arrow (registry id 2); the item's Slot metadata
+   * then landed on AbstractArrow's byte of flags and the real client died with
+   * {@code ItemStack cannot be cast to java.lang.Byte}.
    */
-  private static void arrowSubclassMetadataIsDropped() throws Exception {
-    ProtocolDefinition v404 = ProtocolDefinition.forVersion(404);
-    Protocol404To477Translator translator = Protocol404To477Translator.client477();
+  private static void spawnObjectResolvesByIdentifier() throws Exception {
+    int item404 = 2;                       // legacy object enumeration
+    int item477 = EntityTypeMaps.registryIndexOf(477, "minecraft:item").getAsInt();
+    int arrow477 = EntityTypeMaps.registryIndexOf(477, "minecraft:arrow").getAsInt();
+    require(arrow477 == 2, "1.14 registry id 2 really is the arrow, which is why this bit");
+    require(item477 != item404, "the dropped item's number differs across the pair");
 
-    // Spawn Object for an arrow: legacy object type 60.
-    ByteArrayOutputStream spawn = new ByteArrayOutputStream();
-    DataOutputStream out = new DataOutputStream(spawn);
-    MinecraftOutput.varInt(out, 77);
+    byte[] translated = spawnObject404To477(item404, 99);
+    require(translated != null, "dropped item spawn translated");
+    DataInputStream in = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(translated)));
+    require(MinecraftInput.varInt(in) == 99, "entity id preserved");
+    in.readLong(); in.readLong();
+    int type = MinecraftInput.varInt(in);
+    require(type == item477,
+        "a dropped item must arrive as a dropped item, not as entity " + type);
+    require(type != item404, "the type was actually rewritten, not forwarded");
+
+    // And an arrow, which is object type 60 on 1.13.2.
+    byte[] arrow = spawnObject404To477(60, 100);
+    DataInputStream arrowIn = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(arrow)));
+    MinecraftInput.varInt(arrowIn);
+    arrowIn.readLong(); arrowIn.readLong();
+    require(MinecraftInput.varInt(arrowIn) == arrow477, "an arrow arrives as an arrow");
+  }
+
+  private static byte[] spawnObject404To477(int objectType, int entityId) throws Exception {
+    ByteArrayOutputStream body = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(body);
+    MinecraftOutput.varInt(out, entityId);
     out.writeLong(0L); out.writeLong(0L);
-    out.writeByte(60);
+    out.writeByte(objectType);
     out.writeDouble(1); out.writeDouble(64); out.writeDouble(2);
     out.writeByte(0); out.writeByte(0);
     out.writeInt(0);
     out.writeShort(0); out.writeShort(0); out.writeShort(0);
-    byte[] spawnPacket = PlayPackets.withId(v404.id(ConnectionState.PLAY,
-        PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_ENTITY), spawn.toByteArray());
-    require(translator.backendToClient(ConnectionState.PLAY, spawnPacket) != null, "arrow spawned");
+    byte[] packet = PlayPackets.withId(ProtocolDefinition.forVersion(404).id(
+        ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_ENTITY),
+        body.toByteArray());
+    return Protocol404To477Translator.client477().backendToClient(ConnectionState.PLAY, packet);
+  }
 
-    // Metadata: a base-class field (custom name visible, index 3) and a subclass
-    // field (index 7, the tipped arrow's colour on 1.13.2).
-    ByteArrayOutputStream meta = new ByteArrayOutputStream();
-    DataOutputStream metaOut = new DataOutputStream(meta);
-    MinecraftOutput.varInt(metaOut, 77);
-    metaOut.writeByte(3);
-    MinecraftOutput.varInt(metaOut, 7);        // Boolean
-    metaOut.writeBoolean(true);
-    metaOut.writeByte(7);
-    MinecraftOutput.varInt(metaOut, 1);        // VarInt colour
-    MinecraftOutput.varInt(metaOut, 0x996633);
-    metaOut.writeByte(0xff);
+  /**
+   * The measured schemas must record the differences that motivated them, so a
+   * regenerated capture that quietly lost them fails here rather than in a client.
+   */
+  private static void metadataSchemasPerEntity() {
+    // AbstractArrow gained pierceLevel in the middle of its own block, so the
+    // arrow's colour is two indices further along on 1.14, not one.
+    var arrow = EntityMetadataSchemas.align(404, 477, "minecraft:arrow").orElseThrow();
+    require(arrow.map(6, 0) == 7, "arrow flags 6 → 7");
+    require(arrow.map(7, 12) == 8, "arrow shooter 7 → 8");
+    require(arrow.map(8, 1) == 10,
+        "arrow colour must skip 1.14's pierce level and land on 10, got " + arrow.map(8, 1));
 
-    byte[] packet = PlayPackets.withId(v404.id(ConnectionState.PLAY,
-        PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA), meta.toByteArray());
-    byte[] translated = translator.backendToClient(ConnectionState.PLAY, packet);
-    require(translated != null, "arrow metadata still delivered");
+    // A villager's profession became VillagerData. Serializers disagree, so the
+    // field is dropped instead of landing a VarInt on a structure.
+    var villager = EntityMetadataSchemas.align(404, 477, "minecraft:villager").orElseThrow();
+    require(villager.map(13, 1) == -1, "villager profession has no 1.14 counterpart");
+    require(villager.map(12, 7) == 14, "the rest of the villager still crosses");
 
-    DataInputStream in = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(translated)));
-    require(MinecraftInput.varInt(in) == 77, "entity id preserved");
-    int first = in.readUnsignedByte();
-    require(first == 3, "base-class field crosses unchanged; got index " + first);
-    require(MinecraftInput.varInt(in) == 7, "still a Boolean");
-    require(in.readBoolean(), "value preserved");
-    require(in.readUnsignedByte() == 0xff,
-        "the arrow's subclass field is withheld rather than landed on a 1.14 field");
+    // The base classes, which every entity shares.
+    var cow = EntityMetadataSchemas.align(404, 477, "minecraft:cow").orElseThrow();
+    require(cow.map(0, 0) == 0, "entity flags unchanged");
+    require(cow.map(5, 7) == 5, "noGravity unchanged");
+    require(cow.map(6, 0) == 7, "living block shifts past pose");
+    require(cow.map(11, 0) == 13, "mob block shifts past pose and sleepingPos");
+
+    // A serializer that disagrees with the recorded layout is never mapped.
+    require(cow.map(6, 2) == -1, "a field of the wrong type is dropped, not moved");
+
+    // An entity nobody measured has no alignment, and the caller falls back.
+    require(EntityMetadataSchemas.align(404, 477, "minecraft:not_a_real_entity").isEmpty(),
+        "unknown entities have no alignment");
+  }
+
+  /**
+   * Every family the task calls out, in both directions: the field must arrive
+   * at the index the target protocol reads it from, with its serializer intact.
+   */
+  private static void metadataCrossesForEveryFamily() throws Exception {
+    // (entity, sourceIndex, serializer, expected target index)
+    Object[][] up = {
+        { "minecraft:player", 6, 0, 7 },        // hand states
+        { "minecraft:player", 11, 2, 13 },      // absorption
+        { "minecraft:player", 15, 14, 17 },     // left shoulder NBT
+        { "minecraft:zombie", 12, 7, 14 },
+        { "minecraft:skeleton", 6, 0, 7 },
+        { "minecraft:cow", 12, 7, 14 },
+        { "minecraft:item", 6, 6, 7 },          // the stack itself
+        { "minecraft:arrow", 8, 1, 10 },        // colour, past pierce level
+        { "minecraft:trident", 6, 0, 7 },
+        { "minecraft:snowball", 3, 7, 3 },
+        { "minecraft:armor_stand", 12, 8, 14 }, // head rotation
+    };
+    for (Object[] row : up) {
+      assertCrossing(404, 477, (String) row[0], (int) row[1], (int) row[2], (int) row[3]);
+    }
+
+    Object[][] down = {
+        { "minecraft:player", 7, 0, 6 },
+        { "minecraft:player", 13, 2, 11 },
+        { "minecraft:zombie", 14, 7, 12 },
+        { "minecraft:cow", 14, 7, 12 },
+        { "minecraft:item", 7, 6, 6 },
+        { "minecraft:arrow", 10, 1, 8 },
+        { "minecraft:armor_stand", 14, 8, 12 },
+        { "minecraft:skeleton", 7, 0, 6 },
+    };
+    for (Object[] row : down) {
+      assertCrossing(477, 404, (String) row[0], (int) row[1], (int) row[2], (int) row[3]);
+    }
+
+    // 1.14-only fields must not come down: pose is index 6 on every entity.
+    var downCow = EntityMetadataSchemas.align(477, 404, "minecraft:cow").orElseThrow();
+    require(downCow.map(6, 18) == -1, "1.14 pose has no 1.13.2 field");
+    require(downCow.map(12, 10) == -1, "1.14 sleepingPos has no 1.13.2 field");
+  }
+
+  /**
+   * Encodes one metadata entry, runs it through the codec, and checks where it
+   * came out. This is the part that matters: not that the bytes round-trip, but
+   * that the target protocol reads the value as the field it was meant to be.
+   */
+  private static void assertCrossing(int from, int to, String entity, int index,
+                                     int serializer, int expected) throws Exception {
+    ByteArrayOutputStream body = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(body);
+    out.writeByte(index);
+    MinecraftOutput.varInt(out, serializer);
+    writeValue(out, serializer, from);
+    out.writeByte(0xff);
+
+    byte[] translated = MetadataCodec.translate114(from, to, body.toByteArray(), true, entity);
+    require(translated != null, entity + " index " + index + " produced no metadata");
+    DataInputStream in = new DataInputStream(new ByteArrayInputStream(translated));
+    int arrived = in.readUnsignedByte();
+    require(arrived == expected,
+        entity + " " + from + "→" + to + " index " + index + " should land on " + expected
+            + ", landed on " + arrived);
+    require(MinecraftInput.varInt(in) == serializer,
+        entity + " index " + index + " changed serializer");
+  }
+
+  /** A representative value for one serializer, enough to walk the entry. */
+  private static void writeValue(DataOutputStream out, int serializer, int protocol) throws Exception {
+    switch (serializer) {
+      case 0 -> out.writeByte(1);
+      case 1 -> MinecraftOutput.varInt(out, 7);
+      case 2 -> out.writeFloat(1.5f);
+      case 7 -> out.writeBoolean(true);
+      case 8 -> { out.writeFloat(1); out.writeFloat(2); out.writeFloat(3); }
+      case 6 -> {                                   // Slot
+        out.writeBoolean(true);
+        MinecraftOutput.varInt(out, ItemRegistries.id(protocol, "minecraft:diamond").getAsInt());
+        out.writeByte(1);
+        out.writeByte(0);                           // TAG_End: no NBT
+      }
+      case 12 -> out.writeBoolean(false);           // OptUUID, absent
+      case 14 -> out.writeByte(0);                  // empty NBT
+      default -> throw new IllegalArgumentException("no sample for serializer " + serializer);
+    }
   }
 
   private static void blockUpdateRemapsState() throws Exception {

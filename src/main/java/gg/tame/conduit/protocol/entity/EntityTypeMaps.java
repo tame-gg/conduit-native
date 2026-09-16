@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -107,6 +108,22 @@ public final class EntityTypeMaps {
   public static boolean supportsRegistry(int fromProtocol, int toProtocol) {
     return fromProtocol == toProtocol
         || (registryNames(fromProtocol) != null && registryNames(toProtocol) != null);
+  }
+
+  /** The identifier this protocol's entity registry gives that index. */
+  public static Optional<String> registryName(int protocol, int type) {
+    List<String> names = registryNames(protocol);
+    if (names == null || type < 0 || type >= names.size()) return Optional.empty();
+    String name = names.get(type);
+    return name.isEmpty() ? Optional.empty() : Optional.of(name);
+  }
+
+  /** The index this protocol's entity registry gives that identifier. */
+  public static OptionalInt registryIndexOf(int protocol, String name) {
+    Map<String, Integer> index = registryIndex(protocol);
+    if (index == null || name == null) return OptionalInt.empty();
+    Integer id = index.get(name);
+    return id == null ? OptionalInt.empty() : OptionalInt.of(id);
   }
 
   private static List<String> registryNames(int protocol) {

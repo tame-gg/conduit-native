@@ -112,6 +112,20 @@ public final class LegacyObjectTypes {
     return Optional.ofNullable(NAMES.get(objectType));
   }
 
+  /** The 1.13 Spawn Object type that names this entity, if the enumeration has one. */
+  public static OptionalInt objectTypeFor(String name) {
+    Integer object = OBJECT_BY_NAME.get(name);
+    return object == null ? OptionalInt.empty() : OptionalInt.of(object);
+  }
+
+  /** The {@code objectData} a 1.13 spawn needs for this minecart variant, by name. */
+  public static int objectDataForName(String name) {
+    for (int variant = 0; variant < MINECARTS.length; variant++) {
+      if (MINECARTS[variant].equals(name)) return variant;
+    }
+    return 0;
+  }
+
   /** 1.13 object type -> 1.20.4 entity type id. Empty when 1.20.4 has no such entity. */
   public static OptionalInt to765(int objectType, int objectData) {
     Optional<String> name = name(objectType, objectData);
