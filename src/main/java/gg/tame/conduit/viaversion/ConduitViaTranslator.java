@@ -26,6 +26,14 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     session.setServerState(state);
   }
 
+  /**
+   * Places this translator at the states its connection has already reached, for a session opened
+   * mid-connection by a server switch rather than at login.
+   */
+  public void adoptStates(ConnectionState clientState, ConnectionState backendState) {
+    session.adoptStates(clientState, backendState);
+  }
+
   /** Handler names on this session's channel, in pipeline order. */
   public java.util.List<String> pipelineHandlerNames() {
     return session.pipelineHandlerNames();

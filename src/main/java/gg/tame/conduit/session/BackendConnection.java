@@ -70,11 +70,18 @@ public final class BackendConnection implements AutoCloseable {
       host = FmlAddressMarkers.append(host, marker);
     }
     Handshake backendHandshake = new Handshake(clientHandshake.protocolVersion(), host, server.address().getPort(), 2);
-    MinecraftFrames.write(socket.getOutputStream(), backendHandshake.encode());
+    byte[] handshakeBytes = backendHandshake.encode();
+    MinecraftFrames.write(socket.getOutputStream(), handshakeBytes);
     ProtocolDefinition loginProtocol = ProtocolDefinition.hasCodec(clientHandshake.protocolVersion())
         ? ProtocolDefinition.forVersion(clientHandshake.protocolVersion())
         : null;
-    MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(player, loginProtocol));
+    byte[] loginStart = LoginStart.encode(player, loginProtocol);
+    if (gg.tame.conduit.protocol.ProtocolTrace.enabled()) {
+      gg.tame.conduit.protocol.ProtocolTrace.note("backend-open " + server.name() + ":"
+          + server.address().getPort() + " handshakeProtocol=" + clientHandshake.protocolVersion()
+          + " loginProtocol=" + (loginProtocol == null ? "none" : loginProtocol.version().number()));
+    }
+    MinecraftFrames.write(socket.getOutputStream(), loginStart);
   }
   public BackendServer server() { return server; }
   public ConnectionState state() { return login.state(); }
@@ -92,6 +99,13 @@ public final class BackendConnection implements AutoCloseable {
         throw new IOException("backend write backpressure exceeded for " + server.name());
       }
       queuedWrites++;
+      if (gg.tame.conduit.protocol.ProtocolTrace.bodies()) {
+        // Which backend a packet went to, and in what state, is the difference between a correct
+        // switch and one that writes the client's dialect at the wrong server.
+        gg.tame.conduit.protocol.ProtocolTrace.note("backend-write " + server.name() + ":"
+            + server.address().getPort() + " state=" + login.state()
+            + " len=" + packet.length + " " + gg.tame.conduit.protocol.ProtocolTrace.hex(packet, 24));
+      }
       MinecraftFrames.writeUnflushed(output, login.compression().wrap(packet));
       queuedWrites--;
       ConduitMetrics.current().outbound(packet.length);

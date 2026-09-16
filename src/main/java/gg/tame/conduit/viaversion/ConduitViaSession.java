@@ -204,6 +204,26 @@ public final class ConduitViaSession implements AutoCloseable {
     connection.getProtocolInfo().setServerState(ConduitViaStates.toVia(state));
   }
 
+  /**
+   * Places a freshly opened session at the states its connection has already reached.
+   *
+   * <p>A session opened for a first connection learns both states by watching the packets that
+   * cause the transitions: Conduit forwards the backend's Login Success through it, and Via moves
+   * the client on from Login itself. A session opened for a <em>server switch</em> sees none of
+   * that. Conduit performs that login on the player's behalf and deliberately withholds the new
+   * backend's Login Success from the client, so nothing that changes state ever reaches Via, and it
+   * stays in the Login it was opened with — passing every packet through untranslated, including
+   * the Join Game a downgrade path needs in order to build the client's Configuration phase.
+   *
+   * <p>So the states are handed over explicitly, and only here: at a point where Conduit performed
+   * both transitions itself and therefore genuinely knows them. This is the same reason
+   * {@link #setServerState} exists, applied to both halves at once.
+   */
+  public void adoptStates(ConnectionState clientState, ConnectionState backendState) {
+    connection.getProtocolInfo().setClientState(ConduitViaStates.toVia(clientState));
+    connection.getProtocolInfo().setServerState(ConduitViaStates.toVia(backendState));
+  }
+
   /** Handler names on this session's channel, in pipeline order. */
   public List<String> pipelineHandlerNames() {
     return new ArrayList<>(channel.pipeline().names());

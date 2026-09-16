@@ -76,6 +76,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final SwitchPacketQueue switchQueue;
   private final Object lock = new Object();
   private final AtomicReference<SessionLifecycle> lifecycle = new AtomicReference<>(SessionLifecycle.CONNECTING);
+  /**
+   * Guards the translator. A translator is one stateful decoder per session, not a pure function:
+   * ViaVersion's connection carries entity trackers, world state and a partially written buffer.
+   * Both reader threads reach it — the client thread translating serverbound packets and draining
+   * whatever they produced, the backend thread translating clientbound ones — so the transforms
+   * have to be serialised or two of them interleave inside one connection's state.
+   */
+  private final Object translatorLock = new Object();
   private final BlockingQueue<Boolean> configurationAck = new ArrayBlockingQueue<>(1);
   private final BlockingQueue<Boolean> knownPacksAck = new ArrayBlockingQueue<>(1);
   private volatile BackendConnection backend;
@@ -230,46 +238,66 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     throw last == null ? new IOException("all configured backends refused the connection") : last;
   }
 
-  private void prepareTranslation(BackendServer server) {
-    int advertised = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(clientProtocol);
-    TranslationSupport support = ProtocolCompatibility.between(clientProtocol, advertised);
-    closeViaTranslator();
-    if (support == TranslationSupport.TRANSLATED) {
-      this.translationSupport = support;
-      this.backendProtocol = advertised;
-      this.backendDefinition = ProtocolDefinition.hasCodec(advertised)
-          ? ProtocolDefinition.forVersion(advertised)
-          : protocol;
-      String host = server.address().getHostString();
-      int port = server.address().getPort();
-      this.translator = Translators.forPair(clientProtocol, advertised, host, port);
-      String engine = translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator ? "ViaVersion" : "native";
-      ProtocolTrace.note("session translation " + clientProtocol + "→" + advertised + " TRANSLATED (" + engine + ")");
-      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
-          clientProtocol, advertised, "TRANSLATED", engine).render().replace("\n", " | "));
-    } else if (support == TranslationSupport.DIRECT) {
-      this.translationSupport = TranslationSupport.DIRECT;
-      this.backendProtocol = clientProtocol;
-      this.backendDefinition = protocol;
-      this.translator = IdentityTranslator.INSTANCE;
-      ProtocolTrace.note("session translation " + clientProtocol + "→" + backendProtocol + " DIRECT");
-      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
-          clientProtocol, backendProtocol, "DIRECT", "identity").render().replace("\n", " | "));
-    } else {
-      // UNSUPPORTED Via-style backends that accept the client wire protocol.
-      this.translationSupport = TranslationSupport.DIRECT;
-      this.backendProtocol = clientProtocol;
-      this.backendDefinition = protocol;
-      this.translator = IdentityTranslator.INSTANCE;
-      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
-          clientProtocol, advertised, "UNSUPPORTED", "none").render().replace("\n", " | "));
+  /**
+   * One backend's share of the session: which protocol it speaks, the packet table for it, and the
+   * translator that reaches it.
+   *
+   * <p>These four travel together because they describe one connection, not the session. A switch
+   * has two backends alive at once — the old one still carrying the player while the new one logs
+   * in — and each needs its own. Holding them as session fields instead meant the moment a switch
+   * started preparing, every packet the client sent was encoded for a backend it was not being
+   * written to: a real 1.20.4 client's Set Player Position reached the still-live 1.13 backend as
+   * raw 1.20.4, and that backend closed the connection.
+   */
+  private record Translation(TranslationSupport support, int backendProtocol,
+                             ProtocolDefinition definition, ProtocolTranslator translator) {
+    void close() {
+      if (translator instanceof AutoCloseable closeable) {
+        try { closeable.close(); } catch (Exception ignored) { }
+      }
     }
   }
 
-  private void closeViaTranslator() {
-    if (translator instanceof AutoCloseable closeable) {
-      try { closeable.close(); } catch (Exception ignored) { }
+  /** Works out the translation for {@code server} without disturbing the one already in use. */
+  private Translation buildTranslation(BackendServer server) {
+    int advertised = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(clientProtocol);
+    TranslationSupport support = ProtocolCompatibility.between(clientProtocol, advertised);
+    if (support == TranslationSupport.TRANSLATED) {
+      ProtocolDefinition definition = ProtocolDefinition.hasCodec(advertised)
+          ? ProtocolDefinition.forVersion(advertised)
+          : protocol;
+      ProtocolTranslator engine = Translators.forPair(clientProtocol, advertised,
+          server.address().getHostString(), server.address().getPort());
+      String name = engine instanceof gg.tame.conduit.viaversion.ConduitViaTranslator ? "ViaVersion" : "native";
+      ProtocolTrace.note("session translation " + clientProtocol + "→" + advertised + " TRANSLATED (" + name + ")");
+      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
+          clientProtocol, advertised, "TRANSLATED", name).render().replace("\n", " | "));
+      return new Translation(support, advertised, definition, engine);
     }
+    if (support == TranslationSupport.DIRECT) {
+      ProtocolTrace.note("session translation " + clientProtocol + "→" + clientProtocol + " DIRECT");
+      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
+          clientProtocol, clientProtocol, "DIRECT", "identity").render().replace("\n", " | "));
+      return new Translation(TranslationSupport.DIRECT, clientProtocol, protocol, IdentityTranslator.INSTANCE);
+    }
+    // UNSUPPORTED Via-style backends that accept the client wire protocol.
+    System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
+        clientProtocol, advertised, "UNSUPPORTED", "none").render().replace("\n", " | "));
+    return new Translation(TranslationSupport.DIRECT, clientProtocol, protocol, IdentityTranslator.INSTANCE);
+  }
+
+  /** Makes {@code next} the session's translation and closes whatever it replaces. */
+  private void install(Translation next) {
+    Translation previous = new Translation(translationSupport, backendProtocol, backendDefinition, translator);
+    this.translationSupport = next.support();
+    this.backendProtocol = next.backendProtocol();
+    this.backendDefinition = next.definition();
+    this.translator = next.translator();
+    if (previous.translator() != next.translator()) previous.close();
+  }
+
+  private void prepareTranslation(BackendServer server) {
+    install(buildTranslation(server));
   }
 
   private void writeBackendHandshake(Socket socket, BackendServer server) throws IOException {
@@ -289,7 +317,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
 
   private byte[] towardBackend(ConnectionState state, byte[] packet) {
+    return towardBackend(translator, state, packet);
+  }
+
+  private byte[] towardBackend(ProtocolTranslator translator, ConnectionState state, byte[] packet) {
     if (translator == IdentityTranslator.INSTANCE) return packet;
+    synchronized (translatorLock) {
+      return towardBackendLocked(translator, state, packet);
+    }
+  }
+
+  private byte[] towardBackendLocked(ProtocolTranslator translator, ConnectionState state, byte[] packet) {
     if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator via) {
       if (ProtocolTrace.enabled()) {
         try {
@@ -312,7 +350,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * here, immediately after the packet that produced them, so ordering holds.
    */
   private int flushTranslatorExtras(BackendConnection target) {
+    return flushTranslatorExtras(translator, target);
+  }
+
+  private int flushTranslatorExtras(ProtocolTranslator translator, BackendConnection target) {
     if (translator == IdentityTranslator.INSTANCE) return 0;
+    synchronized (translatorLock) {
+      return flushTranslatorExtrasLocked(translator, target);
+    }
+  }
+
+  private int flushTranslatorExtrasLocked(ProtocolTranslator translator, BackendConnection target) {
     int toBackend = 0;
     for (byte[] extra : translator.drainToClient()) {
       if (ProtocolTrace.enabled()) {
@@ -337,7 +385,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
 
   private byte[] towardClient(ConnectionState state, byte[] packet) {
+    return towardClient(translator, state, packet);
+  }
+
+  private byte[] towardClient(ProtocolTranslator translator, ConnectionState state, byte[] packet) {
     if (translator == IdentityTranslator.INSTANCE) return packet;
+    synchronized (translatorLock) {
+      return towardClientLocked(translator, state, packet);
+    }
+  }
+
+  private byte[] towardClientLocked(ProtocolTranslator translator, ConnectionState state, byte[] packet) {
     // Via is told where the *client* is, never where the backend is. Across the 1.20.2 boundary
     // the two genuinely differ — a 1.13 client is in Play while the backend is still in
     // Configuration — and that split is the thing Via's downgrade path is keyed on. The native
@@ -367,6 +425,19 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return translator.backendToClient(state, packet);
   }
   private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess) throws IOException {
+    completeBackendLogin(connection, forwardLoginSuccess,
+        new Translation(translationSupport, backendProtocol, backendDefinition, translator));
+  }
+
+  /**
+   * Finishes LOGIN against {@code connection} using {@code target}'s translation rather than the
+   * session's. During a switch the session's translation still belongs to the backend the player is
+   * currently on, and must not be used to talk to the one being prepared.
+   */
+  private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess,
+                                    Translation target) throws IOException {
+    ProtocolDefinition backendDefinition = target.definition();
+    ProtocolTranslator translator = target.translator();
     int viaLoginPacketsToBackend = 0;
     while (connection.state() == ConnectionState.LOGIN) {
       byte[] packet = connection.readUncompressed();
@@ -375,7 +446,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (response != null) { connection.writeUncompressed(response); continue; }
       if (!connection.login().shouldForward()) continue;
       if (!forwardLoginSuccess) throw new IOException("backend login failed");
-      byte[] toClient = towardClient(ConnectionState.LOGIN, packet);
+      byte[] toClient = towardClient(translator, ConnectionState.LOGIN, packet);
       if (toClient == null) continue;
       writeClient(toClient);
       loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, toClient);
@@ -384,7 +455,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // one-byte Login Acknowledged after the backend reached Play, where that same id is a
       // packet with a body — which is how a real 1.20.4 server ends up reporting a decoder
       // underflow a whole join later.
-      if (viaEngine()) viaLoginPacketsToBackend += flushTranslatorExtras(connection);
+      if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator) {
+        viaLoginPacketsToBackend += flushTranslatorExtras(translator, connection);
+      }
     }
     // Always ack configuration using the BACKEND protocol when the backend has that phase.
     if (backendDefinition.hasConfiguration()
@@ -406,9 +479,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (!protocol.hasConfiguration() && backendDefinition.hasConfiguration()
         && connection.state() == ConnectionState.CONFIGURATION) {
       if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator) {
-        runBackendConfigurationThroughVia(connection);
+        runBackendConfigurationThroughVia(connection, target);
       } else {
-        absorbBackendConfiguration(connection);
+        absorbBackendConfiguration(connection, backendDefinition);
       }
     }
   }
@@ -423,13 +496,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * Play packet fail to remap. So when Via is the engine, the packets go through it, and whatever
    * it decides to emit — usually nothing until it has seen Join Game — is forwarded.
    */
-  private void runBackendConfigurationThroughVia(BackendConnection connection) throws IOException {
+  private void runBackendConfigurationThroughVia(BackendConnection connection, Translation target) throws IOException {
     while (connection.state() != ConnectionState.PLAY) {
       byte[] packet = connection.readUncompressed();
       connection.login().onBackendPacket(packet, configuration.maxFrameBytes());
       byte[] toClient;
       try {
-        toClient = towardClient(ConnectionState.CONFIGURATION, packet);
+        toClient = towardClient(target.translator(), ConnectionState.CONFIGURATION, packet);
       } catch (TranslationException translation) {
         ProtocolTrace.note("FAIL (via configuration) " + translation.getMessage());
         if (ProtocolTrace.enabled()) translation.printStackTrace();
@@ -437,9 +510,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
             + translation.getMessage(), translation);
       }
       if (toClient != null && toClient.length > 0) writeClient(toClient, true);
-      flushTranslatorExtras(connection);
+      flushTranslatorExtras(target.translator(), connection);
     }
-    ProtocolTrace.note("Via handled backend configuration for " + clientProtocol + "→" + backendProtocol
+    ProtocolTrace.note("Via handled backend configuration for " + clientProtocol + "→" + target.backendProtocol()
         + " (via state " + viaStateDescription() + ")");
   }
 
@@ -458,7 +531,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * Completes the backend Configuration phase without exposing Configuration packets to a
    * client that has no such state (e.g. 1.13).
    */
-  private void absorbBackendConfiguration(BackendConnection connection) throws IOException {
+  private void absorbBackendConfiguration(BackendConnection connection, ProtocolDefinition backendDefinition) throws IOException {
     var absorber = new gg.tame.conduit.protocol.translate.ConfigurationAbsorber(backendDefinition);
     if (clientInformation != null) absorber.setClientInformation(clientInformation);
     var settings = absorber.initialClientInformation();
@@ -551,6 +624,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED)) {
+      if (viaEngine()) {
+        // When the translator is the one reconfiguring the client, this is the reply it is waiting
+        // for: it holds the backend's entire world stream from Join Game onwards until it sees the
+        // client leave Play. Answering it here and going no further leaves it holding forever, and
+        // the client sits in a Configuration phase nothing ever finishes.
+        BackendConnection target = switchingTarget != null ? switchingTarget : backend;
+        byte[] outbound = towardBackend(ConnectionState.PLAY, packet);
+        if (outbound != null && target != null) target.writeUncompressed(outbound);
+        flushTranslatorExtras(target);
+      }
       clientState.beginReconfiguration();
       configurationAck.offer(Boolean.TRUE);
       return true;
@@ -591,16 +674,55 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       System.out.println("TRACE cached client information from " + state + " (" + clientInformation.length + " body bytes)");
     }
   }
-  /** Replays the cached Client Information to a backend in the given state. */
+  /**
+   * Replays the cached Client Information to a backend.
+   *
+   * <p>The cached body is the <em>client's</em>, in the client's layout, and the packet that carries
+   * it has to reach the backend in the <em>backend's</em> dialect. Those are only the same thing on
+   * a DIRECT pair. So this picks a state both ends actually have and then sends the packet the way
+   * every other client packet is sent — through the session's translator — rather than stamping the
+   * client's packet id onto the client's body and putting it on the backend socket.
+   *
+   * <p>Doing the latter is what a 1.13.2 backend received during a switch from a 1.20.4 client: the
+   * 1.20.4 Configuration id {@code 0x00}, followed by a body two booleans longer than 1.13.2 defines,
+   * on a backend with no Configuration phase at all. Its decoder read that as a second Login Start
+   * and closed the connection over the seven bytes it could not account for.
+   */
   private void replayClientInformation(BackendConnection target, ConnectionState state) {
+    replayClientInformation(target, state,
+        new Translation(translationSupport, backendProtocol, backendDefinition, translator));
+  }
+
+  private void replayClientInformation(BackendConnection target, ConnectionState state, Translation via) {
+    ProtocolDefinition backendDefinition = via.definition();
     byte[] body = clientInformation;
     if (body == null || target == null) return;
-    PacketKind kind = state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_CLIENT_INFORMATION : PacketKind.PLAY_CLIENT_INFORMATION;
-    if (!protocol.defines(state, PacketDirection.CLIENT_TO_SERVER, kind)) return;
+    // A backend with no Configuration phase has nothing to seed before the client reconfigures,
+    // and its Play state is reached in the same breath as Login Success. Sending anything into that
+    // window risks the backend still decoding as Login. The post-commit Play replay covers it.
+    if (state == ConnectionState.CONFIGURATION && !backendDefinition.hasConfiguration()) return;
+    ConnectionState replayState = state;
+    PacketKind kind = replayState == ConnectionState.CONFIGURATION
+        ? PacketKind.CONFIGURATION_CLIENT_INFORMATION
+        : PacketKind.PLAY_CLIENT_INFORMATION;
+    // The body is the client's, so the client has to have this packet in this state to have sent it.
+    if (!protocol.defines(replayState, PacketDirection.CLIENT_TO_SERVER, kind)) return;
+    if (!backendDefinition.defines(replayState, PacketDirection.CLIENT_TO_SERVER, kind)) return;
     try {
-      target.writeUncompressed(PlayPackets.withId(protocol.id(state, PacketDirection.CLIENT_TO_SERVER, kind), body));
+      byte[] clientForm = PlayPackets.withId(protocol.id(replayState, PacketDirection.CLIENT_TO_SERVER, kind), body);
+      byte[] outbound;
+      try {
+        outbound = towardBackend(via.translator(), replayState, clientForm);
+      } catch (RuntimeException translation) {
+        ProtocolTrace.note("could not translate replayed client information for "
+            + target.server().name() + ": " + translation.getMessage());
+        return;
+      }
+      if (outbound == null || outbound.length == 0) return;
+      target.writeUncompressed(outbound);
+      flushTranslatorExtras(via.translator(), target);
       if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
-        System.out.println("TRACE replayed client information to " + target.server().name() + " in " + state);
+        System.out.println("TRACE replayed client information to " + target.server().name() + " in " + replayState);
       }
     } catch (IOException exception) {
       System.err.println("Could not replay client information to " + target.server().name() + ": " + exception.getMessage());
@@ -833,6 +955,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
   }
   private static final int SWITCH_BUDGET_MS = 4_000;
+  /**
+   * Budget for each half of a translator-driven reconfiguration, measured after the switch has
+   * already committed. It is separate from {@link #SWITCH_BUDGET_MS}, which covers connecting and
+   * logging in to the new backend: by this point that work is done, and what is being waited on is
+   * a real client loading a world it has just been handed.
+   */
+  private static final int RECONFIGURE_BUDGET_MS = 15_000;
   private void switchTo(BackendServer server, boolean fallback) throws Exception {
     var targetView = runtime.registered(server.name()).orElse(null);
     var sourceView = backend == null ? java.util.Optional.<gg.tame.conduit.api.server.RegisteredServer>empty() : runtime.registered(backend.server().name());
@@ -852,21 +981,26 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     BackendConnection previous = backend;
     Socket socket = null;
     BackendConnection next = null;
+    Translation pending = null;
     boolean clientEnteredConfiguration = false;
+    boolean finishAfterCommit = false;
     try {
-      // PREPARE: open + login against the target while the current backend remains active.
-      prepareTranslation(server);
+      // PREPARE: open + login against the target while the current backend remains active. The
+      // target's translation is built but NOT installed: until commit, the session's translator
+      // still belongs to the backend the player is actually on, and the client's packets have to
+      // keep being encoded for that one.
+      pending = buildTranslation(server);
       socket = BackendConnection.open(server);
       enforceDeadline(deadline, "connect");
-      Handshake switchHandshake = translationSupport == TranslationSupport.TRANSLATED
-          ? new Handshake(backendProtocol, handshake.requestedHost(), handshake.requestedPort(), 2)
+      Handshake switchHandshake = pending.support() == TranslationSupport.TRANSLATED
+          ? new Handshake(pending.backendProtocol(), handshake.requestedHost(), handshake.requestedPort(), 2)
           : handshake;
       BackendConnection.handshake(socket, switchHandshake, server, profile(), modClassifier.marker(), modClassifier.family());
-      next = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, true);
+      next = new BackendConnection(server, socket, pending.definition(), forwarder, profile(), address, configuration, true);
       next.setReadTimeoutMillis(remainingMillis(deadline));
-      completeBackendLogin(next, false);
+      completeBackendLogin(next, false, pending);
       enforceDeadline(deadline, "login");
-      replayClientInformation(next, ConnectionState.CONFIGURATION);
+      replayClientInformation(next, ConnectionState.CONFIGURATION, pending);
 
       // COMMIT: only now pause the old backend reader and involve the client.
       synchronized (lock) {
@@ -874,6 +1008,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
         lifecycle.set(SessionLifecycle.SWITCHING);
         switchQueue.clear();
+        // The old backend stops receiving client packets here, so this is the first moment the
+        // session's translation can move to the new one without misaddressing anything.
+        install(pending);
         lock.notifyAll();
       }
       gg.tame.conduit.protocol.ProfileTrace.beginSequence("switch to " + server.name(), 60);
@@ -884,6 +1021,22 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       } else if (protocol.hasConfiguration()) {
         configurationAck.clear();
         synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
+        // Who reconfigures the client depends on who can. A backend with its own Configuration
+        // phase supplies the packets and Conduit relays them. A backend without one supplies
+        // nothing, and on the Via engine the translator builds that phase itself out of the
+        // backend's Join Game — including the Start Configuration that begins it. Conduit sending
+        // its own as well puts the client into a phase it is already entering, and the second
+        // handshake never completes.
+        finishAfterCommit = viaEngine() && !backendDefinition.hasConfiguration();
+        if (finishAfterCommit) {
+          clientEnteredConfiguration = true;
+          // This translator was opened mid-connection and watched none of the transitions that got
+          // either end here, so it is told where they are.
+          if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator via) {
+            via.adoptStates(ConnectionState.PLAY, next.state());
+            ProtocolTrace.note("switch primed Via at " + via.stateDescription());
+          }
+        } else {
         writeClient(PlayPackets.startConfiguration(protocol));
         clientEnteredConfiguration = true;
         int waitSeconds = Math.max(1, remainingMillis(deadline) / 1000);
@@ -893,7 +1046,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         boolean registrySeen = !protocol.knownPacks();
         boolean knownPacksDone = !protocol.knownPacks();
         byte[] lastConfig = null;
-        while (next.state() != ConnectionState.PLAY) {
+        while (!finishAfterCommit && next.state() != ConnectionState.PLAY) {
           enforceDeadline(deadline, "configuration");
           next.setReadTimeoutMillis(remainingMillis(deadline));
           byte[] packet = next.readUncompressed();
@@ -943,17 +1096,29 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         } else if (configurationAck.poll(finishWait, TimeUnit.SECONDS) == null) {
           throw new IOException("client did not finish configuration");
         }
+        }
       }
       commandsDeclared = false;
       synchronized (lock) {
         backend = next;
-        backendProtocol = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(protocol.version().number());
         switchingTarget = null;
         next = null;
         lifecycle.set(SessionLifecycle.CONNECTED);
         lock.notifyAll();
       }
       flushSwitchQueue(backend);
+      if (finishAfterCommit) {
+        // The translator only sees the backend's Join Game once the steady read path is running,
+        // which the commit above starts. From there the client is driven through Configuration by
+        // the translator: it acknowledges entering the phase, then finishes it.
+        if (configurationAck.poll(RECONFIGURE_BUDGET_MS, TimeUnit.MILLISECONDS) == null) {
+          throw new IOException("client did not acknowledge reconfiguration");
+        }
+        configurationAck.clear();
+        if (configurationAck.poll(RECONFIGURE_BUDGET_MS, TimeUnit.MILLISECONDS) == null) {
+          throw new IOException("client did not finish configuration");
+        }
+      }
       replayClientInformation(backend, ConnectionState.PLAY);
       if (previous != null) previous.close();
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
@@ -964,6 +1129,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     } catch (Exception exception) {
       switchingTarget = null;
       switchQueue.clear();
+      // Only release the prepared translation if it never became the session's.
+      if (pending != null && pending.translator() != translator) pending.close();
       if (next != null) next.close();
       else if (socket != null) try { socket.close(); } catch (IOException ignored) { }
       gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception.getMessage());
@@ -1134,7 +1301,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public void close() {
     closed = true;
     lifecycle.set(SessionLifecycle.CLOSED);
-    closeViaTranslator();
+    new Translation(translationSupport, backendProtocol, backendDefinition, translator).close();
     synchronized (lock) { lock.notifyAll(); }
     if (players != null) players.remove(this);
     BackendConnection current = backend;
