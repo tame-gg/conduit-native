@@ -80,6 +80,7 @@ public final class AllTests {
     Phase20_393_404_TranslationTests.run();
     Phase21_404_477_TranslationTests.run();
     Phase22_404_477_SemanticTests.run();
+    RecipeListRepairTests.run();
     ViaIntegrationTests.run();
     System.out.println("All Conduit foundation tests passed.");
     // Release Via's non-daemon platform executors so this JVM can exit on its own.

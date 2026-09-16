@@ -1102,6 +1102,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         ? ConnectionState.CLOSED
         : clientState.state();
     byte[] outbound = ProtocolProfileAdapter.backendToClient(protocol, adaptAs, packet, profile());
+    // Last stop before the socket: a recipe list the client cannot parse costs the whole session,
+    // and a correct one passes through this untouched.
+    outbound = gg.tame.conduit.protocol.RecipeListRepair.apply(protocol, outbound);
     if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
       String where = lifecycle.get() == SessionLifecycle.SWITCHING ? "switch" : "steady";
       gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());
