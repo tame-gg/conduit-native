@@ -25,13 +25,15 @@ Do not read Via dependency presence as VERIFIED gameplay. 765 → 393 is VERIFIE
 because a real 1.20.4 client moved, mined, fought a mob to an advancement,
 chatted and ran commands in a real 1.13 world for the length of a run, with
 zero translation failures. 393 → 765 is VERIFIED because a real 1.13 client
-walked, mined, changed hotbar slots and chatted to a real 1.20.4 server for
-seven minutes, with 585 serverbound packets translated and zero translation
-failures — but only after Conduit began repairing a recipe list ViaBackwards
-5.11.0 encodes in a way a 1.13 client cannot read. Containers, block placement
-and entity interaction were not driven in that run and are not claimed. Details
-of both directions, including the exact bytes of the recipe defect and the
-upstream check, are in `docs/VALIDATION_VIA_393_765.md`.
+spent fifteen minutes in a real 1.20.4 world — walking, mining, placing a chest,
+opening it, moving and splitting a stack inside it, killing a mob, chatting, and
+finally choosing Disconnect — with 1 132 serverbound packets across 17 Play
+types translated and zero translation failures. Container and block state were
+read back out of the 1.20.4 server over RCON rather than judged from the
+client's screen. That direction needed Conduit to repair a recipe list
+ViaBackwards 5.11.0 encodes in a way a 1.13 client cannot read. Details of both
+directions, including the exact bytes of the recipe defect and the upstream
+check, are in `docs/VALIDATION_VIA_393_765.md`.
 
 The native 393 ↔ 765 path is unaffected by the Via work and was re-checked with
 a real 1.13 client against a real 1.20.4 server after it: in-world, rendering,

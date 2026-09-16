@@ -94,11 +94,12 @@ engine, so that is a statement about where the code sits, not a measurement.
 | ViaVersion / ViaBackwards / ViaRewind | 5.11.0 / 5.11.0 / 4.1.3 |
 | ViaLegacy | not loaded |
 | Translation failures | **0** |
-| Serverbound packets translated | **585**, 13 distinct Play packet types |
-| Clientbound Play packet types translated | **53** distinct ids |
-| Session | **7 min 11 s**, no timeout, no unexplained disconnect |
+| Serverbound packets translated | **1 132**, 17 distinct Play packet types |
+| Clientbound Play packet types translated | **43** distinct 1.13 ids |
+| Session | **15 min 1 s**, ended by the player choosing Disconnect |
 
-Verified in this run:
+Verified in this run. Server-side state was read over RCON, so each row is a
+fact about the 1.20.4 server, not only about what the 1.13 client drew:
 
 | Item | Evidence |
 |---|---|
@@ -108,23 +109,34 @@ Verified in this run:
 | Configuration | the backend Configuration phase driven **through** Via |
 | Configuration → Play | client left Configuration and entered the world |
 | World join | `ViaTest13 joined the game` on the 1.20.4 server |
-| Chunks | terrain rendered; Chunk Data among the 53 clientbound types |
-| Player position | 421 Position + 21 Position And Look + 105 Look, translated |
-| Movement | the player walked; Flying and Teleport Confirm translated |
-| Block breaking | Player Digging (`0x18`) translated serverbound |
-| Held item / hotbar | Set Carried Item (`0x21`), Creative Slot (`0x24`) |
-| Entities, entity metadata | Spawn and Entity Metadata among the clientbound types |
-| Chat | a message from the 1.13 client reached the 1.20.4 server and was broadcast |
-| Keepalive | 27 exchanges over 7 minutes, no timeout |
+| Chunks | terrain rendered; Chunk Data among the 43 clientbound types |
+| Player position | 889 Position, 17 Position And Look, 4 Look, 11 Teleport Confirm |
+| Movement | the player walked and was teleported repeatedly |
+| Block breaking | 8 Player Digging (`0x18`); a dirt block at -48 72 -15 went to air |
+| Block placement | 2 Player Block Placement (`0x29`); a chest exists at -48 73 -15 |
+| Containers | that chest opened as a `Chest` screen: Open Window (`0x14`), Window Items (`0x15` ×7), Set Slot (`0x17`) |
+| Container interaction | 7 Click Window (`0x08`) moved and split a stack; the chest holds 64 stone in slot 13, then 32 after a split |
+| Close window | 3 Close Window (`0x09`) |
+| Item stacks | `/give` delivered 16 chests and 64 stone, rendered with correct icons and counts |
+| Inventory | Creative Slot (`0x24` ×4), Set Carried Item (`0x21`) |
+| Entities | a named pig spawned, rendered with its model and floating name |
+| Entity metadata | the custom name and its visibility flag both arrived |
+| Entity interaction | 24 Interact Entity (`0x0D`); the pig went 10.0 → 7.0 health, then died |
+| Item pickup | the porkchop it dropped ended up in the hotbar |
+| Chat | a message from the 1.13 client reached the 1.20.4 server and was broadcast; `[Rcon]` messages rendered on the client |
+| Keepalive | 57 exchanges over 15 minutes, no timeout |
 | Declare Recipes | **898 of 903 recipes delivered and accepted**, see below |
-| Disconnect | client close propagated; server logged `lost connection` / `left the game` |
+| Disconnect | the player chose **Disconnect** in the game menu; the server logged `lost connection: Disconnected` / `left the game` |
 
 Not exercised in this run, and therefore not claimed: online-mode encryption
-(the run is offline), container windows (Click Window / Close Window), block
-placement, and entity interaction. Those were not driven; they were not observed
-failing. Via cancelled 1 333 clientbound packets during the run — that is Via
-declining to deliver packets 1.13 has no equivalent for, which is its normal
-behaviour, and Conduit reported no translation failure at all.
+(the run is offline). Via cancelled a large number of clientbound packets during
+the run — that is Via declining to deliver packets 1.13 has no equivalent for,
+which is its normal behaviour, and Conduit reported no translation failure at
+all.
+
+One cosmetic difference was visible and is not a protocol fault: Via warns that
+the 1.17 world height cannot be represented below 1.17, so a 1.13 client sees
+void below y 0 and above 256.
 
 ## The recipe fault, and what Conduit does about it
 
@@ -257,5 +269,16 @@ powershell -File run-via-765-switch.ps1 -PlaySeconds 190
 ```
 
 Logs land in `logs-via/`: the proxy trace, the backend server logs, the client
-log, and the raw clientbound byte stream. `drive-client.ps1` sends real input to
-the running client, including `chat:/server smp` for the switch run.
+log, and the raw clientbound byte stream.
+
+`drive-client.ps1` sends real input to the running client — `chat:` for chat and
+commands, `at:X,Y` to place the cursor on a specific GUI slot, `holdleft` to
+break a block. It presses keys with the scan code the key actually has, because
+GLFW ignores an event whose scan code is zero; Escape in particular never
+reached the client before that, which is why containers could be opened but not
+closed.
+
+`rcon.py` drives the backend server's own console (`enable-rcon` in
+`server.properties`). Setting up a container test and then reading the result
+back out of the server is what makes a container row evidence rather than a
+screenshot: `python rcon.py 25575 <password> "data get block -48 73 -15"`.
