@@ -233,18 +233,42 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private void prepareTranslation(BackendServer server) {
     int advertised = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(clientProtocol);
     TranslationSupport support = ProtocolCompatibility.between(clientProtocol, advertised);
+    closeViaTranslator();
     if (support == TranslationSupport.TRANSLATED) {
       this.translationSupport = support;
       this.backendProtocol = advertised;
-      this.backendDefinition = ProtocolDefinition.forVersion(advertised);
-      this.translator = Translators.forPair(clientProtocol, advertised);
-      ProtocolTrace.note("session translation " + clientProtocol + "→" + advertised + " TRANSLATED");
-    } else {
-      // DIRECT, or UNSUPPORTED Via-style backends that accept the client wire protocol.
+      this.backendDefinition = ProtocolDefinition.hasCodec(advertised)
+          ? ProtocolDefinition.forVersion(advertised)
+          : protocol;
+      String host = server.address().getHostString();
+      int port = server.address().getPort();
+      this.translator = Translators.forPair(clientProtocol, advertised, host, port);
+      String engine = translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator ? "ViaVersion" : "native";
+      ProtocolTrace.note("session translation " + clientProtocol + "→" + advertised + " TRANSLATED (" + engine + ")");
+      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
+          clientProtocol, advertised, "TRANSLATED", engine).render().replace("\n", " | "));
+    } else if (support == TranslationSupport.DIRECT) {
       this.translationSupport = TranslationSupport.DIRECT;
       this.backendProtocol = clientProtocol;
       this.backendDefinition = protocol;
       this.translator = IdentityTranslator.INSTANCE;
+      ProtocolTrace.note("session translation " + clientProtocol + "→" + backendProtocol + " DIRECT");
+      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
+          clientProtocol, backendProtocol, "DIRECT", "identity").render().replace("\n", " | "));
+    } else {
+      // UNSUPPORTED Via-style backends that accept the client wire protocol.
+      this.translationSupport = TranslationSupport.DIRECT;
+      this.backendProtocol = clientProtocol;
+      this.backendDefinition = protocol;
+      this.translator = IdentityTranslator.INSTANCE;
+      System.out.println(gg.tame.conduit.viaversion.ConduitViaDiagnostics.of(
+          clientProtocol, advertised, "UNSUPPORTED", "none").render().replace("\n", " | "));
+    }
+  }
+
+  private void closeViaTranslator() {
+    if (translator instanceof AutoCloseable closeable) {
+      try { closeable.close(); } catch (Exception ignored) { }
     }
   }
 
@@ -902,7 +926,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   public int clientProtocol() { return clientProtocol; }
   public int backendProtocol() { return backendProtocol; }
   private void ensureCompatible(BackendServer server) throws IOException {
-    if (!ProtocolDefinition.hasCodec(clientProtocol)) {
+    if (!ProtocolDefinition.hasCodec(clientProtocol)
+        && !gg.tame.conduit.viaversion.ConduitViaSupport.knowsProtocol(clientProtocol)) {
       throw new IOException("Unsupported Minecraft version.");
     }
     var advertisement = selector.advertisement(server.name());
@@ -911,11 +936,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     var support = ProtocolCompatibility.between(clientProtocol, targetProtocol);
     if (support == TranslationSupport.DIRECT) return;
     if (support == TranslationSupport.TRANSLATED) {
+      if (gg.tame.conduit.viaversion.ConduitViaSupport.supportsTranslation(clientProtocol, targetProtocol)) {
+        ProtocolTrace.note("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED/Via)");
+        return;
+      }
       var entry = gg.tame.conduit.protocol.CompatibilityRegistry.resolve(clientProtocol, targetProtocol);
       if (!entry.selectable()) {
         throw new IOException(server.name() + " translation path is not selectable for your Minecraft version.");
       }
-      ProtocolTrace.note("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED)");
+      ProtocolTrace.note("Client protocol " + clientProtocol + " → " + server.name() + " " + targetProtocol + " (TRANSLATED/native)");
       return;
     }
     if (ProtocolDefinition.hasCodec(targetProtocol) && targetProtocol != clientProtocol
@@ -923,7 +952,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         && runtime.versionGate().settings().strictBackendMatch()) {
       throw new IOException(server.name() + " is not compatible with your Minecraft version.");
     }
-    // Unsupported pair: keep current backend eligibility for Via-style backends; do not disconnect.
     System.out.println("Client protocol " + clientProtocol + " connecting to " + server.name()
         + " advertised as " + targetProtocol + " (no Conduit translator; backend must accept the client protocol).");
   }
@@ -970,6 +998,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public void close() {
     closed = true;
     lifecycle.set(SessionLifecycle.CLOSED);
+    closeViaTranslator();
     synchronized (lock) { lock.notifyAll(); }
     if (players != null) players.remove(this);
     BackendConnection current = backend;

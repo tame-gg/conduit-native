@@ -1,5 +1,9 @@
 package gg.tame.conduit.protocol;
 
+import gg.tame.conduit.config.TranslationSettings;
+import gg.tame.conduit.viaversion.ConduitViaBootstrap;
+import gg.tame.conduit.viaversion.ConduitViaSupport;
+
 /**
  * Same-version vs translated vs unsupported client/backend pairing.
  *
@@ -7,6 +11,9 @@ package gg.tame.conduit.protocol;
  * determines the path: the same 1.20.4 backend is DIRECT for a 1.20.4 client,
  * TRANSLATED for a 1.13 client, and UNSUPPORTED for a client Conduit has no
  * translator for.
+ *
+ * <p>When the ViaVersion ecosystem is loaded, its protocol graph is preferred
+ * over Conduit's native translator registry (unless {@code translation.engine=native}).
  */
 public final class ProtocolCompatibility {
   private ProtocolCompatibility() {}
@@ -15,12 +22,31 @@ public final class ProtocolCompatibility {
   public static boolean implemented(int protocol) { return ProtocolDefinition.hasCodec(protocol); }
 
   public static TranslationSupport between(int clientProtocol, int backendProtocol) {
-    // Both sides need a codec before either path is possible.
-    if (!implemented(clientProtocol) || !implemented(backendProtocol)) return TranslationSupport.UNSUPPORTED;
-    if (clientProtocol == backendProtocol) return TranslationSupport.DIRECT;
-    // Ordered lookup: a 393->765 translator does not imply 765->393.
-    return TranslatorRegistry.has(clientProtocol, backendProtocol)
-        ? TranslationSupport.TRANSLATED
-        : TranslationSupport.UNSUPPORTED;
+    if (clientProtocol == backendProtocol) {
+      if (implemented(clientProtocol) || ConduitViaSupport.knowsProtocol(clientProtocol)) {
+        return TranslationSupport.DIRECT;
+      }
+      return TranslationSupport.UNSUPPORTED;
+    }
+
+    TranslationSettings settings = ConduitViaBootstrap.settings();
+    TranslationSettings.TranslationEngine engine = settings.engine();
+
+    boolean viaPossible = settings.enabled()
+        && engine != TranslationSettings.TranslationEngine.NATIVE
+        && ConduitViaSupport.supportsTranslation(clientProtocol, backendProtocol);
+    boolean nativePossible = implemented(clientProtocol)
+        && implemented(backendProtocol)
+        && TranslatorRegistry.has(clientProtocol, backendProtocol);
+
+    if (engine == TranslationSettings.TranslationEngine.VIA) {
+      return viaPossible ? TranslationSupport.TRANSLATED : TranslationSupport.UNSUPPORTED;
+    }
+    if (engine == TranslationSettings.TranslationEngine.NATIVE) {
+      return nativePossible ? TranslationSupport.TRANSLATED : TranslationSupport.UNSUPPORTED;
+    }
+    // via-preferred
+    if (viaPossible || nativePossible) return TranslationSupport.TRANSLATED;
+    return TranslationSupport.UNSUPPORTED;
   }
 }

@@ -86,6 +86,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.playerViews = new PlayerViews(players);
     this.plugins = new ConduitPluginManager(pluginsDirectory, this, events, scheduler, commands);
     health.start();
+    gg.tame.conduit.viaversion.ConduitViaBootstrap.start(
+        this.configDirectory,
+        gg.tame.conduit.Conduit.VERSION,
+        configuration.translation());
   }
 
   public void bindConfigPath(Path path) { this.configPath = path; }
