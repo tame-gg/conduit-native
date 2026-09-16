@@ -8,10 +8,11 @@ no stub client, no replayed capture, no fabricated packets.
 | Direction | Status |
 |---|---|
 | 765 → 393 (modern client, old backend) | **TRANSLATED / VERIFIED** |
-| 393 → 765 (old client, modern backend) | **TRANSLATED / UNVERIFIED** — blocked in ViaBackwards |
+| 393 → 765 (old client, modern backend) | **TRANSLATED / VERIFIED** — after a Conduit-side recipe repair |
 
 Runners: `work/real-client-validation/run-via-765-393.ps1` and
-`run-via-393-765.ps1`. Conduit commit under test: `d6a457c`.
+`run-via-393-765.ps1`. Conduit commits under test: direction A `d6a457c`,
+direction B `5be7657`.
 
 ---
 
@@ -81,7 +82,7 @@ engine, so that is a statement about where the code sits, not a measurement.
 
 ---
 
-# Direction B — 393 → 765: UNVERIFIED
+# Direction B — 393 → 765: VERIFIED
 
 | Piece | Detail |
 |---|---|
@@ -92,30 +93,43 @@ engine, so that is a statement about where the code sits, not a measurement.
 | Via path | 26 protocols, `Protocol1_13_1To1_13` → … → `Protocol1_20_3To1_20_2` |
 | ViaVersion / ViaBackwards / ViaRewind | 5.11.0 / 5.11.0 / 4.1.3 |
 | ViaLegacy | not loaded |
-| Status | **TRANSLATED / UNVERIFIED** — joins the world, then disconnects |
+| Translation failures | **0** |
+| Serverbound packets translated | **585**, 13 distinct Play packet types |
+| Clientbound Play packet types translated | **53** distinct ids |
+| Session | **7 min 11 s**, no timeout, no unexplained disconnect |
 
-## What actually happens
+Verified in this run:
 
-| Stage | Result |
+| Item | Evidence |
 |---|---|
-| Handshake | OK |
-| Login (offline) | OK — Login Success translated 765 → 393 by Via |
-| Backend compression | OK — consumed by Conduit outside Via, as designed |
-| Configuration (backend only) | OK — driven **through** Via, 5 packets |
-| Configuration → Play | OK — Via emits Join Game, brand and Tags for 393 |
-| World join | OK — server logs `ViaTest13 joined the game` |
-| Play translation | ~20 clientbound packets translated before the fault |
-| Player position / chunks / entities / chat / inventory | **not reached** |
-| Serverbound Play translation | **not reached** — client never sends a Play packet |
-| Disconnect | client-side decoder fault, see below |
+| Handshake | session established |
+| Login (offline) | Login Success translated 765 → 393 by Via |
+| Backend compression | handled by Conduit outside Via, as designed |
+| Configuration | the backend Configuration phase driven **through** Via |
+| Configuration → Play | client left Configuration and entered the world |
+| World join | `ViaTest13 joined the game` on the 1.20.4 server |
+| Chunks | terrain rendered; Chunk Data among the 53 clientbound types |
+| Player position | 421 Position + 21 Position And Look + 105 Look, translated |
+| Movement | the player walked; Flying and Teleport Confirm translated |
+| Block breaking | Player Digging (`0x18`) translated serverbound |
+| Held item / hotbar | Set Carried Item (`0x21`), Creative Slot (`0x24`) |
+| Entities, entity metadata | Spawn and Entity Metadata among the clientbound types |
+| Chat | a message from the 1.13 client reached the 1.20.4 server and was broadcast |
+| Keepalive | 27 exchanges over 7 minutes, no timeout |
+| Declare Recipes | **898 of 903 recipes delivered and accepted**, see below |
+| Disconnect | client close propagated; server logged `lost connection` / `left the game` |
 
-Translation failures reported by Conduit: **zero**. Nothing in the run was
-dropped by Conduit or refused by Via. The session dies on the *content* of one
-packet Via produced.
+Not exercised in this run, and therefore not claimed: online-mode encryption
+(the run is offline), container windows (Click Window / Close Window), block
+placement, and entity interaction. Those were not driven; they were not observed
+failing. Via cancelled 1 333 clientbound packets during the run — that is Via
+declining to deliver packets 1.13 has no equivalent for, which is its normal
+behaviour, and Conduit reported no translation failure at all.
 
-## The blocking fault
+## The recipe fault, and what Conduit does about it
 
-The client shows:
+This is what previously ended the session a few packets after world join. The
+client showed:
 
 ```
 Internal Exception: io.netty.handler.codec.DecoderException:
@@ -123,10 +137,11 @@ Non [a-z0-9/._-] character in path of location: minecraft:<NUL>
 ```
 
 Captured with `-Dconduit.dump.clientbound`, the eighth clientbound packet is
-Declare Recipes (1.13 id `0x54`, 903 recipes, 485 920 bytes). Recipe 127,
-`minecraft:silence_armor_trim_smithing_template`, is a well-formed 3×3
-`crafting_shaped` with nine correctly encoded ingredients. Its **result slot**
-is then written as:
+Declare Recipes (1.13 id `0x54`, 903 recipes, 485 920 bytes). Five recipes —
+`minecraft:silence_`, `wayfinder_`, `shaper_`, `raiser_` and
+`host_armor_trim_smithing_template`, at indices 127, 163, 310, 560 and 722 —
+are well-formed `crafting_shaped` recipes whose **result** is a 1.20 smithing
+template with no 1.13 item. Each result slot is written as:
 
 ```
 ff ff        item id -1  (no 1.13 counterpart)
@@ -134,32 +149,65 @@ ff ff        item id -1  (no 1.13 counterpart)
 0a 00 00 …   an NBT compound
 ```
 
-A 1.13 slot with id `-1` is empty and carries no count and no tag, so the
-client reads the count and the tag as the start of recipe 128 — a string of
-length 2 whose bytes are `0a 00`, which is not a valid resource location path.
-That is exactly the reported error, and every recipe after it is unreadable.
+A 1.13 slot with id `-1` is empty and carries no count and no tag, so the client
+reads the count and the tag as the start of the next recipe — a string of length
+2 whose bytes are `0a 00`, which is not a valid resource location path. That is
+exactly the reported error, and every recipe after the first one is unreadable.
 
 ### Whose fault it is
 
-Not Conduit's. On this path Conduit does not touch the packet. The clientbound
+Not Conduit. On this path Conduit does not produce the packet. The clientbound
 dump is taken at the socket write, after every Conduit stage, and for the Via
 engine the brand rewriter, command merger, deferred-Play gate and Play-phase
-profile adapter are all bypassed. The bytes are Via's output unmodified.
+profile adapter are all bypassed. The bytes are the translated output unmodified.
 
-The fault is in the ViaBackwards 5.11.0 downgrade of Declare Recipes toward
-1.13, for a recipe whose **result** has no item on the target version: the id
-is mapped to `-1` but the count and tag are still written.
+The defect is in the ViaBackwards 5.11.0 downgrade of Declare Recipes toward
+1.13, for a recipe whose result has no item on the target version: the id is
+mapped to `-1` but the count and the tag are still written. All 6 849 ingredient
+slots in the same packet are non-empty, so only result slots are affected here.
 
 Ruled out: `pass-original-item-name-to-resource-packs` in `viabackwards.yml`.
-Setting it to `false` shrinks the packet from 485 920 to 437 674 bytes and
-strips the injected display names, but reproduces the same malformed slot at
-the same recipe. No ViaVersion or ViaBackwards configuration option was found
+Setting it to `false` shrinks the packet from 485 920 to 437 674 bytes and
+strips the injected display names, but reproduces the same malformed slots at
+the same recipes. No ViaVersion or ViaBackwards configuration option was found
 that avoids it.
 
-Per the project's code-origin rule this was **not** worked around by
-reimplementing Via's item encoding inside Conduit, and no ViaVersion fork was
-made. The defect is recorded here with the exact bytes so it can be reported
-upstream or retested against a later Via release.
+Checked upstream on 2026-09-16: **5.11.0 is the current release** of both
+ViaVersion and ViaBackwards — `5.12.0-SNAPSHOT` is the only newer thing in the
+repository, and it is not a release. No commit or issue in the ViaBackwards
+tracker addresses the 1.13 recipe result slot. There is nothing to upgrade to,
+so the dependency was left where it is.
+
+### What Conduit does
+
+`gg.tame.conduit.protocol.RecipeListRepair` runs at Conduit's own socket write,
+on Conduit's own outbound byte stream, and is written from the published 1.13
+wire layout. It parses the packet twice:
+
+* If the **strict** reading — an empty slot carries nothing — accounts for the
+  packet exactly, the packet is correct and is forwarded **by identity**. That is
+  the path every healthy packet takes, including the one Conduit's own native
+  translators produce, and the path a fixed upstream release would take.
+* Otherwise a **tolerant** reading, in which every slot carries a count and a
+  tag whatever its id, is tried. If that accounts for the packet exactly, the
+  recipe boundaries are known. Conduit re-emits the list with the recipes that
+  contain an empty slot removed and the count corrected. Every other recipe is
+  copied byte for byte — nothing is re-encoded, nothing is invented.
+* If neither reading fits, Conduit emits an **empty recipe list**, which is a
+  valid packet that leaves the recipe book unpopulated, and logs it. It does not
+  forward bytes it knows will disconnect the client.
+
+On the real capture: 903 recipes in, 898 out, 485 920 bytes down to 482 790,
+and an independent strict parse consumes the result exactly. The five dropped
+recipes could not have been useful to the client — their result item does not
+exist on its version.
+
+This reproduces no third-party implementation. It is a Conduit-owned integrity
+check over Conduit's own output, driven by the 1.13 protocol layout and by the
+captured bytes, and it is deliberately narrow: only a 1.13-family client, only
+this packet. No ViaVersion fork was made and no Via source was consulted for it.
+The upstream defect is recorded here, with the exact bytes, so it can be
+reported and so the repair can be removed once a release fixes it.
 
 ## Faults found and fixed in Conduit on the way here
 
@@ -204,7 +252,7 @@ From `work/real-client-validation/`:
 
 ```
 powershell -File run-via-765-393.ps1 -PlaySeconds 120
-powershell -File run-via-393-765.ps1 -PlaySeconds 75
+powershell -File run-via-393-765.ps1 -PlaySeconds 260
 powershell -File run-via-765-switch.ps1 -PlaySeconds 190
 ```
 

@@ -118,14 +118,20 @@ injector being the no-op one so every packet Via generated died in a null
 lookup, those packets then arriving several packets late, a duplicated Login
 Acknowledged, and Conduit's native compensation layer rewriting Via's output.
 
-After those, the pair reaches the world and translates. It is still
-**UNVERIFIED**: it ends on a ViaBackwards fault in the Declare Recipes
-downgrade, which is not worked around inside Conduit and did not require a
-ViaVersion fork.
+An eighth fault followed — Conduit overwriting Via's connection state after
+login — and after that both directions of the pair reach the world and play.
 
-Steps not yet reached: real 765 → 393, server switching under Via, 1.7.6 through
-ViaRewind, and any decision about whether ViaLegacy is required. None of those
-should be claimed until they have been run against real endpoints.
+The last thing in the way was not Conduit's: ViaBackwards 5.11.0 encodes five
+recipes in a way a 1.13 client cannot read, and the session ended on the first
+of them. There is no fixed release to upgrade to, so Conduit validates the
+recipe list at its own socket write and drops only the recipes that cannot be
+represented. Nothing was reimplemented from Via and no fork was made.
+
+**393 ↔ 765 is now VERIFIED in both directions with real clients and real
+servers.** Steps not yet reached: completing a server switch under Via, 1.7.6
+through ViaRewind, any decision about whether ViaLegacy is required, and
+performance measurement. None of those should be claimed until they have been
+run against real endpoints.
 
 ## Licensing
 

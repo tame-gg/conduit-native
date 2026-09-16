@@ -122,23 +122,36 @@ dependency merely containing the protocol.
 |---|---|---|
 | 765 → 393 | Via | **TRANSLATED / VERIFIED** — real 1.20.4 client, real 1.13 server, gameplay through Via, 0 translation failures |
 | 765 → 404 after `/server` | Via | **PARTIAL** — client protocol held, backend protocol and Via path rebound correctly, session then dropped by the new backend on Conduit's switch-time Login Start |
-| 393 → 765 | Via | **TRANSLATED / UNVERIFIED** — real 1.13 client joins a real 1.20.4 world through Via, then disconnects on Via's Declare Recipes downgrade |
+| 393 → 765 | Via | **TRANSLATED / VERIFIED** — real 1.13 client, real 1.20.4 server, 7 min of gameplay through Via, 585 serverbound packets, 0 translation failures |
 | 393 → 765 | native | unchanged; see `RESULTS-393-765-CROSS.md` |
 | 5 (1.7.6) → modern | Via + ViaRewind | **UNVERIFIED** — no real-client run has been performed |
 | anything → 26.3 | Via | **UNSUPPORTED** — Via 5.11.0 does not register it |
 
-### Known blocker on the Via path
+### A defect in the dependency, and Conduit's response
 
 ViaBackwards 5.11.0, downgrading Declare Recipes to 1.13, writes a recipe result
 whose item has no 1.13 counterpart as item id `-1` *followed by* a count and an
 NBT tag. A 1.13 slot with id `-1` is empty and carries neither, so the client
-reads them as the start of the next recipe and rejects the packet. The exact
-bytes, the ruled-out configuration options, and the reasoning that places the
-fault outside Conduit are in
+reads them as the start of the next recipe and rejects the packet. Five recipes
+in a vanilla 1.20.4 recipe list are affected, and the whole session ended on the
+first of them.
+
+5.11.0 is the current release of both ViaVersion and ViaBackwards as of
+2026-09-16, and nothing upstream addresses this, so there was no fix to upgrade
+to. `gg.tame.conduit.protocol.RecipeListRepair` instead validates the packet at
+Conduit's own socket write: a packet that reads correctly against the 1.13
+layout is forwarded by identity, one that only reads under the malformed layout
+is re-emitted without the recipes carrying an empty slot, and one that fits
+neither is replaced with an empty recipe list and logged. Nothing is re-encoded;
+kept recipes are copied byte for byte.
+
+The exact bytes, the ruled-out configuration options, the upstream check, and
+the reasoning that places the fault outside Conduit are in
 `docs/VALIDATION_VIA_393_765.md`.
 
 This was not worked around by reimplementing Via's item encoding inside Conduit,
-and no ViaVersion fork was made.
+no ViaVersion fork was made, and no Via source was consulted for the repair. The
+repair should be removed once an upstream release fixes the encoding.
 
 ## Licensing
 
