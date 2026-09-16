@@ -45,6 +45,8 @@ public final class Phase22_404_477_SemanticTests {
     entityTypesResolveByName();
     metadataIndexShift();
     chunkTranslationRemapsPalette();
+    chunkSectionCarriesBlockCount();
+    spawnMobTranslatesTrailingMetadata();
     blockUpdateRemapsState();
     System.out.println("Phase22_404_477_SemanticTests passed.");
   }
@@ -276,6 +278,82 @@ public final class Phase22_404_477_SemanticTests {
     // And the light/view packets 1.14 requires are produced alongside.
     List<byte[]> queued = translator.drainToClient();
     require(queued.size() == 3, "update light + view distance + view position queued");
+  }
+
+  /**
+   * 1.14 prefixes each chunk section with its non-air block count. Conduit had
+   * neither written nor read it, which round-trips perfectly against itself and
+   * desynchronises every real 1.14 client — the client reported it as an
+   * oversized NBT LongArray and an out-of-range section index, both of them
+   * symptoms several fields downstream of the actual fault.
+   *
+   * <p>So this test reads the encoded bytes directly rather than through the
+   * decoder, because a decoder with the same omission would agree with a wrong
+   * encoder.
+   */
+  private static void chunkSectionCarriesBlockCount() throws Exception {
+    int[] states = new int[4096];
+    states[0] = 1;
+    states[1] = 1;
+    states[2] = 1660;
+    SemanticChunkSection section = new SemanticChunkSection(3, states, new int[0], new byte[0], new byte[0]);
+    SemanticChunk chunk = new SemanticChunk(0, 0, true,
+        List.of(new SemanticChunk.SectionSlot(0, section)), new int[256], List.of(), new byte[0]);
+
+    byte[] encoded = ChunkCodec477.encode(chunk);
+    DataInputStream in = new DataInputStream(new ByteArrayInputStream(encoded));
+    in.readInt();                            // x
+    in.readInt();                            // z
+    in.readBoolean();                        // fullChunk
+    MinecraftInput.varInt(in);               // bitMap
+    require(in.readUnsignedByte() == 10, "heightmaps is a TAG_Compound");
+    require(in.readUnsignedShort() == 0, "with an empty name");
+    require(in.readUnsignedByte() == 0, "and no entries");
+    MinecraftInput.varInt(in);               // data length
+
+    require(in.readShort() == 3, "section begins with its non-air block count");
+    int bits = in.readUnsignedByte();
+    require(bits >= 4 && bits <= 8, "then bitsPerBlock; got " + bits);
+  }
+
+  /**
+   * Spawn Mob and Spawn Player carry a trailing metadata block. Forwarding it
+   * raw lands a 1.13.2 byte field on 1.14's index 6, which is Pose, and the
+   * client dies with ClassCastException the moment the entity ticks.
+   */
+  private static void spawnMobTranslatesTrailingMetadata() throws Exception {
+    int cow404 = 9;
+    ByteArrayOutputStream body = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(body);
+    MinecraftOutput.varInt(out, 4242);                  // entity id
+    out.writeLong(1L); out.writeLong(2L);               // uuid
+    MinecraftOutput.varInt(out, cow404);                // type
+    out.writeDouble(1); out.writeDouble(64); out.writeDouble(2);
+    out.writeByte(0); out.writeByte(0); out.writeByte(0);
+    out.writeShort(0); out.writeShort(0); out.writeShort(0);
+    out.writeByte(6);                                   // 1.13.2 index 6: LivingEntity hand states
+    MinecraftOutput.varInt(out, 0);                     // Byte
+    out.writeByte(1);
+    out.writeByte(0xff);                                // terminator
+
+    byte[] packet = PlayPackets.withId(ProtocolDefinition.forVersion(404).id(
+        ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_LIVING_ENTITY),
+        body.toByteArray());
+    byte[] translated = Protocol404To477Translator.client477()
+        .backendToClient(ConnectionState.PLAY, packet);
+    require(translated != null, "spawn mob translated");
+
+    DataInputStream in = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(translated)));
+    require(MinecraftInput.varInt(in) == 4242, "entity id preserved");
+    in.readLong(); in.readLong();
+    int type = MinecraftInput.varInt(in);
+    require(type == EntityTypeMaps.translateRegistry(404, 477, cow404).getAsInt(),
+        "cow resolved by name");
+    require(type != cow404, "cow's registry index moved in 1.14");
+    in.readNBytes(3 * 8 + 3 + 3 * 2);
+    int index = in.readUnsignedByte();
+    require(index == 7, "hand states moved off 1.14's Pose index 6, to 7; got " + index);
+    require(MinecraftInput.varInt(in) == 0, "still a Byte");
   }
 
   private static void blockUpdateRemapsState() throws Exception {

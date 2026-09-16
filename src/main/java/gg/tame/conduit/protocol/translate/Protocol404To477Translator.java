@@ -262,7 +262,7 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
         }
       }
       case PLAY_SPAWN_LIVING_ENTITY -> {
-        byte[] reshaped = translateSpawnMob(body, fromProtocol, toProtocol);
+        byte[] reshaped = translateSpawnMob(body, sourceDef, targetDef, fromProtocol, toProtocol);
         if (reshaped == null) {
           yield new TranslationResult.Dropped("living entity type has no counterpart on " + toProtocol);
         }
@@ -273,11 +273,21 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
             kind, state, direction, translateSpawnObject(body, fromProtocol, toProtocol)));
       }
       case PLAY_SPAWN_PLAYER -> {
-        // Players are LivingEntity; the layout is otherwise unchanged.
+        // Players are LivingEntity. The fixed fields are unchanged, but the
+        // trailing metadata still has to cross.
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
-          livingEntities.add(MinecraftInput.varInt(in));
+          int entityId = MinecraftInput.varInt(in);
+          livingEntities.add(entityId);
+          byte[] fixed = in.readNBytes(2 * 8 + 3 * 8 + 2);  // uuid, x,y,z, yaw, pitch
+          byte[] metadata = in.readAllBytes();
+          ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 4);
+          DataOutputStream out = new DataOutputStream(buffer);
+          MinecraftOutput.varInt(out, entityId);
+          out.write(fixed);
+          out.write(translateTrailingMetadata(metadata, sourceDef, targetDef, true));
+          out.flush();
+          yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, buffer.toByteArray()));
         }
-        yield new TranslationResult.Translated(new OpaquePacket(kind, state, direction, body));
       }
       case PLAY_ENTITY_DESTROY -> {
         try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
@@ -426,7 +436,8 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
    * is resolved by name. Returns null when the type has no counterpart, so the
    * caller drops the spawn rather than inventing a mob.
    */
-  private byte[] translateSpawnMob(byte[] body, int fromProtocol, int toProtocol)
+  private byte[] translateSpawnMob(byte[] body, ProtocolDefinition sourceDef,
+                                   ProtocolDefinition targetDef, int fromProtocol, int toProtocol)
       throws IOException {
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(body))) {
       int entityId = MinecraftInput.varInt(in);
@@ -436,16 +447,37 @@ public final class Protocol404To477Translator implements ProtocolTranslator {
       var mapped = EntityTypeMaps.translateRegistry(fromProtocol, toProtocol, type);
       if (mapped.isEmpty()) return null;
       livingEntities.add(entityId);
-      ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 4);
+      byte[] fixed = in.readNBytes(3 * 8 + 3 + 3 * 2);  // x,y,z, yaw,pitch,headPitch, velocity
+      byte[] metadata = in.readAllBytes();
+
+      ByteArrayOutputStream buffer = new ByteArrayOutputStream(body.length + 8);
       DataOutputStream out = new DataOutputStream(buffer);
       MinecraftOutput.varInt(out, entityId);
       out.writeLong(uuidHigh);
       out.writeLong(uuidLow);
       MinecraftOutput.varInt(out, mapped.getAsInt());
-      out.write(in.readAllBytes());   // position, rotation, velocity, trailing metadata
+      out.write(fixed);
+      out.write(translateTrailingMetadata(metadata, sourceDef, targetDef, true));
       out.flush();
       return buffer.toByteArray();
     }
+  }
+
+  /**
+   * Spawn Mob and Spawn Player end with a metadata block, and it has to cross
+   * with the rest of the packet. Forwarding it raw puts a 1.13.2 field on 1.14's
+   * index 6, which is {@code Pose} — the client casts it and dies with
+   * {@code Byte cannot be cast to EntityPose} the moment the entity ticks.
+   *
+   * <p>An empty result means every field was dropped, which is still a valid
+   * metadata block: the terminator alone.
+   */
+  private static byte[] translateTrailingMetadata(byte[] metadata, ProtocolDefinition sourceDef,
+                                                  ProtocolDefinition targetDef, boolean living)
+      throws IOException {
+    if (metadata.length == 0) return metadata;
+    byte[] translated = MetadataCodec.translate(sourceDef, targetDef, metadata, living);
+    return translated == null ? new byte[] { (byte) 0xff } : translated;
   }
 
   /**

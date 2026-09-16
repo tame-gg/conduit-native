@@ -160,6 +160,11 @@ public final class ChunkCodec477 {
   }
 
   private static SemanticChunkSection readSection(DataInputStream in) throws IOException {
+    // 1.14 prefixes every section with its non-air block count. 1.13 has no such
+    // field; omitting it here desynchronises the whole chunk payload, and because
+    // an encoder that also omits it round-trips against this decoder, the fault
+    // only shows up against a real client.
+    int blockCount = in.readShort();
     int bits = in.readUnsignedByte();
     if (bits > 32) throw new IOException("bitsPerBlock " + bits);
     int[] palette = null;
@@ -188,6 +193,12 @@ public final class ChunkCodec477 {
     java.util.LinkedHashMap<Integer, Integer> index = new java.util.LinkedHashMap<>();
     int[] states = section.blockStates();
     for (int state : states) index.putIfAbsent(state, index.size());
+    // 1.14's per-section non-air block count. Counted from the states actually
+    // being written rather than carried from the source, because block states
+    // that have no counterpart on this side resolve to air on the way in.
+    int nonAir = 0;
+    for (int state : states) if (state != 0) nonAir++;
+    out.writeShort(nonAir);
     int unique = index.size();
     int bits;
     if (unique <= 1) bits = 0;
