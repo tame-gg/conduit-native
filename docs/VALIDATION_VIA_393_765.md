@@ -189,18 +189,55 @@ and only Registry Data follows.
 Two candidate causes were tested and **ruled out**:
 
 * *Output stuck on the embedded channel's task queue.* Pumping that queue
-  repeatedly until it stops producing changes nothing: the remaining three
-  packets are never produced at all, not merely undrained.
+  repeatedly until it stops producing changes nothing.
 * *The 765 → 404 pair.* The control above.
 
-What has **not** been established is why the translator stops after Registry
-Data on this path. An attempt to make the switch resemble the control more
-closely — showing the translator the backend Login Success that Conduit performs
-on the player's behalf and withholds from the client, so it moves itself on from
-Login rather than being told where it is — did not take effect and regressed the
-run into a fallback loop; it was reverted rather than left in. No conclusion
-about Via's reconfiguration path is recorded here as fact, because none has been
-proven.
+### What the translator actually produces on the switch path
+
+The claim above that the remaining three packets "are never produced at all" was
+inferred from the proxy trace, and it is **wrong** for two of them. Driving a real
+765 → 404 `ConduitViaSession` through both lifecycles offline, with no client and
+no server, settles it:
+
+| | Fresh lifecycle | Switch lifecycle |
+|---|---|---|
+| on backend Join Game | — | `0x67` Start Configuration, `0xb` (3 B) |
+| on the client's acknowledgement | `0x8` (20 B), `0x5` (38 962 B), `0x9` (103 B), `0x2` (1 B) | `0x5` (38 962 B), `0x9` (103 B), `0x2` (1 B) |
+
+The byte counts are identical to the real runs, so the harness is faithful. On the
+switch path the translator **does** produce Update Tags and Finish Configuration,
+in the same synchronous call that produces Registry Data. They are produced and
+drained; they are lost afterwards, inside Conduit. The trace showed `0x67, 0xb,
+0x5` because `flushTranslatorExtras` traces each extra immediately *before*
+writing it and, on a write failure, abandoned the rest of the queue without a
+word — so the two that follow a failing Registry Data were never traced and never
+sent. That swallow is now logged (`Dropped clientbound extra …`); the next switch
+run names what fails instead of hiding it.
+
+Feature Flags is a **separate and now-proven** fault. `Protocol1_19_1To1_19_3`
+creates it inline while handling the backend's Join Game and sends it down the
+rest of the chain, where `Protocol1_20To1_20_2` either queues it into the
+configuration bridge or cancels it outright, depending on that bridge's phase. A
+fresh login sets the phase to `PROFILE_SENT` when the backend's Login Success
+passes through Via, and the packet is queued and replayed as configuration `0x08`.
+A switch never shows Via a Login Success — Conduit performs that login itself —
+so the phase is still `NONE`, and the packet meets `cancelClientbound` and is
+dropped. This is the one place where the "primed" translator genuinely lacks a
+lifecycle event the fresh one has. Telling Via where the states are, as
+`adoptStates` does, does not substitute for it, because the bridge phase is not
+part of the protocol state.
+
+No fix for either is implemented here: the Feature Flags cause is proven but the
+write failure behind the lost Update Tags and Finish Configuration is not, and
+one unproven half is not a basis for changing the switch path.
+
+### Reproducing the offline lifecycle comparison
+
+The harness is not committed. It opens two `ConduitViaTranslator`s for 765 → 404,
+gives one `adoptStates(PLAY, PLAY)` and the other the bridge phase a Login Success
+would set, feeds each a synthetic 1.13.2 Join Game (`0x25`) and then the
+acknowledgement its own path expects, and prints every extra drained. It needs
+only `scripts/_classpath.ps1`.
 
 ### Reproducing the comparison
 

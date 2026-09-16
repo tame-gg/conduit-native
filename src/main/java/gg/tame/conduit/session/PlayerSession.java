@@ -369,7 +369,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
               + Integer.toHexString(PlayPackets.packetId(extra)) + " len=" + extra.length);
         } catch (Exception ignored) { }
       }
-      try { writeClient(extra, true); } catch (IOException exception) { return toBackend; }
+      try { writeClient(extra, true); } catch (IOException exception) {
+        // Abandoning the rest of the queue silently is how a translator-built Configuration
+        // phase can lose its Update Tags and Finish Configuration behind a Registry Data that
+        // failed to reach the socket, leaving the client waiting in a phase nothing finishes.
+        // Whatever is dropped here is named, so the next failure is readable rather than absent.
+        String id;
+        try { id = "0x" + Integer.toHexString(PlayPackets.packetId(extra)); }
+        catch (Exception unreadable) { id = "(unreadable)"; }
+        gg.tame.conduit.log.ConduitLog.warn("Dropped clientbound extra id=" + id
+            + " len=" + extra.length + " and the rest of the queue: " + exception);
+        return toBackend;
+      }
     }
     if (target == null) return toBackend;
     for (byte[] extra : translator.drainToBackend()) {
