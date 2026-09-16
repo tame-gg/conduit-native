@@ -25,7 +25,7 @@ above reaches the world and translates in both structural directions with zero
 translation failures reported by Conduit, and is still UNVERIFIED: no gameplay
 was exercised, and the session ends on a malformed packet. Details, including
 the exact bytes and why the fault sits outside Conduit, are in
-`work/real-client-validation/RESULTS-VIA-393-765.md`.
+`docs/VALIDATION_VIA_393_765.md`.
 
 The native 393 ↔ 765 path is unaffected by the Via work and was re-checked with
 a real 1.13 client against a real 1.20.4 server after it: in-world, rendering,

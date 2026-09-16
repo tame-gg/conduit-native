@@ -114,7 +114,7 @@ switch, which rebuilds the Via session for the new pair through
 
 ## Verification status
 
-Real-client status is recorded in `work/real-client-validation/`, and nothing is
+Real-client status is recorded in `docs/VALIDATION_VIA_393_765.md`, and nothing is
 called VERIFIED on the strength of a smoke test, a successful login, or the
 dependency merely containing the protocol.
 
@@ -134,7 +134,7 @@ NBT tag. A 1.13 slot with id `-1` is empty and carries neither, so the client
 reads them as the start of the next recipe and rejects the packet. The exact
 bytes, the ruled-out configuration options, and the reasoning that places the
 fault outside Conduit are in
-`work/real-client-validation/RESULTS-VIA-393-765.md`.
+`docs/VALIDATION_VIA_393_765.md`.
 
 This was not worked around by reimplementing Via's item encoding inside Conduit,
 and no ViaVersion fork was made.

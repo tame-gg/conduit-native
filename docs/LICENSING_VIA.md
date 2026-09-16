@@ -27,7 +27,7 @@ contract. Via's own implementations of those interfaces are not used as a
 reference for Conduit's.
 
 One defect in ViaBackwards 5.11.0 is known and documented in
-`work/real-client-validation/RESULTS-VIA-393-765.md`. It is recorded there
+`docs/VALIDATION_VIA_393_765.md`. It is recorded there
 rather than patched around by reproducing Via's encoding inside Conduit, which
 is why no fork exists and why this file still describes plain third-party
 dependency use.

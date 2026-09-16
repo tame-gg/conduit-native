@@ -110,7 +110,7 @@ Netty, Guava, Fastutil (as required by those artifacts).
 
 The plan above is the design. What a real 1.13 client and a real 1.20.4 server
 found when it was first exercised end to end, and what had to change, is
-recorded in `work/real-client-validation/RESULTS-VIA-393-765.md`. In short:
+recorded in `docs/VALIDATION_VIA_393_765.md`. In short:
 seven faults in Conduit's integration were found and fixed, in the order a real
 client hits them — Via never being shut down, the native configuration absorber
 starving Via of registry data, Via's backend state never leaving Login, Via's
