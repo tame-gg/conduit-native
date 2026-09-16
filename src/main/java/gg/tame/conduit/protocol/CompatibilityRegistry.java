@@ -41,16 +41,22 @@ public final class CompatibilityRegistry {
     // 404↔477: scripted probes vs real 1.14 / 1.13.2 jars (see VALIDATION_404_477.md).
     registerValidated(404, 477, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         ValidationStatus.TRANSLATED_VERIFIED,
-        "scripted 1.13.2 probe sustained play on real 1.14 server through Conduit; "
-            + "Join Game/Respawn/Open Window/chunks/light/position/block place rematerialised; "
-            + "block-state ids numeric passthrough; recipes/tags/advancements dropped");
+        "real 1.13.2 client held a real 1.14 server through a full gameplay burst "
+            + "(34234 packets, no translation or decoder faults); Join Game/Respawn/Open "
+            + "Window/chunks/light/position/block place rematerialised; block states, items "
+            + "and entity types resolved semantically by name and property set; "
+            + "recipes/tags/advancements dropped");
     registerValidated(477, 404, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         ValidationStatus.TRANSLATED_VERIFIED,
         "scripted 1.14 probe sustained play on real 1.13.2 server through Conduit; "
-            + "Update Light/View absorbed; Use Bed dropped; inverse field rematerialisation");
+            + "Update Light/View absorbed; Use Bed dropped; inverse field rematerialisation; "
+            + "NOT real-client verified — a real 1.14 client crashes on arrow metadata "
+            + "because per-entity-class metadata layouts are unmodelled");
     registerValidated(477, 477, TranslationSupport.DIRECT, CompatibilityCompleteness.PARTIAL,
         ValidationStatus.DIRECT_VERIFIED,
-        "1.14 native — scripted protocol-477 client against official 1.14 server through Conduit");
+        "1.14 native — scripted protocol-477 client against official 1.14 server through "
+            + "Conduit; a real 1.14 client crashes rendering even on a byte-identical "
+            + "passthrough stream, so this rests on the probe");
     register(765, 766, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         "control/login/config packets; JoinGame/player-info/registry unsupported");
     register(766, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
