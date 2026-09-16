@@ -120,8 +120,9 @@ dependency merely containing the protocol.
 
 | Pair | Engine | Status |
 |---|---|---|
+| 765 → 393 | Via | **TRANSLATED / VERIFIED** — real 1.20.4 client, real 1.13 server, gameplay through Via, 0 translation failures |
+| 765 → 404 after `/server` | Via | **PARTIAL** — client protocol held, backend protocol and Via path rebound correctly, session then dropped by the new backend on Conduit's switch-time Login Start |
 | 393 → 765 | Via | **TRANSLATED / UNVERIFIED** — real 1.13 client joins a real 1.20.4 world through Via, then disconnects on Via's Declare Recipes downgrade |
-| 765 → 393 | Via | **TRANSLATED / UNVERIFIED** — not yet run against real endpoints |
 | 393 → 765 | native | unchanged; see `RESULTS-393-765-CROSS.md` |
 | 5 (1.7.6) → modern | Via + ViaRewind | **UNVERIFIED** — no real-client run has been performed |
 | anything → 26.3 | Via | **UNSUPPORTED** — Via 5.11.0 does not register it |

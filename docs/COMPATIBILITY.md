@@ -14,18 +14,20 @@ fallback/experimental.
 | Client → Backend | Mode | Verification |
 |---|---|---|
 | same protocol (codec present) | DIRECT | VERIFIED / codec-dependent |
+| 765 → 393 (Via enabled) | TRANSLATED | **VERIFIED** — real 1.20.4 client, real 1.13 server, gameplay through Via, 0 translation failures |
+| 765 → 404 (Via enabled, after `/server`) | TRANSLATED | PARTIAL — rebinding VERIFIED, session completion UNVERIFIED |
 | 393 → 765 (Via enabled) | TRANSLATED | UNVERIFIED — real 1.13 client joins a real 1.20.4 world through Via, then disconnects on Via's Declare Recipes downgrade |
-| 765 → 393 (Via enabled) | TRANSLATED | UNVERIFIED — no real-endpoint run yet |
 | 1.7.6 (5) → modern (Via+Rewind) | TRANSLATED | UNVERIFIED — no real-client run yet |
 | modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNVERIFIED — ViaLegacy not loaded; not shown to be required |
 | * → 26.3 / 26.3 → * on Via 5.11.0 | UNSUPPORTED | Via does not register 26.3 |
 
-Do not read Via dependency presence as VERIFIED gameplay. The 393 → 765 Via run
-above reaches the world and translates in both structural directions with zero
-translation failures reported by Conduit, and is still UNVERIFIED: no gameplay
-was exercised, and the session ends on a malformed packet. Details, including
-the exact bytes and why the fault sits outside Conduit, are in
-`docs/VALIDATION_VIA_393_765.md`.
+Do not read Via dependency presence as VERIFIED gameplay. 765 → 393 is VERIFIED
+because a real 1.20.4 client moved, mined, fought a mob to an advancement,
+chatted and ran commands in a real 1.13 world for the length of a run, with
+zero translation failures. 393 → 765 reaches the world on the same
+integration and is still UNVERIFIED: no gameplay was exercised, because the
+session ends on a malformed packet. Details of both, including the exact bytes
+of the failure, are in `docs/VALIDATION_VIA_393_765.md`.
 
 The native 393 ↔ 765 path is unaffected by the Via work and was re-checked with
 a real 1.13 client against a real 1.20.4 server after it: in-world, rendering,
