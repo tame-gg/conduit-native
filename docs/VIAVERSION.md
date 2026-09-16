@@ -125,6 +125,7 @@ dependency merely containing the protocol.
 | 393 → 765 | Via | **TRANSLATED / VERIFIED** — real 1.13 client, real 1.20.4 server, 15 min of gameplay through Via, 1 132 serverbound packets across 17 Play types, 0 translation failures |
 | 393 → 765 | native | unchanged; see `RESULTS-393-765-CROSS.md` |
 | 5 (1.7.6) → modern | Via + ViaRewind | **UNVERIFIED** — no real-client run has been performed |
+| 765 → 404 after `/server` | Via | **PARTIAL** — see `docs/VALIDATION_VIA_393_765.md`; three switch faults fixed, world-stream replay still fails |
 | anything → 26.3 | Via | **UNSUPPORTED** — Via 5.11.0 does not register it |
 
 ### A defect in the dependency, and Conduit's response

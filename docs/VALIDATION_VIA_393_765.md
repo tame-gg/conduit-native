@@ -56,29 +56,120 @@ torn down by the harness).
 
 ## Server switching, 765 → 393 then 765 → 404
 
-`config/conduit-via-765-switch.toml` adds a second backend, a real 1.13.2
-server (protocol **404**) on port 25614, and the client issued `/server smp`.
+`config/conduit-via-765-switch.toml` adds a second backend, a real 1.13.2 server
+(protocol **404**) on port 25614, and the client issued `/server smp`. Topology
+read from the configs, not from notes: lobby = real Minecraft **1.13** (393) on
+25613, smp = real Minecraft **1.13.2** (404) on 25614, client = real **1.20.4**
+(765).
 
-What worked: `clientProtocolVersion` stayed **765** across the switch;
-`backendProtocolVersion` moved **393 → 404**; Conduit re-selected TRANSLATED/Via
-for the new pair and Via rebuilt the path for it (25 protocols, correctly now
-ending at `Protocol1_13_2To1_14` rather than `Protocol1_13To1_13_1`); the old
-backend saw a clean disconnect; the player **joined the 1.13.2 server**.
+**Status: PARTIAL.** Three faults were found here, each proven from the wire and
+each hidden behind the one before it. All three are fixed. The switch now gets
+much further and still does not complete, and the remaining stop is recorded
+below rather than claimed as working.
 
-What then failed: the 1.13.2 backend closed the connection with
+### Fault 1 — Conduit wrote the client's dialect at the backend
+
+The 1.13.2 backend closed the connection with
 
 ```
 DecoderException: Packet 2/0 (of) was larger than I expected,
 found 7 bytes extra whilst reading packet 0
 ```
 
-State 2 packet 0 on a 1.13.2 server is **Login Start**, so the switch wrote a
-Login Start the new backend could not read to the end. That is in Conduit's
-switch login path, which runs before and outside any translator, so it is
-unlikely to be Via-specific — but it has not been reproduced on the native
-engine, so that is a statement about where the code sits, not a measurement.
+The handshake and Login Start were **correct** — traced as
+`handshakeProtocol=404 loginProtocol=404`, `loginStart = 00 09 "ViaSwitch"`,
+username only, exactly what 1.13.2 defines. The earlier guess that the switch's
+own Login Start was malformed was wrong.
 
-**Server switching under Via: rebinding VERIFIED, completion UNVERIFIED.**
+The packet the backend actually choked on was the next one Conduit wrote:
+
+```
+backend-write smp:25614  00 05 65 6e 5f 75 73 0c 00 01 7f 01 00 01
+```
+
+That is `replayClientInformation` stamping the **client's** packet id onto the
+**client's** body: 1.20.4 Configuration id `0x00`, a phase 1.13.2 does not have,
+with a body carrying the two trailing booleans 1.20.4 added. Read as Login Start
+it is `00`, the string `"en_us"`, and then `0c 00 01 7f 01 00 01` — **exactly the
+seven bytes** the server reported.
+
+Fixed by sending the replay through the session's translator, like every other
+client packet, and by skipping it entirely for a backend that reaches Play in the
+same breath as Login Success.
+
+### Fault 2 — the translation was swapped while the old backend was still live
+
+With fault 1 fixed, the **old** backend died instead:
+
+```
+Packet 0/23 (mz) was larger than I expected, found 16 bytes extra
+```
+
+Traced: `backend-write lobby:25613 len=26  17 c0 55 2d 39 …`. Packet `0x17` with
+a 25-byte body is the 1.20.4 **Set Player Position**, delivered raw to a 1.13
+server. The identical payload one line earlier in the run had gone out correctly
+as `10 …`, the 1.13 id.
+
+Preparing a switch replaced the session's translator, backend protocol and packet
+table before the new backend existed, so every client packet in that window was
+encoded for a backend it was not being written to. A translation now belongs to a
+backend connection: built for the target, used only for that target's login, and
+installed at the commit that stops the old backend receiving anything.
+
+### Fault 3 — the switch-time translator never left Login
+
+With both fixed, both backends disconnect cleanly and the switch fails with
+`client did not finish configuration`. The trace showed why: the Via session
+opened for the switch sat at `LOGIN/LOGIN` and passed the new backend's Join Game
+through **untranslated**. A session opened for a first connection learns its
+states by watching the packets that cause the transitions; a session opened for a
+switch sees none of them, because Conduit performs that login itself and withholds
+the new backend's Login Success from the client.
+
+It is now told both states explicitly, through the same public
+`ProtocolInfo` surface `setServerState` already used. Once it could see where it
+was, it asked the client to reconfigure — and Conduit was swallowing the
+`Acknowledge Configuration` it was waiting on, while it held the entire world
+stream behind that reply. That packet is now passed to the translator too.
+
+### Where it stops now
+
+With all three fixed, the sequence observed on the wire is:
+
+| Step | Result |
+|---|---|
+| Old backend keeps flowing during preparation | **correct** — no more foreign packets |
+| New backend handshake + Login Start | **correct** — `404`/`404`, username only |
+| New backend login, `ViaSwitch joined the game` | OK |
+| Client protocol across the switch | held at **765** |
+| Backend protocol across the switch | **393 → 404** |
+| Via path rebuilt for the new pair | 26 → 25 protocols, ending `Protocol1_13_2To1_14` |
+| Translator primed at the real states | `PLAY/PLAY` |
+| Translator holds Join Game and reconfigures the client | Start Configuration reaches the client |
+| Client acknowledges, translator moves to `CONFIGURATION` | OK |
+| Translator emits the synthesised phase | **Registry Data, 38 962 bytes, delivered** |
+| Translator replays the held world stream | **fails** |
+| Client reaches Play on the new backend | **no** |
+
+The remaining failure is inside the translator's own chunk rewriting, reported by
+Via as
+
+```
+ERROR IN Protocol1_19_4To1_20 IN REMAP OF LEVEL_CHUNK_WITH_LIGHT (0x24)
+```
+
+Before translator access was serialised the same failure appeared one stage
+lower, as `ERROR IN Protocol1_13_2To1_14 IN REMAP OF LEVEL_CHUNK (0x22)`. That it
+moved under a concurrency fix says the earlier one was at least partly Conduit's
+races; that it did not go away says something remains. It has **not** been
+established whether what remains is Conduit feeding the replay wrongly or a
+limitation of driving this path mid-session, and no guess about it is recorded
+here as fact. Nothing was worked around by reimplementing the rewriter, and no
+ViaVersion fork was made.
+
+**Server switching under Via: rebinding VERIFIED, completion UNVERIFIED — PARTIAL.**
+The client is disconnected cleanly with `Could not connect to smp.` rather than
+being left in a broken world.
 
 ---
 
