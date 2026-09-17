@@ -62,10 +62,12 @@ reaches.
 | 1.20.4 (765) | 1.13 ↔ 1.13.2, six switches | REAL-CLIENT VERIFIED | switching re-run after `ac59183`, 6/6, no timeouts |
 | 1.20.4 (765) | 1.21.8 | REAL-CLIENT PARTIAL | joined, chat, combat |
 | 1.20.4 (765) | 1.13 → 1.21.8 → 1.13 → 26.2 → 1.13 → 1.21.8 → 26.2 → 1.13 → 1.21.8 → 26.2 → 1.21.8 | REAL-CLIENT PARTIAL | run `20260917-020738`: all ten switches completed, chat reached every backend except the first 26.2 visit (the player spawned at night and was killed; the death screen took the input); last session held 75 s with 10/10 Keep Alives and walking, client Disconnect; 0 switch failures. Gameplay probe not run (RCON only on the 1.20.4 and 1.13 test servers). Needed `b5cb59c`: before it the switch onto 1.21.8 timed out, because Via's reply to the backend's Known Packs was never flushed |
-| 1.20.4 (765) | 1.20.4 (DIRECT, no Via) | FAILED (Conduit) | runs `20260917-014956`, `-015635`, `-015856`: the client disconnects during login with "Badly compressed packet - actual length of uncompressed payload 0 is does not match declared size 103". Reproduced on `c9f2c5d` as well as on `b5cb59c`, so not caused by it; earlier 1.20.4 runs never joined the 1.20.4 backend directly. Not yet investigated
+| 1.20.4 (765) | 1.20.4 (DIRECT, no Via) | REAL-CLIENT VERIFIED | run `20260917-025439`: joined 02:55:32; break, place, entity, container and walk confirmed over RCON; 10/10 Keep Alives; 266 position packets; 218 chunks; three chat lines; the clientbound dump starts with an uncompressed Login Success and carries no Set Compression. Needed `2de8348`. Before it (runs `20260917-014956`, `-015635`, `-015856`, `-023323`, `-023851`) the client was disconnected with "Badly compressed packet - actual length of uncompressed payload 0 is does not match declared size 103": with forwarding `none` a DIRECT initial join never had its backend login completed by Conduit, so the backend's Set Compression reached the client, Conduit read both sockets in the wrong format, the backend's Finish Configuration (`00 02`) parsed as a plugin message and ended the session, and the fallback switch's uncompressed Start Configuration (`67`) was read by the client as a declared size of 103 |
+| 1.20.4 (765) | 1.20.4 DIRECT → 1.13 → 1.21.8 → 26.2 → 1.20.4 DIRECT | REAL-CLIENT VERIFIED | same run: every switch completed with chat on each backend (the `/server v1204` typed on 26.2 was lost to a death screen and repeated after respawning); back on 1.20.4 DIRECT, break, place, entity, container and walk confirmed over RCON again, 9 Keep Alives answered, 275 position packets, chat, held 89 s, client Disconnect; no switch failures |
 | 1.20.4 (765) | 26.2 | REAL-CLIENT PARTIAL | joined, chat |
 | 1.20.4, 1.8.9, 1.12.2 re-run after `edbab76` | 1.13 ↔ 1.13.2 (six switches); 1.20.4 → 1.13 → 1.20.4 | REAL-CLIENT VERIFIED | 1.20.4: 6/6 switches, 0 translation failures; 1.8.9 and 1.12.2: connected past 60 s after returning, 6/6 Keep Alives each. 1.15.2 and 1.16.5 were not re-run after `edbab76` |
 | 1.8.9, 1.12.2 re-run after `b5cb59c` | 1.20.4 → 1.13 → 1.20.4 | REAL-CLIENT VERIFIED | runs `20260917-021900`, `20260917-022327`: break, place, entity, container confirmed over RCON after the return; 6/6 Keep Alives each; held 85 s; client Disconnect; 0 switch failures. 1.7.6, 1.15.2 and 1.16.5 not re-run: `b5cb59c` only changes paths where the client has a Configuration phase |
+| 1.21.8, 26.2, 1.8.9, 1.12.2 re-run after `2de8348` | 1.20.4 → 1.13 → 1.20.4 | REAL-CLIENT VERIFIED | runs `20260917-030420`, `20260917-031258`, `20260917-031727`, `20260917-032123`: break, place, entity, container confirmed over RCON after the return for all four; Keep Alives 8/8 (1.21.8), 6/6 (1.8.9, 1.12.2), 6 from the server with no timeout (26.2); 86 s holds; chat; client Disconnect; 0 translation failures. 1.7.6, 1.15.2 and 1.16.5 not re-run: `2de8348` only changes the initial join, and their verified joins are TRANSLATED, which already completed the backend login |
 
 ### The harness verdict is not evidence
 
@@ -205,6 +207,12 @@ Known gaps:
   Fixable with a type-name mapping.
 - Derived versions inherit their base's `ProtocolCapabilities`. Per-release
   capability auditing is outstanding for all 32 derived protocols.
+- **Backend login plugin requests other than Velocity modern forwarding are
+  refused.** Conduit completes every backend login itself, including a DIRECT
+  initial join since `2de8348` (switches and MODERN joins always did), so a
+  backend that sends another login query, such as a Forge login handshake,
+  fails the connection instead of having it relayed to the client. Forge and
+  NeoForge real-client joins are not verified either way.
 
 ## Protocols
 
