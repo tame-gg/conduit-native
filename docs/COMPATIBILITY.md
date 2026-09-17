@@ -16,7 +16,7 @@ fallback/experimental.
 | same protocol (codec present) | DIRECT | VERIFIED / codec-dependent |
 | 765 → 393 (Via enabled) | TRANSLATED | **VERIFIED** — real 1.20.4 client, real 1.13 server, gameplay through Via, 0 translation failures |
 | 765 → 404 (Via enabled, direct, no switch) | TRANSLATED | **VERIFIED** — real 1.20.4 client, real 1.13.2 server, joins and plays, 0 translation failures |
-| 765 → 404 (Via enabled, after `/server`) | TRANSLATED | PARTIAL — the new backend logs in cleanly and the client is reconfigured, but the translator emits only Registry Data and never Finish Configuration, so the client cannot leave the phase |
+| 765 → 404 (Via enabled, after `/server`) | TRANSLATED | VERIFIED — real 1.20.4 client switched between a real 1.13 and a real 1.13.2 backend five times, each time through a full Configuration phase (feature flags, registry data, tags, finish) and back into Play; see RESULTS-VIA-393-765.md |
 | 393 → 765 (Via enabled) | TRANSLATED | **VERIFIED** — real 1.13 client, real 1.20.4 server, 7 min of gameplay through Via, 0 translation failures |
 | 1.7.6 (5) → modern (Via+Rewind) | TRANSLATED | UNVERIFIED — no real-client run yet |
 | modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNVERIFIED — ViaLegacy not loaded; not shown to be required |
