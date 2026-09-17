@@ -18,9 +18,54 @@ fallback/experimental.
 | 765 → 404 (Via enabled, direct, no switch) | TRANSLATED | **VERIFIED** — real 1.20.4 client, real 1.13.2 server, joins and plays, 0 translation failures |
 | 765 → 404 (Via enabled, after `/server`) | TRANSLATED | VERIFIED — real 1.20.4 client switched between a real 1.13 and a real 1.13.2 backend five times, each time through a full Configuration phase (feature flags, registry data, tags, finish) and back into Play; see RESULTS-VIA-393-765.md |
 | 393 → 765 (Via enabled) | TRANSLATED | **VERIFIED** — real 1.13 client, real 1.20.4 server, 7 min of gameplay through Via, 0 translation failures |
-| 1.7.6 (5) → modern (Via+Rewind) | TRANSLATED | UNVERIFIED — no real-client run yet |
-| modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNVERIFIED — ViaLegacy not loaded; not shown to be required |
-| * → 26.3 / 26.3 → * on Via 5.11.0 | UNSUPPORTED | Via does not register 26.3 |
+| 5 (1.7.6) → 765, and after `/server` 765 → 393 → 765 (Via+Rewind) | TRANSLATED | **REAL-CLIENT VERIFIED** — see the real-client matrix below |
+| 47 (1.8.9) → 765, and after `/server` 765 → 393 → 765 (Via+Rewind) | TRANSLATED | **REAL-CLIENT VERIFIED** — see the real-client matrix below |
+| modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNTESTED — ViaLegacy not loaded; not shown to be required |
+| * → 26.3 / 26.3 → * on Via 5.11.0 | UNSUPPORTED | Via does not register 26.3; out of scope for this phase |
+
+## Real-client matrix (Via engine, target 1.7.6 → 26.2)
+
+Evidence levels, lowest to highest. A row is only ever at the level its evidence
+reaches.
+
+- `UNTESTED` - nothing has been run.
+- `PROBED` - the compatibility probe / Via path says the pair can be carried.
+- `OFFLINE/SCRIPTED` - unit tests or a scripted harness, no real client in the loop.
+- `REAL-CLIENT PARTIAL` - a real client and a real server through Conduit, but
+  only part of the gameplay checklist was observed.
+- `REAL-CLIENT VERIFIED` - a real client and a real server through Conduit, with
+  login, world, movement, block interaction, chat and Keep Alive each observed,
+  and the session still connected at least 60 s after the last switch.
+- `FAILED` - a real run that did not hold, with the failure recorded.
+
+| Client | Backend path | Level | Evidence |
+|---|---|---|---|
+| 1.7.6 (5) | 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-222350`: joined, world; connected 78 s; 5/5 Keep Alives answered; 101 position packets and 3 digs forwarded; chat reached the server; 0 translation failures |
+| 1.7.6 (5) | 1.20.4 → `/server` 1.13 → `/server` 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-224844`: both switches completed; legacy world reload put the client in the 1.20.4 world; connected 158 s after returning; 6/6 Keep Alives answered; chat reached the server and its echo rendered on the client; 140 position packets forwarded; a block broken and answered with a Block Update; 0 translation failures. Needed `630d7eb` (Conduit's own chat carried the 1.8 position byte; the client disconnected with "found 1 bytes extra whilst reading packet 2") |
+| 1.8.9 (47) | 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-221648`: joined, world; connected 125 s; 8/8 Keep Alives answered; 121 position packets and 3 digs forwarded; chat reached the server; 0 translation failures |
+| 1.8.9 (47) | 1.20.4 → `/server` 1.13 → `/server` 1.20.4 | REAL-CLIENT VERIFIED | runs `20260916-221148` and `20260916-223226`: connected 105 s after returning; 7 Keep Alives answered; chat reached the server at +37 s and +93 s; movement and digging forwarded; 0 translation failures. Needed `ac59183` (the post-switch hold never ended when Via delivered Join Game as an extra; the server timed the player out after 30 s) |
+| 1.12.2 (340) | 1.20.4 | REAL-CLIENT PARTIAL | joined, chat round-tripped; nothing else observed |
+| 1.20.4 (765) | 1.13 ↔ 1.13.2, six switches | REAL-CLIENT VERIFIED | switching re-run after `ac59183`, 6/6, no timeouts |
+| 1.20.4 (765) | 1.21.8 | REAL-CLIENT PARTIAL | joined, chat, combat |
+| 1.20.4 (765) | 26.2 | REAL-CLIENT PARTIAL | joined, chat |
+| 1.15.2, 1.16.5, 1.21.8, 26.2 clients | any | UNTESTED | clients provisioned, no gameplay run recorded |
+
+### The harness verdict is not evidence
+
+`switch-matrix.ps1` and `check-matrix.ps1` print a one-line verdict. It is a
+convenience, not the result. `switch-matrix.ps1` reported "2 of 2 switches
+completed, session intact" for a 1.8.9 session the backend timed out 30 s later,
+because it stops watching 14 s after the last switch and never reads the backend
+for a timeout; it counts a translation being *built*, not the player arriving.
+The source of truth is the three logs together: the backend's own log (joins,
+`lost connection` and its reason, chat lines), the proxy trace (client packets
+received against client packets handed to the translator, Keep Alive both ways,
+translation failures), and the client (its log, and its screen when it
+disconnects, which is where the 1.7.6 decoder error was only visible).
+
+Two harness artefacts to read around: every run kills all `java.exe` first, so
+the previous proxy logs a fallback "switch" as its backends die; read a run's
+logs before starting the next. And screenshots capture the whole desktop.
 
 Do not read Via dependency presence as VERIFIED gameplay. 765 → 393 is VERIFIED
 because a real 1.20.4 client moved, mined, fought a mob to an advancement,
