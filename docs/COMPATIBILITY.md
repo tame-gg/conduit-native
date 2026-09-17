@@ -2,8 +2,9 @@
 
 Generated from the live registries, not hand-maintained: every row is what
 `CompatibilityRegistry.resolve(client, backend)` would tell a real session.
-Regenerate after any protocol change. 1.12.2 and older are deliberately out of
-scope for this program's *native* codecs.
+Regenerate after any protocol change. The *translation* program targets
+1.13-26.2; 1.7.6, 1.8.9 and 1.12.2 have declared codecs of their own and are
+carried DIRECT and through Via, which the DIRECT matrix below covers.
 
 ## ViaVersion ecosystem (optional)
 
@@ -111,6 +112,340 @@ The native 393 ↔ 765 path is unaffected by the Via work and was re-checked wit
 a real 1.13 client against a real 1.20.4 server after it: in-world, rendering,
 command tree intact.
 
+**Re-checked after the DIRECT pass**, on a build made from the current source
+(2026-09-17, 17:38 - 17:57), because the DIRECT fixes touch code every session
+goes through:
+
+| Run | Path | Result |
+|---|---|---|
+| `switch-matrix.ps1 -Client 1.21.8 -A v1204 -B v113 -Rounds 2` | 1.20.4 ↔ 1.13 | 4 of 4 switches completed, session intact (joins v1204=3 v113=2, 4 translators built) |
+| `switch-matrix.ps1 -Client 26.2 -A v1204 -B v113 -Rounds 2` | 1.20.4 ↔ 1.13 | 4 of 4 switches completed, session intact |
+| `switch-matrix.ps1 -Client 1.20.4 -A v113 -B v1132 -Rounds 3` | 1.13 ↔ 1.13.2, each switch through a full Configuration phase | 6 of 6 switches completed, session intact (joins v113=4 v1132=3, 7 translators built) |
+| `regress-legacy.ps1 -Client 1.8.9` | 1.20.4 → `/server` 1.13 → `/server` 1.20.4, with the Tab checks | both switches; break, place, entity and container server-confirmed after the return; two chat lines; held 102 s; clean Disconnect; no proxy errors |
+| `regress-legacy.ps1 -Client 1.12.2` | same | same, held 94 s |
+
+## DIRECT same-version real-client matrix (1.7.6 - 26.2)
+
+Every distinct protocol Conduit has a codec for, each tested on its own: a real client of that
+release, joined through Conduit with translation disabled (`[translation] enabled = false`, no Via
+anywhere in the session), to two real servers of the same release. Runs of 2026-09-17; every row is
+one run, named in the evidence list below the table.
+
+**Where the version list comes from.** `ProtocolDefinition.BY_NUMBER` holds 40 codecs: the declared
+tables 5, 47, 340, 393, 763, 765, 766 and 776, and the 32 protocols `ProtocolRevisions.ALL` derives.
+Protocol 485 (1.14.2) is a catalog entry with no codec (no published packet data to derive one
+from); it is listed as UNSUPPORTED BY CONDUIT, and a real 1.14.2 client was pointed at Conduit to
+record what it is told. Releases that share a protocol (1.7.10, 1.16.4, 1.18.1, 1.19.1, 1.20, 1.20.3,
+1.20.6, 1.21.1, 1.21.2, 1.21.7, 1.21.9, 26.1.1, 26.1.2) are the same wire protocol as the release
+tested in their row; each protocol was run once, with the release named in VERSION.
+
+**What one run does.** Backend A and backend B are two vanilla servers of the client's release
+(offline mode), with RCON. The client joins A through Conduit, then:
+
+- F3 screenshot for the brand; the player list held open (from this batch on);
+- the gameplay probe, read back from the server over RCON rather than from the screen: a gold block
+  broken, oak planks placed, a pig hit (health below 10), five diamonds moved out of a chest into the
+  hotbar (chest emptied and player inventory counted), and a walk (position before and after);
+- commands: `/con` and `/ser` typed with the suggestion list screenshotted (command tree), Tab
+  pressed on each (completion), Enter (`/conduit` output), `/server` (server list), `/server ` Tab
+  (argument suggestions and completion), `/server direct` ("already connected");
+- `/server second`, then on B: `/conduit`, `/server`, `/ser` Tab, chat; `/server direct` back to A;
+  `/conduit` again; held for more than 60 s after the return; Disconnect from the pause menu.
+
+Keep Alive is counted per backend session in the proxy trace (and no backend logged a timeout);
+compression is taken as working when the backend's Set Compression was consumed by Conduit's
+backend login and the session carried on; Configuration when the session passed through that state.
+
+**Legend.** PASS: observed. FAIL: observed not to work. PARTIAL: part of the item observed. N/A: the
+release has no such thing (no compression before 1.8, no Configuration phase before 1.20.2, no
+command tree before 1.13, no brand line on the F3 screen before 1.13). BLOCKED: nothing to test
+against (no Paper build with Velocity support for that release). UNSUPPORTED: Conduit does not
+implement it. UNTESTED: not run.
+
+OVERALL STATUS covers the DIRECT checklist and the forwarding modes Conduit implements (none and
+modern). Legacy (BungeeCord IP forwarding) and BungeeGuard are not implemented by Conduit for any
+release: `Forwarders.create` handles `none` and `modern` only, and Conduit configured with either
+refuses to start (`java.lang.UnsupportedOperationException: forwarding mode legacy is not
+implemented`, and the same for `bungeeguard`; recorded under `logs-forwarding/startup-*`).
+
+<!-- DIRECT TABLES -->
+
+### Every version, every checklist item
+
+| VERSION | PROTOCOL | CLIENT | SERVER | DIRECT JOIN | LOGIN | COMPRESSION | CONFIGURATION | WORLD LOAD | KEEP ALIVE | CHAT | MOVEMENT | BLOCK BREAK | BLOCK PLACE | ENTITY INTERACTION | INVENTORY | COMMAND TREE | /server | /conduit | TAB COMPLETION | SERVER SWITCH | BRANDING | FORWARDING NONE | MODERN FORWARDING | LEGACY FORWARDING | BUNGEEGUARD | OVERALL STATUS |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1.7.6 | 5 | vanilla 1.7.6 (offline launch) | vanilla 1.7.6 x2 | PASS | PASS | N/A | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | N/A | PASS | N/A | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.8.9 | 47 | vanilla 1.8.9 (offline launch) | vanilla 1.8.9 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | N/A | PASS | N/A | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.12.2 | 340 | vanilla 1.12.2 (offline launch) | vanilla 1.12.2 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | N/A | PASS | N/A | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.13 | 393 | vanilla 1.13 (offline launch) | vanilla 1.13 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | BLOCKED | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.13.1 | 401 | vanilla 1.13.1 (offline launch) | vanilla 1.13.1 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.13.2 | 404 | vanilla 1.13.2 (offline launch) | vanilla 1.13.2 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.14 | 477 | vanilla 1.14 (offline launch, Direct Connect) | vanilla 1.14 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.14.1 | 480 | vanilla 1.14.1 (offline launch, Direct Connect) | vanilla 1.14.1 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.14.2 | 485 | vanilla 1.14.2 (offline launch, Direct Connect) | n/a (refused before any backend) | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED BY CONDUIT |
+| 1.14.3 | 490 | vanilla 1.14.3 (offline launch, Direct Connect) | vanilla 1.14.3 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.14.4 | 498 | vanilla 1.14.4 (offline launch, Direct Connect) | vanilla 1.14.4 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.15 | 573 | vanilla 1.15 (offline launch, Direct Connect) | vanilla 1.15 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.15.1 | 575 | vanilla 1.15.1 (offline launch, Direct Connect) | vanilla 1.15.1 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.15.2 | 578 | vanilla 1.15.2 (offline launch, Direct Connect) | vanilla 1.15.2 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.16 | 735 | vanilla 1.16 (offline launch) | vanilla 1.16 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | BLOCKED | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.16.1 | 736 | vanilla 1.16.1 (offline launch, Direct Connect) | vanilla 1.16.1 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.16.2 | 751 | vanilla 1.16.2 (offline launch) | vanilla 1.16.2 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.16.3 | 753 | vanilla 1.16.3 (offline launch) | vanilla 1.16.3 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.16.5 | 754 | vanilla 1.16.5 (Modrinth launch, Mojang-authenticated account) | vanilla 1.16.5 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.17 | 755 | vanilla 1.17 (offline launch, Direct Connect) | vanilla 1.17 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.17.1 | 756 | vanilla 1.17.1 (offline launch) | vanilla 1.17.1 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.18 | 757 | vanilla 1.18 (offline launch) | vanilla 1.18 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.18.2 | 758 | vanilla 1.18.2 (offline launch) | vanilla 1.18.2 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.19 | 759 | vanilla 1.19 (offline launch) | vanilla 1.19 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.19.2 | 760 | vanilla 1.19.2 (offline launch) | vanilla 1.19.2 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.19.3 | 761 | vanilla 1.19.3 (offline launch) | vanilla 1.19.3 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.19.4 | 762 | vanilla 1.19.4 (offline launch) | vanilla 1.19.4 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.20.1 | 763 | vanilla 1.20.1 (offline launch) | vanilla 1.20.1 x2 | PASS | PASS | PASS | N/A | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.20.2 | 764 | vanilla 1.20.2 (offline launch) | vanilla 1.20.2 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.20.4 | 765 | vanilla 1.20.4 (offline launch) | vanilla 1.20.4 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.20.5 | 766 | vanilla 1.20.5 (offline launch) | vanilla 1.20.5 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21 | 767 | vanilla 1.21 (offline launch) | vanilla 1.21 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.3 | 768 | vanilla 1.21.3 (offline launch) | vanilla 1.21.3 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.4 | 769 | vanilla 1.21.4 (offline launch) | vanilla 1.21.4 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.5 | 770 | vanilla 1.21.5 (offline launch) | vanilla 1.21.5 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.6 | 771 | vanilla 1.21.6 (offline launch) | vanilla 1.21.6 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.8 | 772 | vanilla 1.21.8 (offline launch) | vanilla 1.21.8 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.10 | 773 | vanilla 1.21.10 (offline launch) | vanilla 1.21.10 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 1.21.11 | 774 | vanilla 1.21.11 (offline launch) | vanilla 1.21.11 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 26.1 | 775 | vanilla 26.1 (offline launch) | vanilla 26.1 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+| 26.2 | 776 | vanilla 26.2 (offline launch) | vanilla 26.2 x2 | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | UNSUPPORTED | UNSUPPORTED | VERIFIED |
+
+### Commands, per version
+
+| VERSION | COMMAND TREE | /server | /conduit | TAB COMPLETION | SERVER SWITCH | RESULT |
+|---|---|---|---|---|---|---|
+| 1.7.6 | N/A | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.8.9 | N/A | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.12.2 | N/A | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.13 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.13.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.13.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.14 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.14.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.14.3 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.14.4 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.15 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.15.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.15.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.16 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.16.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.16.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.16.3 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.16.5 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.17 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.17.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.18 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.18.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.19 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.19.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.19.3 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.19.4 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.20.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.20.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.20.4 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.20.5 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.3 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.4 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.5 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.6 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.8 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.10 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 1.21.11 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 26.1 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+| 26.2 | PASS | PASS | PASS | PASS | PASS | VERIFIED |
+
+### Login and compression, per version
+
+| VERSION | PROTOCOL | BACKEND SESSIONS | BACKEND SET COMPRESSION | BACKEND LOGIN SUCCESS | CLIENT'S FIRST PACKET | CLIENT LOGIN ACK / CONFIGURATION |
+|---|---|---|---|---|---|---|
+| 1.7.6 | 5 | 3 | none (1.7 has no compression) | 3 of 3 | id 0x02 (43 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.8.9 | 47 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (43 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.12.2 | 340 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.13 | 393 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (43 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.13.1 | 401 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.13.2 | 404 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.14 | 477 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (43 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.14.1 | 480 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.14.3 | 490 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.14.4 | 498 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.15 | 573 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (43 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.15.1 | 575 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.15.2 | 578 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (44 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.16 | 735 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (22 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.16.1 | 736 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.16.2 | 751 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.16.3 | 753 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.16.5 | 754 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (30 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.17 | 755 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (22 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.17.1 | 756 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.18 | 757 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (22 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.18.2 | 758 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.19 | 759 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.19.2 | 760 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.19.3 | 761 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.19.4 | 762 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.20.1 | 763 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | N/A (no Configuration phase) |
+| 1.20.2 | 764 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x1/25, CONFIGURATION id=0x0/14, CONFIGURATION id=0x2/1 |
+| 1.20.4 | 765 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x1/25, CONFIGURATION id=0x0/14, CONFIGURATION id=0x2/1 |
+| 1.20.5 | 766 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (25 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/14, CONFIGURATION id=0x7/24 |
+| 1.21 | 767 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/14, CONFIGURATION id=0x7/22 |
+| 1.21.3 | 768 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/24 |
+| 1.21.4 | 769 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/24 |
+| 1.21.5 | 770 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/24 |
+| 1.21.6 | 771 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/24 |
+| 1.21.8 | 772 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (24 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/24 |
+| 1.21.10 | 773 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (25 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/25 |
+| 1.21.11 | 774 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (25 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/25 |
+| 26.1 | 775 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (23 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/22 |
+| 26.2 | 776 | 3 | 3 of 3, packet length ['3'] (threshold 256) | 3 of 3 | id 0x02 (39 bytes, uncompressed) | CONFIGURATION id=0x3/1, CONFIGURATION id=0x2/25, CONFIGURATION id=0x0/15, CONFIGURATION id=0x7/22 |
+
+### The runs behind the table
+
+- **1.7.6** (5): DIRECT, forwarding none `1.7.6-none-offline-20260917-135232`
+- **1.8.9** (47): DIRECT, forwarding none `1.8.9-none-offline-20260917-135759`
+- **1.12.2** (340): DIRECT, forwarding none `1.12.2-none-offline-20260917-140303`
+- **1.13** (393): DIRECT, forwarding none `1.13-none-offline-20260917-140811`; BLOCKED: Paper 1.13 has no Velocity (modern forwarding) support
+- **1.13.1** (401): DIRECT, forwarding none `1.13.1-none-offline-20260917-141328`; modern forwarding `1.13.1-modern-offline-20260917-111946` (build df43d90)
+- **1.13.2** (404): DIRECT, forwarding none `1.13.2-none-offline-20260917-141846`; modern forwarding `1.13.2-modern-offline-20260917-112305`
+- **1.14** (477): DIRECT, forwarding none `1.14-none-offline-20260917-142405`; modern forwarding `1.14-modern-offline-20260917-112626`
+- **1.14.1** (480): DIRECT, forwarding none `1.14.1-none-offline-20260917-143045`; modern forwarding `1.14.1-modern-offline-20260917-113102`
+- **1.14.2** (485): unsupported-protocol run `1.14.2-unsupported-20260917-104002`: protocol 485 has no codec; server list shows the entry as incompatible, labelled "Conduit 1.7.10" (the status exchange falls back to the oldest table, protocol 5); joining shows "Failed to connect to the server / Unsupported Minecraft version."; Conduit logs "Connection closed: unsupported Minecraft protocol: 485"
+- **1.14.3** (490): DIRECT, forwarding none `1.14.3-none-offline-20260917-143723`; modern forwarding `1.14.3-modern-offline-20260917-113536`
+- **1.14.4** (498): DIRECT, forwarding none `1.14.4-none-offline-20260917-144352`; modern forwarding `1.14.4-modern-offline-20260917-114008`
+- **1.15** (573): DIRECT, forwarding none `1.15-none-offline-20260917-145020`; modern forwarding `1.15-modern-offline-20260917-114439`
+- **1.15.1** (575): DIRECT, forwarding none `1.15.1-none-offline-20260917-145648`; modern forwarding `1.15.1-modern-offline-20260917-114911`
+- **1.15.2** (578): DIRECT, forwarding none `1.15.2-none-offline-20260917-150315`; modern forwarding `1.15.2-modern-offline-20260917-115342`
+- **1.16** (735): DIRECT, forwarding none `1.16-none-offline-20260917-150942`; BLOCKED: no Paper build for 1.16
+- **1.16.1** (736): DIRECT, forwarding none `1.16.1-none-offline-20260917-151614`; modern forwarding `1.16.1-modern-offline-20260917-115813`
+- **1.16.2** (751): DIRECT, forwarding none `1.16.2-none-offline-20260917-152247`; modern forwarding `1.16.2-modern-offline-20260917-120247`
+- **1.16.3** (753): DIRECT, forwarding none `1.16.3-none-offline-20260917-152924`; modern forwarding `1.16.3-modern-offline-20260917-120723`
+- **1.16.5** (754): DIRECT, forwarding none `1.16.5-none-online-20260917-132929`; modern forwarding `1.16.5-modern-online-20260917-133512`; the only modern-forwarding row with a Mojang-authenticated player: Paper 1.16.5 with velocity-support online-mode true accepted the forwarded profile (Authenticated=true, signed textures), answered in forwarding version 1
+- **1.17** (755): DIRECT, forwarding none `1.17-none-offline-20260917-153607`; modern forwarding `1.17-modern-offline-20260917-121157`
+- **1.17.1** (756): DIRECT, forwarding none `1.17.1-none-offline-20260917-154257`; modern forwarding `1.17.1-modern-offline-20260917-121650`
+- **1.18** (757): DIRECT, forwarding none `1.18-none-offline-20260917-154842`; modern forwarding `1.18-modern-offline-20260917-122020`
+- **1.18.2** (758): DIRECT, forwarding none `1.18.2-none-offline-20260917-155440`; modern forwarding `1.18.2-modern-offline-20260917-122404`
+- **1.19** (759): DIRECT, forwarding none `1.19-none-offline-20260917-160038`; modern forwarding `1.19-modern-offline-20260917-133848`
+- **1.19.2** (760): DIRECT, forwarding none `1.19.2-none-offline-20260917-160617`; modern forwarding `1.19.2-modern-offline-20260917-180325`
+- **1.19.3** (761): DIRECT, forwarding none `1.19.3-none-offline-20260917-175648`; modern forwarding `1.19.3-modern-offline-20260917-180805`
+- **1.19.4** (762): DIRECT, forwarding none `1.19.4-none-offline-20260917-161752`; modern forwarding `1.19.4-modern-offline-20260917-124204`
+- **1.20.1** (763): DIRECT, forwarding none `1.20.1-none-offline-20260917-162314`; modern forwarding `1.20.1-modern-offline-20260917-124525`
+- **1.20.2** (764): DIRECT, forwarding none `1.20.2-none-offline-20260917-162836`; modern forwarding `1.20.2-modern-offline-20260917-124845`; failed before its fix `1.20.2-none-offline-20260917-083845` (build fda9d91)
+- **1.20.4** (765): DIRECT, forwarding none `1.20.4-none-offline-20260917-163358`; modern forwarding `1.20.4-modern-offline-20260917-104133` (build e8665f3)
+- **1.20.5** (766): DIRECT, forwarding none `1.20.5-none-offline-20260917-163928`; modern forwarding `1.20.5-modern-offline-20260917-125205`
+- **1.21** (767): DIRECT, forwarding none `1.21-none-offline-20260917-164449`; modern forwarding `1.21-modern-offline-20260917-125525`
+- **1.21.3** (768): DIRECT, forwarding none `1.21.3-none-offline-20260917-165011`; modern forwarding `1.21.3-modern-offline-20260917-125847`; failed before its fix `1.21.3-none-offline-20260917-091931` (build 801890c)
+- **1.21.4** (769): DIRECT, forwarding none `1.21.4-none-offline-20260917-165534`; modern forwarding `1.21.4-modern-offline-20260917-130207`
+- **1.21.5** (770): DIRECT, forwarding none `1.21.5-none-offline-20260917-170055`; modern forwarding `1.21.5-modern-offline-20260917-130529`
+- **1.21.6** (771): DIRECT, forwarding none `1.21.6-none-offline-20260917-170618`; modern forwarding `1.21.6-modern-offline-20260917-130853`
+- **1.21.8** (772): DIRECT, forwarding none `1.21.8-none-offline-20260917-171139`; modern forwarding `1.21.8-modern-offline-20260917-131216`
+- **1.21.10** (773): DIRECT, forwarding none `1.21.10-none-offline-20260917-171700`; modern forwarding `1.21.10-modern-offline-20260917-131537`
+- **1.21.11** (774): DIRECT, forwarding none `1.21.11-none-offline-20260917-172221`; modern forwarding `1.21.11-modern-offline-20260917-131900`
+- **26.1** (775): DIRECT, forwarding none `26.1-none-offline-20260917-172743`; modern forwarding `26.1-modern-offline-20260917-132223`
+- **26.2** (776): DIRECT, forwarding none `26.2-none-offline-20260917-173304`; modern forwarding `26.2-modern-offline-20260917-132545`
+
+<!-- END DIRECT TABLES -->
+
+### Conduit defects the matrix found, and their fixes
+
+Each was reproduced with the real client first, traced to the first packet or state that went wrong,
+fixed, locked by a regression test that fails without the fix, and re-run on the same release.
+
+| Commit | Releases | What the real client showed | First wrong packet / state | Fix |
+|---|---|---|---|---|
+| `4d92d25` | 1.7.6, 1.8.9, 1.12.2 | disconnected on the first Tab press in chat | the client's Tab-Complete request read with 1.13's layout (text length taken as a transaction id) | read and answer Tab-Complete in the pre-1.13 layout; complete Conduit's own command names |
+| `f34833a` | 1.7.6, 1.8.9, 1.12.2 | `/server` switch dropped by both backends ("Bad packet id 21", "Bad packet id 4") | client settings replayed to the new backend while it was still decoding Login | hold the switched client until the new backend's Join Game |
+| `050ef9d` | 1.12.2 (through Via) | Tab turned `/server` into `/server /server` | a pending command-name completion merged into a later, unrelated Tab reply | merge names only into the reply to their own request |
+| `e261623` | 1.16, 1.16.1 | "Loading terrain" forever after `/server` | no Respawn pair after the second Join Game (the 1.16.2+ pair did not cover 1.16/1.16.1) | world-key Respawn pair from each release's own Join Game layout |
+| `5230ee8` | 1.17 - 1.20.1 | "Loading terrain" forever after `/server` | no Respawn pair for 1.17+; derived tables carried 1.16.5's Respawn id `0x39`, and 1.20.1 had none | the pair for every release 1.16 - 1.20.1; correct Respawn ids |
+| `29fb173` | 1.19 - 1.20.1 | refused at login ("Timed out" on 1.19) | Login Start's optional signature / UUID fields rejected as extra bytes | read and write each release's Login Start layout |
+| `fda9d91` | 1.19 - 1.19.4 | `/conduit` and `/server` answered by the backend: "Unknown or incomplete command" | Chat Command (no slash) not recognised; derived 1.19 tables inherited 1.13's legacy chat | 1.19 command chat capability; System Chat with the 1.19 chat type id |
+| `801890c` | 1.20.2 | "Connection Lost: DecoderException … MalformedJsonException at line 1 column 1" on `/conduit`; `/server` broke the same way | Conduit's System Chat reply written as network NBT (compound `0x0A`); 1.20.2 still reads a JSON string | NBT text only from 1.20.3 (`ProtocolEras.textComponentNbt`), for System Chat and both Disconnects |
+| `6e409ff` | 1.21.2, 1.21.3 | disconnected at once after joining: "player_info_update was larger than I expected, found 1 bytes extra" | Conduit's own ADD_PLAYER (id `0x40`, actions `0x9D`) carried the show-hat action and byte, which came with 1.21.4 | hat action only from 1.21.4 (`ProtocolEras.playerInfoHat`) |
+| `e8665f3` | 1.20.2+ with forwarding none | the player listed twice in the tab list, the copy with no latency | Conduit's own ADD_PLAYER used the Login Start UUID while the client's Login Success carried the backend's | the entry takes the UUID from the Login Success the client received |
+
+### Harness notes (not Conduit defects)
+
+- **1.14 - 1.16.5, 1.17** are joined through Direct Connect after the client has loaded: launched with
+  `--server`, 1.14 - 1.16.x crash tesselating their first chunk while resources still load (also with
+  no proxy), and 1.17 crashes rendering the connect screen.
+- **1.16.4 / 1.16.5** offline launches disable Multiplayer (account check); 1.16.5 was run with a real
+  Microsoft account launched by the Modrinth App.
+- **1.14 / 1.14.1**: the vanilla server runs RCON commands off the server thread, where block entities
+  are invisible (reproduced on a bare 1.14 server: `setblock`/`fill` chests come out empty and `data get
+  block` finds no block entity). The container check there places a chest item carrying the diamonds
+  from the client and counts the diamonds on the player afterwards.
+- **1.7.6**: no rotation in `/tp` and no position/entity queries over RCON. The player's saved rotation
+  aims the client (up on A for break/place, down on B for entity/container), in creative so the saved
+  position cannot kill it; the entity hit is evidenced by the server's Entity Status (hurt, then dead)
+  for the pig in the clientbound dump, after the client's Use Entity.
+- A 1.7.6 run where the player arrived dead on B (death screen took all input, so `/server direct` was
+  never typed) and a run whose break/place aim missed a single block were harness failures, fixed in
+  `set-rotation.py` and `probe-direct.ps1` and re-run.
+- **1.19.2 and 1.19.3 are joined through Direct Connect as well.** Launched with `--server`, those
+  clients spend 21 - 23 s in their datafixer pass ("4283 Datafixer optimizations took 21024
+  milliseconds") while the connect screen counts its own 30-second login budget, and abandon the join
+  before the world arrives — the backend logs the player in and then a plain "lost connection:
+  Disconnected" about 30 s after the client started connecting, with no error on either side and the
+  clientbound bytes already sent (319 KB on one run). Conduit is not in that decision: the same client
+  and the same build pass on the re-run, and 1.19 won the same race on the first try. Three runs were
+  redone this way (`1.19.3-none-offline-...-175648`, `1.19.2-modern-...-180325`,
+  `1.19.3-modern-...-180805`) and all three passed.
+- The 26.2 client and server log `Unable to locate English counter names in registry Perflib 009` and
+  a JNA `Win32Exception`, from oshi reading Windows performance counters on this machine. It has
+  nothing to do with the proxy; the run passed around it.
+
+### Forwarding and authentication
+
+- **none**: every DIRECT row. Backends in offline mode; Conduit completes the backend login itself
+  (Set Compression and Login Success consumed, see the login table) and the backend names the player
+  by its own offline UUID.
+- **modern** (Velocity `velocity:player_info`): backend A is Paper with Velocity support enabled and
+  the shared secret, backend B vanilla. A row passes only when the Paper log shows the player placed in
+  the world and Conduit's trace shows it answered Paper's forwarding request both at the join and on
+  `/server direct` back to Paper. Runs use `-Quick`: no gameplay probe or suggestion screens on A (those
+  are what the DIRECT row covers); chat, `/conduit`, `/server`, both switches, the hold and the
+  Disconnect remain. Paper 1.13 has no Velocity support (BLOCKED) and there is no Paper build for 1.16
+  (BLOCKED); before 1.13 there is no login plugin message, so modern forwarding does not apply (N/A).
+- **legacy** and **bungeeguard**: UNSUPPORTED BY CONDUIT for every release (startup refusal, above).
+- **Authentication**: every row but 1.16.5 runs with `[authentication] mode = "offline"` and a harness
+  client launched offline. **1.16.5 is the authenticated pair**, both DIRECT and modern, run with
+  `mode = "online"` and a real Microsoft account launched by the Modrinth App, because an offline
+  1.16.5 launch has Multiplayer disabled by the client's own account check. In those runs Conduit sent
+  the Encryption Request, enabled client encryption, accepted the Mojang session, and — for the modern
+  row — forwarded the authenticated profile to a Paper 1.16.5 with `velocity-support.online-mode: true`,
+  which accepted it (`Authenticated=true`, one signed `textures` property, answered in forwarding
+  version 1). The account's name, UUID and tokens are not recorded here, the run result stores the
+  player as "(launcher account)", and the harness never reads or stores the launcher's process
+  command line.
+
+### What the forwarding matrix found
+
+| Commit | Backends | What the backend did | Fix |
+|---|---|---|---|
+| `df43d90` | Paper 1.13.1 | sent `velocity:player_info` with no version byte; Conduit refused it ("malformed modern forwarding request payload") and the join fell back to the other server | an empty request is answered in forwarding version 1, the only version such a backend reads |
+| `bab7da1` | Paper 1.19 (asks 2), Paper 1.19.2 (asks 3) | Conduit answered in the requested version but without the chat signing key those versions carry, and the backend read the key's expiry past the end: "IndexOutOfBoundsException: readerIndex(65) + length(8) exceeds writerIndex(65)" | requests for 2 or 3 are answered in version 1, which those backends accept |
+
+`126c34f` came out of the same pass, from a warning rather than a failure: Conduit could not read a
+1.13.2 server's Declare Recipes packet (44886 bytes, 524 recipes) because the repair read every slot
+as 1.13's short id, and replaced it with an empty list, so every 1.13.2 client had an empty recipe
+book. The DIRECT checklist passed around it, because crafting itself is the server's business.
+
+### Harness changes made during the pass
+
+- Join detection reads `"<name>[/address] logged in with entity id"` rather than "joined the game":
+  Paper 1.13.x never prints the join message to its console, and a run that waited for it stopped a
+  Paper the player had already joined.
+- After the server's join line the run waits for the client's own `Loaded <n> advancements` before
+  driving keys: a 1.19.3 client that auto-connected mid-bootstrap sat on "Connecting to the
+  server..." and the first Escape cancelled the join.
+
 ## What the statuses mean
 
 Four independent axes. Collapsing them into one "supported" flag is how a proxy
@@ -147,8 +482,11 @@ registered independently.
 ## Current state, honestly
 
 The codec foundation covers 37 of the 38 distinct protocol numbers in the
-1.13-26.2 range. Translation coverage: **6 ordered pairs**. The matrix is still
-mostly `UNSUPPORTED`, and that is the accurate picture.
+1.13-26.2 range, plus three declared tables below it — 5 (1.7.6), 47 (1.8.9) and
+340 (1.12.2) — which exist so those clients can be carried DIRECT and through
+Via, and which the family enum still calls `LEGACY_OUT_OF_SCOPE`: 40 codecs in
+all. Translation coverage: **8 ordered pairs**. The matrix is still mostly
+`UNSUPPORTED`, and that is the accurate picture.
 
 **393 ↔ 765 is verified in BOTH directions with real clients and real servers.**
 See `docs/VALIDATION_393_765.md` / `work/real-client-validation/RESULTS-393-765-CROSS.md`.
@@ -263,11 +601,13 @@ Known gaps:
 | 393 | 404 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | Slot rematerialisation; recipes/advancements/trades dropped |
 | 404 | 393 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | Slot rematerialisation; recipes/advancements/trades dropped |
 | 393 | 765 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | core gameplay verified both ways; cosmetics incomplete |
+| 404 | 477 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | real 1.13.2 client held a real 1.14 server through a gameplay burst; block states, items and entity types resolved by name; recipes/tags/advancements dropped |
+| 477 | 404 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | scripted 1.14 probe sustained play on a real 1.13.2 server; entity metadata aligned against measured per-entity layouts across 86 entity types |
 | 765 | 393 | TRANSLATED | PARTIAL | TRANSLATED_VERIFIED | configuration synthesis; core gameplay verified |
-| 765 | 766 | TRANSLATED | PARTIAL | TRANSLATED_PARTIAL | control/login/config; JoinGame/registry unsupported |
-| 766 | 765 | TRANSLATED | PARTIAL | TRANSLATED_PARTIAL | control/login/config; JoinGame/registry unsupported |
+| 765 | 766 | TRANSLATED | PARTIAL | TRANSLATED_PARTIAL | control/login/config; JoinGame/player-info/registry unsupported |
+| 766 | 765 | TRANSLATED | PARTIAL | TRANSLATED_PARTIAL | control/login/config; JoinGame/player-info/registry unsupported |
 
-protocols with codecs: 37; matrix cells: 1369; direct: 37; translated: 6; unsupported: 1326
+protocols with codecs: 40; matrix cells: 1600; direct: 40; translated: 8; unsupported: 1552; of which partial: 39
 
 
 ## Test artifacts
@@ -283,7 +623,25 @@ jars themselves are excluded from Git.
 ```
 python tools/export_protocols.py      # release -> protocol, from ProtocolVersion.java
 python tools/packetids.py check       # cross-check declared tables vs published data
-python tools/gen_revisions.py         # regenerate ProtocolRevisions.java deltas
+python tools/gen_revisions.py         # regenerate ProtocolRevisions.java deltas -- DIFF IT, see below
 python tools/mcartifacts.py fetch     # mirror + verify Minecraft jars
 python tools/mcartifacts.py report    # regenerate artifacts/ARTIFACTS.md
 ```
+
+`gen_revisions.py` is **not** currently idempotent against the committed
+`ProtocolRevisions.java`, so run it only to compare: re-running it today rewrites
+the file 75 lines shorter. Two reasons, both checked on 2026-09-17.
+
+- `packetids.py`'s kind-to-published-name map does not resolve every kind
+  Conduit knows (`packetids.py check` prints them as `unresolved`), so the
+  regenerated deltas are missing mappings the committed table has — 25 of 1.14's
+  alone.
+- The Respawn ids for 1.16 through 1.20.1 were authored by hand in `5230ee8`
+  after a real client sat on "Loading terrain" after `/server`; the generator does
+  not know them, so regenerating reintroduces that bug.
+
+Regeneration would also *add* the correct Respawn ids for 1.21 through 26.1,
+which the derived tables inherit wrongly from 1.20.4 (`0x45`). Nothing reads them:
+`LegacyWorldReload` runs only for clients up to protocol 763, and no other path
+encodes Respawn for a modern client. Left as is rather than changed without a real
+client that can show the difference.
