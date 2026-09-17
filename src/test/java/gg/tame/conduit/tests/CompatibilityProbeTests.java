@@ -116,6 +116,52 @@ public final class CompatibilityProbeTests {
         "a client with a Configuration phase reloads its world through that phase instead");
     require(LegacyWorldReload.afterSwitch(legacy, new byte[] {0x7f}).isEmpty(),
         "a packet that is not Join Game produces nothing");
+
+    ProtocolDefinition v1122 = ProtocolDefinition.forVersion(340);
+    require(LegacyWorldReload.afterSwitch(v1122, joinGameWithDifficulty(v1122)).size() == 2,
+        "1.12.2 still uses the layout the reload writes, and keeps its pair");
+    // The exact Join Game a real 1.15.2 client was switched with, as Via translated it from 1.13.
+    // It was once answered with 0x3A (Resource Pack Send in 1.15) carrying the 1.13 layout.
+    ProtocolDefinition v1152 = ProtocolDefinition.forVersion(578);
+    byte[] joinGame1152 = java.util.HexFormat.of().parseHex("26000000a2010000000000000000000000000504666c6174400001");
+    var reload1152 = LegacyWorldReload.afterSwitch(v1152, joinGame1152);
+    require(reload1152.size() == 2, "a 1.15.2 client gets its pair");
+    for (byte[] respawn : reload1152) {
+      require(PlayPackets.packetId(respawn) == 0x3B, "1.15.2 Respawn is 0x3B, not Resource Pack Send's 0x3A");
+    }
+    var first = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(reload1152.get(0))));
+    require(first.readInt() != 0, "the first 1.15.2 respawn leaves the overworld");
+    require(first.readLong() == 0L, "then the hashed seed from Join Game");
+    require(first.readUnsignedByte() == 1, "then the gamemode");
+    require(gg.tame.conduit.protocol.MinecraftInput.string(first, 16).equals("flat"), "then the level type");
+    require(first.available() == 0, "and nothing after it");
+    require(dimensionOf(reload1152.get(1)) == 0, "the second 1.15.2 respawn arrives where Join Game said");
+
+    // 1.14: no difficulty, no seed.
+    ProtocolDefinition v114 = ProtocolDefinition.forVersion(477);
+    byte[] joinGame114 = PlayPackets.withId(0x25, java.util.HexFormat.of().parseHex("0000000701000000001404666c61740800"));
+    var reload114 = LegacyWorldReload.afterSwitch(v114, joinGame114);
+    require(reload114.size() == 2 && PlayPackets.packetId(reload114.get(0)) == 0x3A, "a 1.14 client gets its pair under 0x3A");
+    require(PlayPackets.body(reload114.get(1)).length == 4 + 1 + 5, "1.14 Respawn is dimension, gamemode, level type");
+
+    require(LegacyWorldReload.afterSwitch(ProtocolDefinition.forVersion(754), joinGame1152).isEmpty(),
+        "1.16 names dimensions from a registry and is not rebuilt this way");
+  }
+
+  /** Join Game for 1.9.1-1.13.2: entity, gamemode, int dimension, difficulty, max players, level type. */
+  private static byte[] joinGameWithDifficulty(ProtocolDefinition protocol) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(bytes);
+    out.writeInt(7);
+    out.writeByte(1);
+    out.writeInt(0);
+    out.writeByte(2);
+    out.writeByte(20);
+    MinecraftOutput.string(out, "default");
+    out.writeBoolean(false);
+    return PlayPackets.withId(
+        protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN),
+        bytes.toByteArray());
   }
 
   private static int dimensionOf(byte[] respawn) throws Exception {

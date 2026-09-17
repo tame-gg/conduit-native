@@ -28,6 +28,26 @@ public final class ProtocolEras {
   }
 
   /**
+   * Last protocol whose Join Game still carries the difficulty and whose Respawn is dimension,
+   * difficulty, gamemode, level type (1.13.2). 1.14 moved difficulty into its own packet and 1.15
+   * added a hashed seed to both, so a reader of the older layout takes seed bytes for fields.
+   */
+  public static final int JOIN_GAME_DIFFICULTY_MAX = 404;
+
+  /** Whether this protocol's Join Game and Respawn still use the layout that carries difficulty. */
+  public static boolean joinGameHasDifficulty(int protocol) {
+    return protocol <= JOIN_GAME_DIFFICULTY_MAX;
+  }
+
+  /** First protocol whose Join Game and Respawn carry a hashed world seed (1.15). */
+  public static final int HASHED_SEED_FROM = 573;
+
+  /** Whether this protocol's Join Game and Respawn carry a hashed world seed. */
+  public static boolean hashedSeed(int protocol) {
+    return protocol >= HASHED_SEED_FROM;
+  }
+
+  /**
    * First protocol whose clientbound Chat Message ends with a position byte (1.8). A 1.7 client
    * reads the JSON and nothing else, and drops the connection over the one byte left behind.
    */

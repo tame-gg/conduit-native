@@ -44,6 +44,10 @@ public final class LegacyWorldReload {
    */
   public static List<byte[]> afterSwitch(ProtocolDefinition protocol, byte[] joinGame) {
     if (protocol.hasConfiguration()) return List.of();
+    int number = protocol.version().number();
+    // Only the layouts below are read and written. 1.16 names its dimensions from a registry, and
+    // nothing has shown a 1.16 client needing this, so it gets nothing rather than a guess.
+    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number)) return List.of();
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN)) {
       return List.of();
     }
@@ -70,16 +74,22 @@ public final class LegacyWorldReload {
     }
   }
 
-  private record JoinGameWorld(int dimension, int difficulty, int gamemode, String levelType) {}
+  private record JoinGameWorld(int dimension, int difficulty, int gamemode, String levelType, long hashedSeed) {}
 
   /**
    * Reads the fields Respawn needs out of Join Game.
    *
-   * <p>The layout is stable across the releases this applies to except for one field: the dimension
-   * is a signed byte until 1.9.1 widened it to an int. {@link ProtocolEras} carries that boundary
-   * so the decision is not a version comparison written out here.
+   * <p>Up to 1.13.2 the layout is stable except for one field: the dimension is a signed byte until
+   * 1.9.1 widened it to an int. 1.14 and 1.15 moved difficulty out and 1.15 added a hashed seed;
+   * those are read with the Join Game codec that already knows them. A 1.15.2 client was once sent
+   * this pair built from the older layout -- seed bytes read as difficulty, under the 1.14 Respawn
+   * id that 1.15 gives to Resource Pack Send -- and disconnected reading a URL length of 268435455.
    */
   private static JoinGameWorld readWorld(ProtocolDefinition protocol, byte[] packet) throws IOException {
+    if (ProtocolEras.joinGame114(protocol.version().number())) {
+      var join = gg.tame.conduit.protocol.codec.JoinGameCodec.decode(protocol, packet);
+      return new JoinGameWorld(join.dimensionId(), 0, join.gameMode() & 0x07, join.levelType(), join.hashedSeed());
+    }
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);              // packet id
       input.readInt();                           // entity id
@@ -90,16 +100,18 @@ public final class LegacyWorldReload {
       int difficulty = input.readUnsignedByte();
       input.readUnsignedByte();                  // max players
       String levelType = MinecraftInput.string(input, 64);
-      return new JoinGameWorld(dimension, difficulty, gamemode, levelType);
+      return new JoinGameWorld(dimension, difficulty, gamemode, levelType, 0L);
     }
   }
 
-  /** Respawn has the same four fields on every release that has no Configuration phase. */
+  /** Respawn: dimension, then difficulty up to 1.13.2, the hashed seed from 1.15, gamemode, level type. */
   private static byte[] respawn(ProtocolDefinition protocol, int dimension, JoinGameWorld world) throws IOException {
+    int number = protocol.version().number();
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(bytes);
     out.writeInt(dimension);
-    out.writeByte(world.difficulty());
+    if (ProtocolEras.joinGameHasDifficulty(number)) out.writeByte(world.difficulty());
+    else if (ProtocolEras.hashedSeed(number)) out.writeLong(world.hashedSeed());
     out.writeByte(world.gamemode());
     MinecraftOutput.string(out, world.levelType());
     return PlayPackets.withId(

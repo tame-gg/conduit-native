@@ -177,7 +177,7 @@ public final class ProtocolRevisions {
       List.of(
 ));
 
-  /** 1.15 (protocol 573), derived from 1.14.4 (protocol 498): 37 changed mappings. */
+  /** 1.15 (protocol 573), derived from 1.14.4 (protocol 498): 38 changed mappings. */
   public static final ProtocolRevision V1_15 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_15,
       498,
@@ -204,6 +204,7 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_POSITION, 0x36),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE, 0x19),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_SEND, 0x3A),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN, 0x3B),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_CONTENT, 0x15),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_SLOT, 0x17),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA, 0x44),
@@ -243,7 +244,7 @@ public final class ProtocolRevisions {
       List.of(
 ));
 
-  /** 1.16 (protocol 735), derived from 1.15.2 (protocol 578): 42 changed mappings. */
+  /** 1.16 (protocol 735), derived from 1.15.2 (protocol 578): 43 changed mappings. */
   public static final ProtocolRevision V1_16 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_16,
       578,
@@ -270,6 +271,7 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_POSITION, 0x35),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE, 0x18),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_SEND, 0x39),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN, 0x3A),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_CONTENT, 0x14),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_SLOT, 0x16),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SPAWN_POSITION, 0x42),
