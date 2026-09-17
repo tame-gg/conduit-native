@@ -299,7 +299,7 @@ public final class JoinGameCodec {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
       String reason;
-      if (protocol.hasConfiguration() && state != ConnectionState.LOGIN) {
+      if (ProtocolEras.textComponentNbt(protocol.version().number()) && state != ConnectionState.LOGIN) {
         // Prefer plain extraction; skip NBT body for safety when present.
         reason = "Disconnected";
         if (input.available() > 0) {
@@ -325,7 +325,7 @@ public final class JoinGameCodec {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(packet.state(), packet.direction(), packet.kind()));
-      if (protocol.hasConfiguration() && packet.state() != ConnectionState.LOGIN) {
+      if (ProtocolEras.textComponentNbt(protocol.version().number()) && packet.state() != ConnectionState.LOGIN) {
         NetworkNbt.stringComponent(output, packet.reason());
       } else {
         String json = "{\"text\":\"" + packet.reason().replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";

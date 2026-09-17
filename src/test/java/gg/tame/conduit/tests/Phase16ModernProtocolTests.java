@@ -53,6 +53,7 @@ public final class Phase16ModernProtocolTests {
     differenceDatabase();
     semanticFoundations();
     systemChat113();
+    textIsJsonUntil1203();
     System.out.println("Phase16ModernProtocolTests passed.");
   }
 
@@ -298,6 +299,28 @@ public final class Phase16ModernProtocolTests {
     require(PlayPackets.packetId(packet) == 0x0E, "chat id");
     byte[] body = PlayPackets.body(packet);
     require(body[body.length - 1] == 1, "system position byte");
+  }
+
+  /**
+   * 1.20.2 has a Configuration phase but still sends text as a JSON string; NBT text came with 1.20.3.
+   * A real 1.20.2 client read Conduit's NBT reply to /conduit as a string and lost the connection.
+   */
+  private static void textIsJsonUntil1203() throws Exception {
+    ProtocolDefinition v1202 = ProtocolDefinition.forVersion(764);
+    require(jsonText(PlayPackets.systemChat(v1202, "hello")).contains("hello"), "1.20.2 system chat is a JSON string");
+    require(jsonText(PlayPackets.configurationDisconnect(v1202, "bye")).contains("bye"), "1.20.2 configuration disconnect is a JSON string");
+    byte[] kick = gg.tame.conduit.protocol.codec.JoinGameCodec.encodeDisconnect(v1202,
+        new gg.tame.conduit.protocol.semantic.DisconnectPacket(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT, "bye"));
+    require(jsonText(kick).contains("bye"), "1.20.2 play disconnect is a JSON string");
+    require(PlayPackets.body(PlayPackets.systemChat(ProtocolDefinition.forVersion(765), "hello"))[0] == 10, "1.20.3 system chat is an NBT compound");
+  }
+
+  private static String jsonText(byte[] packet) throws Exception {
+    try (java.io.DataInputStream in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(packet)))) {
+      String json = gg.tame.conduit.protocol.MinecraftInput.string(in, 262144);
+      require(json.startsWith("{"), "expected JSON text, got " + json);
+      return json;
+    }
   }
 
   private static void require(boolean condition, String message) {

@@ -42,6 +42,18 @@ public final class ProtocolEras {
   /** First protocol whose Join Game and Respawn carry a hashed world seed (1.15). */
   public static final int HASHED_SEED_FROM = 573;
 
+  /**
+   * First protocol whose play and configuration text components are network NBT rather than JSON
+   * strings (1.20.3). The Configuration phase is not the boundary: 1.20.2 has one, and a real 1.20.2
+   * client read Conduit's NBT reply to /conduit as a JSON string and lost the connection.
+   */
+  public static final int TEXT_COMPONENT_NBT_FROM = 765;
+
+  /** Whether this protocol sends play and configuration text components as network NBT. */
+  public static boolean textComponentNbt(int protocol) {
+    return protocol >= TEXT_COMPONENT_NBT_FROM;
+  }
+
   /** The one protocol whose System Chat names a chat type by registry id instead of an action-bar flag (1.19). */
   public static final int SYSTEM_CHAT_TYPE_ID = 759;
 

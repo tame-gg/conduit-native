@@ -30,7 +30,7 @@ public final class PlayPackets {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT));
-      if (protocol.hasConfiguration()) NetworkNbt.stringComponent(output, message);
+      if (ProtocolEras.textComponentNbt(protocol.version().number())) NetworkNbt.stringComponent(output, message);
       else MinecraftOutput.string(output, "{\"text\":\"" + message.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
     }
     return bytes.toByteArray();
@@ -50,7 +50,7 @@ public final class PlayPackets {
           output.writeLong(0L);
         }
       } else {
-        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
+        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, ProtocolEras.textComponentNbt(protocol.version().number()));
         // 1.19 names the message's chat type by registry id, where 1 is "system"; from 1.19.1 the
         // field is a boolean that only says whether it belongs on the action bar.
         if (ProtocolEras.systemChatTypeId(protocol.version().number())) MinecraftOutput.varInt(output, 1);
