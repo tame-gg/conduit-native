@@ -97,7 +97,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    */
   private volatile boolean conduitOwnsReconfiguration;
   /**
-   * Set while a switched session's translator has not yet been shown the new backend's Join Game.
+   * Holds while a switched session's client has not yet been written the new backend's Join Game.
    *
    * <p>Only a client with no Configuration phase can be in this window: one that has a phase is
    * parked in it and sends nothing from Play meanwhile. A 1.8 client is never parked anywhere. It
@@ -106,7 +106,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * no entity for the player and no dimension to place them in, and rewriting a position against
    * that is not a translation error but a crash inside the rewriter.
    */
-  private volatile boolean awaitingBackendJoinGame;
+  private final SwitchJoinGate awaitingBackendJoinGame;
   private volatile boolean commandsDeclared;
   private static final int MAX_DEFERRED_PLAY = 512;
   /** Set once Conduit has synthesised finish_configuration for a non-configuration backend. */
@@ -130,6 +130,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, gg.tame.conduit.runtime.ConduitRuntime runtime,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
     this.configuration = configuration; this.client = client; this.protocol = protocol; this.clientState = clientState;
+    this.awaitingBackendJoinGame = new SwitchJoinGate(protocol);
     this.clientProtocol = protocol.version().number();
     this.backendProtocol = this.clientProtocol;
     this.backendDefinition = protocol;
@@ -687,7 +688,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           }
           continue;
         }
-        if (awaitingBackendJoinGame) {
+        if (awaitingBackendJoinGame.holding()) {
           // Dropped rather than queued, deliberately. What a client sends in this window is its
           // position and look for a world it is about to be moved out of, and the new backend will
           // place it itself; replaying any of it afterwards would fight that. The client resends
@@ -911,7 +912,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           close();
           return;
         }
-        if (translated == null) { flushTranslatorExtras(current); continue; }
+        if (translated == null) {
+          flushTranslatorExtras(current);
+          // Via can cancel the backend's Join Game and emit the client's as an extra instead.
+          resumeAfterSwitchedJoinGame(current);
+          continue;
+        }
         if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
         // Everything below this point compensates for gaps in Conduit's own translators: a brand
         // the client never gets told, a command tree that has to be merged, a Configuration phase
@@ -921,22 +927,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // already made is what a real 1.13 client drops the connection over. When Via is the
         // engine its output goes to the client as it stands.
         if (viaEngine()) {
-          boolean joinGameArrived = awaitingBackendJoinGame && isPlayLogin(translated);
           writeClient(translated, true);
           flushTranslatorExtras(current);
-          if (joinGameArrived) {
-            awaitingBackendJoinGame = false;
-            ProtocolTrace.note("switched translator has the new backend's Join Game; client packets resume");
-            // A client with no Configuration phase has no transition left that rebuilds its world,
-            // so a second Join Game leaves it holding the previous backend's one. These move it.
-            for (byte[] reload : gg.tame.conduit.protocol.LegacyWorldReload.afterSwitch(protocol, translated)) {
-              writeClient(reload, true);
-            }
-            // Held back with them, and for the same reason: the replay is a client packet Conduit
-            // sends on the player's behalf, and it goes through the same translator that had no
-            // world to translate it against until this packet arrived.
-            replayClientInformation(current, ConnectionState.PLAY);
-          }
+          resumeAfterSwitchedJoinGame(current);
           if (isPlayDisconnect(translated)) { close(); return; }
           continue;
         }
@@ -975,6 +968,21 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         handleBackendLoss(current);
       }
     }
+  }
+  /** Ends a switched client's hold once the new backend's Join Game has been written to it. */
+  private void resumeAfterSwitchedJoinGame(BackendConnection current) throws IOException {
+    byte[] joinGame = awaitingBackendJoinGame.takeJoinGame();
+    if (joinGame == null) return;
+    ProtocolTrace.note("switched translator has the new backend's Join Game; client packets resume");
+    // A client with no Configuration phase has no transition left that rebuilds its world,
+    // so a second Join Game leaves it holding the previous backend's one. These move it.
+    for (byte[] reload : gg.tame.conduit.protocol.LegacyWorldReload.afterSwitch(protocol, joinGame)) {
+      writeClient(reload, true);
+    }
+    // Held back with them, and for the same reason: the replay is a client packet Conduit
+    // sends on the player's behalf, and it goes through the same translator that had no
+    // world to translate it against until this packet arrived.
+    replayClientInformation(current, ConnectionState.PLAY);
   }
   private ConnectionState brandState(ConnectionState backendState) {
     if (backendState == ConnectionState.PLAY) return ConnectionState.PLAY;
@@ -1285,7 +1293,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // A client with a Configuration phase is held in it until the phase finishes, so its Play
       // packets cannot race the new backend's Join Game. One without a phase has nothing holding
       // it, and this is what holds it instead.
-      awaitingBackendJoinGame = viaEngine() && !protocol.hasConfiguration();
+      if (viaEngine() && !protocol.hasConfiguration()) awaitingBackendJoinGame.hold();
+      else awaitingBackendJoinGame.release();
       synchronized (lock) {
         backend = next;
         switchingTarget = null;
@@ -1308,7 +1317,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
       // Not replayed yet when the translator is still waiting for the new backend's Join Game; the
       // read loop does it as soon as that arrives.
-      if (!awaitingBackendJoinGame) replayClientInformation(backend, ConnectionState.PLAY);
+      if (!awaitingBackendJoinGame.holding()) replayClientInformation(backend, ConnectionState.PLAY);
       if (previous != null) previous.close();
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {
@@ -1316,7 +1325,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchEvent(this, sourceView, targetView));
       }
     } catch (Exception exception) {
-      awaitingBackendJoinGame = false;
+      awaitingBackendJoinGame.release();
       conduitOwnsReconfiguration = false;
       switchingTarget = null;
       switchQueue.clear();
@@ -1472,6 +1481,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     else {
       client.writeUnflushed(outbound);
     }
+    awaitingBackendJoinGame.written(outbound);
   }
   @Override public String username() { return profile().username(); }
   @Override public boolean hasPermission(String permission) {
