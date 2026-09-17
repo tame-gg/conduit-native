@@ -44,7 +44,9 @@ reaches.
 | 1.7.6 (5) | 1.20.4 → `/server` 1.13 → `/server` 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-224844`: both switches completed; legacy world reload put the client in the 1.20.4 world; connected 158 s after returning; 6/6 Keep Alives answered; chat reached the server and its echo rendered on the client; 140 position packets forwarded; a block broken and answered with a Block Update; 0 translation failures. Needed `630d7eb` (Conduit's own chat carried the 1.8 position byte; the client disconnected with "found 1 bytes extra whilst reading packet 2") |
 | 1.8.9 (47) | 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-221648`: joined, world; connected 125 s; 8/8 Keep Alives answered; 121 position packets and 3 digs forwarded; chat reached the server; 0 translation failures |
 | 1.8.9 (47) | 1.20.4 → `/server` 1.13 → `/server` 1.20.4 | REAL-CLIENT VERIFIED | runs `20260916-221148` and `20260916-223226`: connected 105 s after returning; 7 Keep Alives answered; chat reached the server at +37 s and +93 s; movement and digging forwarded; 0 translation failures. Needed `ac59183` (the post-switch hold never ended when Via delivered Join Game as an extra; the server timed the player out after 30 s) |
-| 1.12.2 (340) | 1.20.4 | REAL-CLIENT PARTIAL | joined, chat round-tripped; nothing else observed |
+| 1.12.2 (340) | 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-230702`: joined 23:07:32, client-initiated Disconnect 23:12:08, clean on both ends; server-confirmed over RCON: block broken, block placed, pig hit (10 → 9 HP), five diamonds moved from a chest into hotbar slot 9 (2 Click Window, 1 Close Window), player walked; 18/18 Keep Alives answered; 218 chunks and 487 entity spawns delivered; chat reached the server; 0 translation failures; client log clean |
+| 1.12.2 (340) | 1.20.4 → `/server` 1.13 → `/server` 1.20.4 | REAL-CLIENT VERIFIED | run `20260916-231228`: back on 1.20.4 at 23:14:25, clean Disconnect 23:16:40 (135 s); the same server-confirmed break, place, entity, container and walk checks all passed after the return; 8/8 Keep Alives; two chat lines reached the server; 0 translation failures in either session |
+| 1.12.2 (340) | 1.20.4 → 1.13 → 1.20.4 → 1.13 (return to the legacy backend) | REAL-CLIENT VERIFIED | run `20260916-231735`: on 1.13 from 23:19:49, clean Disconnect 23:22:17 (148 s); break, place, entity, container and walk server-confirmed on 1.13; 10/10 Keep Alives; two chat lines reached the server; 0 translation failures in all four sessions; Conduit's own "Connecting to/Connected to" messages rendered on the client |
 | 1.20.4 (765) | 1.13 ↔ 1.13.2, six switches | REAL-CLIENT VERIFIED | switching re-run after `ac59183`, 6/6, no timeouts |
 | 1.20.4 (765) | 1.21.8 | REAL-CLIENT PARTIAL | joined, chat, combat |
 | 1.20.4 (765) | 26.2 | REAL-CLIENT PARTIAL | joined, chat |
@@ -62,6 +64,13 @@ The source of truth is the three logs together: the backend's own log (joins,
 received against client packets handed to the translator, Keep Alive both ways,
 translation failures), and the client (its log, and its screen when it
 disconnects, which is where the 1.7.6 decoder error was only visible).
+
+From 1.12.2 on, gameplay is checked with `gameplay-probe.ps1`, which arranges a
+test pad over RCON, drives the real client at known geometry, and reads each
+result back from the server (`execute if block`, entity health, chest and player
+inventory) rather than from a screenshot. `session-evidence.sh` then counts one
+backend session of the proxy trace by number. A probe step whose server-side
+setup failed is a harness failure, not a client result, and is reported as such.
 
 Two harness artefacts to read around: every run kills all `java.exe` first, so
 the previous proxy logs a fallback "switch" as its backends die; read a run's
