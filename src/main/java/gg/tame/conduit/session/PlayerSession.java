@@ -769,6 +769,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
       PlayPackets.TabRequest request = PlayPackets.tabRequest(protocol, packet);
+      // Only this request's reply may take Conduit's names. A reply can fail to come at all -- Via
+      // dropped a 1.20.4 backend's empty one for a real 1.12.2 client -- and a name left pending then
+      // went into the next reply, Conduit's own list of servers, which Tab turned into "/server /server".
+      legacyCommandCompletion = null;
       var command = gg.tame.conduit.command.ParsedCommand.parseKeepEmpty(request.text());
       if (request.text().startsWith("/") && commands.get(command.name()).isPresent()) {
         List<String> completions = commands.tabComplete(this, request.text());

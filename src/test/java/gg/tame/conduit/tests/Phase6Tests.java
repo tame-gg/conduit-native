@@ -151,8 +151,11 @@ public final class Phase6Tests {
           MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
           while (chat.get() == null) {
             byte[] packet = MinecraftFrames.read(socket.getInputStream(), 4096);
-            // A command name reaches the backend, which answers with the commands it knows.
-            if (PlayPackets.packetId(packet) == 0x14) MinecraftFrames.write(socket.getOutputStream(), legacyPacketWithCount(0x3A, "/seed"));
+            // A command name reaches the backend, which answers with the commands it knows -- except
+            // for "/g", whose reply never comes, as when a translator drops an empty one.
+            if (PlayPackets.packetId(packet) == 0x14 && !new String(packet, java.nio.charset.StandardCharsets.UTF_8).contains("/g")) {
+              MinecraftFrames.write(socket.getOutputStream(), legacyPacketWithCount(0x3A, "/seed"));
+            }
             if (PlayPackets.packetId(packet) != 0x01) continue;
             try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(packet))) {
               MinecraftInput.varInt(input);
@@ -178,6 +181,11 @@ public final class Phase6Tests {
           require(java.util.Arrays.equals(readUntilPacket(client, 0x3A), legacyPacketWithCount(0x3A, "lobby")), "1.8 reply lists servers");
           MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/server"));
           require(java.util.Arrays.equals(readUntilPacket(client, 0x3A), legacyPacketWithCount(0x3A, "/server")), "command name keeps its slash");
+          // A request whose reply never arrives must leave nothing behind for the next reply: Conduit has
+          // /glist and /gkick, which must not turn up in its own list of servers.
+          MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/g"));
+          MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/server "));
+          require(java.util.Arrays.equals(readUntilPacket(client, 0x3A), legacyPacketWithCount(0x3A, "lobby")), "no stale names in Conduit's own reply");
           // A partial name is the backend's to answer; Conduit's own commands are added to its reply.
           MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/se"));
           List<String> names = PlayPackets.legacyTabMatches(readUntilPacket(client, 0x3A));
