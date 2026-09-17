@@ -96,6 +96,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * handed to a translator that has already put its half of the connection into Configuration.
    */
   private volatile boolean conduitOwnsReconfiguration;
+  /**
+   * Set while a switched session's translator has not yet been shown the new backend's Join Game.
+   *
+   * <p>Only a client with no Configuration phase can be in this window: one that has a phase is
+   * parked in it and sends nothing from Play meanwhile. A 1.8 client is never parked anywhere. It
+   * keeps sending movement across the whole switch, and the translator those packets now go to was
+   * built moments ago and has been told nothing about the world the client is standing in -- it has
+   * no entity for the player and no dimension to place them in, and rewriting a position against
+   * that is not a translation error but a crash inside the rewriter.
+   */
+  private volatile boolean awaitingBackendJoinGame;
   private volatile boolean commandsDeclared;
   private static final int MAX_DEFERRED_PLAY = 512;
   /** Set once Conduit has synthesised finish_configuration for a non-configuration backend. */
@@ -266,7 +277,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
 
   /** Works out the translation for {@code server} without disturbing the one already in use. */
   private Translation buildTranslation(BackendServer server) {
-    int advertised = selector.advertisement(server.name()).map(ad -> ad.protocol()).orElse(clientProtocol);
+    int advertised = selector.resolveProtocol(server.name()).orElse(clientProtocol);
     TranslationSupport support = ProtocolCompatibility.between(clientProtocol, advertised);
     if (support == TranslationSupport.TRANSLATED) {
       ProtocolDefinition definition = ProtocolDefinition.hasCodec(advertised)
@@ -537,15 +548,31 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private void armViaConfigurationBridge(ProtocolTranslator translator, ProtocolDefinition backendDefinition,
                                          byte[] backendPacket) throws IOException {
     if (!(translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator via)) return;
-    if (!protocol.hasConfiguration()) return;
-    if (!protocol.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED)) return;
-    // A backend with its own Configuration phase supplies that phase itself and needs no bridge
-    // built from its Join Game; arming one would only move Via off the state that relay runs in.
-    if (backendDefinition.hasConfiguration()) return;
     if (!backendDefinition.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT,
         PlayPackets.packetId(backendPacket), PacketKind.LOGIN_SUCCESS)) {
       return;
     }
+    if (!protocol.hasConfiguration()) {
+      // No Configuration phase on this client, so there is no bridge to arm and no packet left to
+      // arm it with: the Join Game that moved this client into Play belongs to the backend it is
+      // leaving. The state is handed over instead, which is safe precisely because the phase this
+      // guard excludes is the one that must not be skipped.
+      via.adoptClientState(clientState.state());
+      // The backend half needs the same treatment and for the same reason. A backend with no
+      // Configuration phase is in Play the moment this Login Success is written, and the packet
+      // that says so is the one Conduit is holding: Via would have moved itself had it been
+      // forwarded. Left in Login, Via reads the backend's Join Game in a state it has no Join Game
+      // in and hands it to the client unchanged -- a 1.13 packet with a 1.13 id, to a 1.8 client.
+      if (!backendDefinition.hasConfiguration()) {
+        via.backendEntered(ConnectionState.PLAY);
+      }
+      ProtocolTrace.note("switch adopted both states; via state " + via.stateDescription());
+      return;
+    }
+    if (!protocol.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED)) return;
+    // A backend with its own Configuration phase supplies that phase itself and needs no bridge
+    // built from its Join Game; arming one would only move Via off the state that relay runs in.
+    if (backendDefinition.hasConfiguration()) return;
     synchronized (translatorLock) {
       via.backendToClient(ConnectionState.LOGIN, backendPacket);
       via.drainToClient();
@@ -643,6 +670,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           }
           continue;
         }
+        if (awaitingBackendJoinGame) {
+          // Dropped rather than queued, deliberately. What a client sends in this window is its
+          // position and look for a world it is about to be moved out of, and the new backend will
+          // place it itself; replaying any of it afterwards would fight that. The client resends
+          // both within a tick of arriving.
+          continue;
+        }
         BackendConnection target = switchingTarget != null ? switchingTarget : backend;
         if (target != null) {
           if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY, target)) {
@@ -662,6 +696,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         && protocol.is(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.LOGIN_ACKNOWLEDGED)
         && packet.length <= 2) {
       expectClientLoginAck = false;
+      // Withheld from the backend, because Conduit acknowledged that login itself and a second
+      // acknowledgement is a stray packet. Shown to the translator anyway: this is the packet it
+      // learns the client has left Login from, and it has no other source for that. Without it
+      // the translator keeps reading the client as if it were still logging in, and the first
+      // Configuration packet the client sends is transformed in the wrong state -- a 1.21 client's
+      // config plugin message carries id 0x02, which is Finish Configuration on a 1.20.4 backend,
+      // and the backend closes the connection over the 24 bytes that followed it.
+      feedTranslatorClientLoginAck(packet);
       return true;
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
@@ -738,6 +780,28 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     return false;
   }
+  /**
+   * Advances the translator's view of the client past Login, without putting anything on a wire.
+   *
+   * <p>The translator moves the client between states by watching the packets that cause those
+   * transitions. Conduit consumes this one, so the transition has to be handed over explicitly,
+   * and this is the only place it can be: the packet exists here and nowhere else.
+   */
+  private void feedTranslatorClientLoginAck(byte[] packet) {
+    if (!(translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator via)) return;
+    synchronized (translatorLock) {
+      try {
+        via.clientToBackend(ConnectionState.LOGIN, packet);
+      } catch (RuntimeException failure) {
+        ProtocolTrace.note("translator rejected the client's login acknowledgement: " + failure);
+        return;
+      }
+      via.drainToClient();
+      via.drainToBackend();
+    }
+    ProtocolTrace.note("client login acknowledged; via state " + via.stateDescription());
+  }
+
   /** Caches Client Information from either state; the packet is still forwarded normally. */
   private void rememberClientInformation(byte[] packet, int id) throws IOException {
     ConnectionState state = clientState.state();
@@ -840,8 +904,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // already made is what a real 1.13 client drops the connection over. When Via is the
         // engine its output goes to the client as it stands.
         if (viaEngine()) {
+          boolean joinGameArrived = awaitingBackendJoinGame && isPlayLogin(translated);
           writeClient(translated, true);
           flushTranslatorExtras(current);
+          if (joinGameArrived) {
+            awaitingBackendJoinGame = false;
+            ProtocolTrace.note("switched translator has the new backend's Join Game; client packets resume");
+            // Held back with them, and for the same reason: the replay is a client packet Conduit
+            // sends on the player's behalf, and it goes through the same translator that had no
+            // world to translate it against until this packet arrived.
+            replayClientInformation(current, ConnectionState.PLAY);
+          }
           if (isPlayDisconnect(translated)) { close(); return; }
           continue;
         }
@@ -1187,6 +1260,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         }
       }
       commandsDeclared = false;
+      // A client with a Configuration phase is held in it until the phase finishes, so its Play
+      // packets cannot race the new backend's Join Game. One without a phase has nothing holding
+      // it, and this is what holds it instead.
+      awaitingBackendJoinGame = viaEngine() && !protocol.hasConfiguration();
       synchronized (lock) {
         backend = next;
         switchingTarget = null;
@@ -1207,7 +1284,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           conduitOwnsReconfiguration = false;
         }
       }
-      replayClientInformation(backend, ConnectionState.PLAY);
+      // Not replayed yet when the translator is still waiting for the new backend's Join Game; the
+      // read loop does it as soon as that arrives.
+      if (!awaitingBackendJoinGame) replayClientInformation(backend, ConnectionState.PLAY);
       if (previous != null) previous.close();
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {
@@ -1215,6 +1294,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchEvent(this, sourceView, targetView));
       }
     } catch (Exception exception) {
+      awaitingBackendJoinGame = false;
       conduitOwnsReconfiguration = false;
       switchingTarget = null;
       switchQueue.clear();

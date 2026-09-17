@@ -24,6 +24,9 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Selects configured initial and fallback backends without transport coupling. */
 public final class BackendSelector {
+  /** One status ping, on the connect path; short enough not to stall a join for a dead backend. */
+  private static final int PROTOCOL_PROBE_TIMEOUT_MS = 1_500;
+
   private final ConduitConfiguration configuration;
   private final ServerRegistry registry;
   private final BackendHealthService health;
@@ -94,6 +97,36 @@ public final class BackendSelector {
   public Optional<BackendStatusProbe.Advertisement> advertisement(String name) {
     if (health != null) return health.advertisement(name);
     return Optional.ofNullable(advertisements.get(ServerRegistry.normalize(name)));
+  }
+
+  /**
+   * The backend's advertised protocol, probing for it now if nothing has been recorded yet.
+   *
+   * <p>Choosing a translator needs this answer at the moment a player connects, and the periodic
+   * health probe only has it once it has run. Callers used to treat "not known yet" as "the same
+   * protocol as the client", which is not a fallback but a guess, and a wrong one is invisible: the
+   * session is set up as DIRECT and Conduit forwards one version's packets to a server speaking
+   * another. A 26.2 client reached a 1.21.8 backend that way, with no translator in the path and
+   * nothing in the log to say so.
+   *
+   * <p>So an unknown backend is asked directly. It is one status ping against a server the player
+   * is about to connect to anyway, it is cached for the next caller, and only a backend that will
+   * not answer at all is left to the caller's own fallback.
+   */
+  public Optional<Integer> resolveProtocol(String name) {
+    Optional<BackendStatusProbe.Advertisement> known = advertisement(name);
+    if (known.isPresent()) return known.map(BackendStatusProbe.Advertisement::protocol);
+    // With no translation engine the answer cannot change what happens next: differing protocols
+    // are UNSUPPORTED and forwarded as bytes either way. So the ping is spent only where it buys
+    // something, and a deployment that has turned translation off keeps exactly one connection
+    // per join.
+    if (!gg.tame.conduit.viaversion.ConduitViaBootstrap.settings().enabled()) return Optional.empty();
+    Optional<BackendServer> server = registry.get(name);
+    if (server.isEmpty()) return Optional.empty();
+    Optional<BackendStatusProbe.Advertisement> probed =
+        BackendStatusProbe.probe(server.get().address(), PROTOCOL_PROBE_TIMEOUT_MS);
+    probed.ifPresent(ad -> advertisements.put(ServerRegistry.normalize(name), ad));
+    return probed.map(BackendStatusProbe.Advertisement::protocol);
   }
 
   public ServerStatus status(String name) {

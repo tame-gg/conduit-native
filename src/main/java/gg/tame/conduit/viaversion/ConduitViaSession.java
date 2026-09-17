@@ -210,6 +210,27 @@ public final class ConduitViaSession implements AutoCloseable {
     connection.getProtocolInfo().setServerState(ConduitViaStates.toVia(state));
   }
 
+  /**
+   * Tells Via the client half moved on without it.
+   *
+   * <p>The mirror of {@link #setServerState}, and needed for the same reason: Via learns a state
+   * from the packet that causes the transition, and on a server switch some of those packets do not
+   * exist. A client with no Configuration phase leaves Login when it is handed a Join Game, and on a
+   * switch it was handed one by the <em>previous</em> backend, through a session that has since been
+   * replaced. Nothing the new session will ever see says the client is in Play, so it keeps
+   * transforming the client's Play packets as if they were Login and passes them through with the
+   * client's own ids -- which is how a 1.8 client's Client Information reached a 1.13 backend as
+   * id 0x15, a play id that release does not have.
+   *
+   * <p>This is only correct where there is no Configuration phase to build. A client that has one
+   * must reach Configuration through the login exchange Via watches for, because that exchange is
+   * also what arms the phase; being told the state instead skips the arming and produces Play
+   * packets in a Configuration phase.
+   */
+  public void adoptClientState(ConnectionState state) {
+    connection.getProtocolInfo().setClientState(ConduitViaStates.toVia(state));
+  }
+
   /** Handler names on this session's channel, in pipeline order. */
   public List<String> pipelineHandlerNames() {
     return new ArrayList<>(channel.pipeline().names());

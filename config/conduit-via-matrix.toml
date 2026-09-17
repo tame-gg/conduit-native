@@ -41,6 +41,11 @@ port = 25613
 host = "127.0.0.1"
 port = 25614
 
+# real Minecraft 1.15.2 (protocol 578)
+[servers.v1152]
+host = "127.0.0.1"
+port = 25615
+
 # real Minecraft 1.16.5 (protocol 754)
 [servers.v1165]
 host = "127.0.0.1"

@@ -26,6 +26,11 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     session.setServerState(state);
   }
 
+  /** Announces a client state transition Conduit performed on the client's behalf. */
+  public void adoptClientState(ConnectionState state) {
+    session.adoptClientState(state);
+  }
+
   /** Handler names on this session's channel, in pipeline order. */
   public java.util.List<String> pipelineHandlerNames() {
     return session.pipelineHandlerNames();
