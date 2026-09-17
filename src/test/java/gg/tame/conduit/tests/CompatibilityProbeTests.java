@@ -150,8 +150,53 @@ public final class CompatibilityProbeTests {
     require(reload114.size() == 2 && PlayPackets.packetId(reload114.get(0)) == 0x3A, "a 1.14 client gets its pair under 0x3A");
     require(PlayPackets.body(reload114.get(1)).length == 4 + 1 + 5, "1.14 Respawn is dimension, gamemode, level type");
 
-    require(LegacyWorldReload.afterSwitch(ProtocolDefinition.forVersion(754), joinGame1152).isEmpty(),
-        "1.16 names dimensions from a registry and is not rebuilt this way");
+    // 1.16.5: world keys and an NBT dimension type. Without the pair a real 1.16.5 client switched
+    // from 1.20.4 to 1.21.8 sat on "Loading terrain".
+    ProtocolDefinition v1165 = ProtocolDefinition.forVersion(754);
+    var reload1165 = LegacyWorldReload.afterSwitch(v1165, joinGame1165());
+    require(reload1165.size() == 2, "a 1.16.5 client gets its pair");
+    String[] expectedWorld = {"minecraft:the_nether", "minecraft:overworld"};
+    for (int i = 0; i < 2; i++) {
+      require(PlayPackets.packetId(reload1165.get(i)) == 0x39, "1.16.5 Respawn is 0x39");
+      var in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(reload1165.get(i))));
+      byte[] type = new byte[DIMENSION_TYPE_1165.length];
+      in.readFully(type);
+      require(java.util.Arrays.equals(type, DIMENSION_TYPE_1165), "the dimension type is Join Game's, byte for byte");
+      require(gg.tame.conduit.protocol.MinecraftInput.string(in, 32767).equals(expectedWorld[i]),
+          "away to another world key, then back to the real one");
+      require(in.readLong() == 0x1122334455667788L, "then the hashed seed");
+      require(in.readUnsignedByte() == 1 && in.readByte() == -1, "then gamemode and previous gamemode");
+      require(!in.readBoolean() && in.readBoolean(), "then debug and flat");
+      require(!in.readBoolean() && in.available() == 0, "then copy metadata, and nothing after it");
+    }
+    require(LegacyWorldReload.afterSwitch(ProtocolDefinition.forVersion(736), joinGame1165()).isEmpty(),
+        "1.16.1 names its dimension type by id and is not rebuilt this way");
+  }
+
+  /** A named compound holding one byte tag: the smallest dimension type the reload has to carry. */
+  private static final byte[] DIMENSION_TYPE_1165 = java.util.HexFormat.of().parseHex("0a000001000575747261730100");
+
+  /** 1.16.5 Join Game in the overworld, creative, flat, with an empty dimension codec. */
+  private static byte[] joinGame1165() throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(bytes);
+    out.writeInt(7);
+    out.writeBoolean(false);                        // hardcore
+    out.writeByte(1);                               // creative
+    out.writeByte(-1);                              // no previous gamemode
+    MinecraftOutput.varInt(out, 1);
+    MinecraftOutput.string(out, "minecraft:overworld");
+    out.write(java.util.HexFormat.of().parseHex("0a000000"));   // empty named codec compound
+    out.write(DIMENSION_TYPE_1165);
+    MinecraftOutput.string(out, "minecraft:overworld");
+    out.writeLong(0x1122334455667788L);
+    MinecraftOutput.varInt(out, 20);                // max players
+    MinecraftOutput.varInt(out, 10);                // view distance
+    out.writeBoolean(false);                        // reduced debug
+    out.writeBoolean(true);                         // respawn screen
+    out.writeBoolean(false);                        // debug
+    out.writeBoolean(true);                         // flat
+    return PlayPackets.withId(0x24, bytes.toByteArray());
   }
 
   /** Join Game for 1.9.1-1.13.2: entity, gamemode, int dimension, difficulty, max players, level type. */

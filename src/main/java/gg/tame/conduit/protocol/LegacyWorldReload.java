@@ -45,9 +45,12 @@ public final class LegacyWorldReload {
   public static List<byte[]> afterSwitch(ProtocolDefinition protocol, byte[] joinGame) {
     if (protocol.hasConfiguration()) return List.of();
     int number = protocol.version().number();
-    // Only the layouts below are read and written. 1.16 names its dimensions from a registry, and
-    // nothing has shown a 1.16 client needing this, so it gets nothing rather than a guess.
-    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number)) return List.of();
+    // Only the layouts below are read and written. 1.16 and 1.16.1 name the dimension type by id,
+    // and 1.17 onward has not been shown to need this, so they get nothing rather than a guess.
+    boolean dimensionNbt = ProtocolEras.worldReloadDimensionNbt(number);
+    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number) && !dimensionNbt) {
+      return List.of();
+    }
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN)) {
       return List.of();
     }
@@ -57,6 +60,7 @@ public final class LegacyWorldReload {
           PlayPackets.peekId(joinGame), PacketKind.PLAY_LOGIN)) {
         return List.of();
       }
+      if (dimensionNbt) return dimensionNbtPair(protocol, joinGame);
       world = readWorld(protocol, joinGame);
     } catch (IOException | RuntimeException unreadable) {
       ProtocolTrace.note("could not read the world out of Join Game for a legacy world reload: " + unreadable);
@@ -75,6 +79,70 @@ public final class LegacyWorldReload {
   }
 
   private record JoinGameWorld(int dimension, int difficulty, int gamemode, String levelType, long hashedSeed) {}
+
+  /**
+   * The pair for 1.16.2-1.16.5, where Respawn names the world by key and carries its dimension type
+   * as NBT. A real 1.16.5 client switched from 1.20.4 to 1.21.8 sat on "Loading terrain" without it.
+   *
+   * <p>Join Game: entity, hardcore, gamemode, previous gamemode, world keys, dimension codec, dimension
+   * type, world key, hashed seed, max players, view distance, reduced debug, respawn screen, debug,
+   * flat. Respawn: dimension type, world key, hashed seed, gamemode, previous gamemode, debug, flat,
+   * copy metadata. The client rebuilds its world when the key changes, so the first of the pair names
+   * another vanilla world with the same dimension type and the second names the real one.
+   */
+  private static List<byte[]> dimensionNbtPair(ProtocolDefinition protocol, byte[] packet) throws IOException {
+    byte[] dimensionType;
+    String world;
+    long seed;
+    int gamemode;
+    int previous;
+    boolean debug;
+    boolean flat;
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      MinecraftInput.varInt(input);              // packet id
+      input.readInt();                           // entity id
+      input.readBoolean();                       // hardcore
+      gamemode = input.readUnsignedByte();
+      previous = input.readByte();
+      int worlds = MinecraftInput.varInt(input);
+      if (worlds < 0 || worlds > 1024) throw new IOException("world key count " + worlds);
+      for (int i = 0; i < worlds; i++) MinecraftInput.string(input, 32767);
+      NetworkNbt.skipNamed(input);               // dimension codec
+      ByteArrayOutputStream type = new ByteArrayOutputStream();
+      NetworkNbt.copyNamed(input, new DataOutputStream(type));
+      dimensionType = type.toByteArray();
+      world = MinecraftInput.string(input, 32767);
+      seed = input.readLong();
+      MinecraftInput.varInt(input);              // max players
+      MinecraftInput.varInt(input);              // view distance
+      input.readBoolean();                       // reduced debug info
+      input.readBoolean();                       // respawn screen
+      debug = input.readBoolean();
+      flat = input.readBoolean();
+    }
+    String away = "minecraft:overworld".equals(world) ? "minecraft:the_nether" : "minecraft:overworld";
+    return List.of(
+        dimensionNbtRespawn(protocol, dimensionType, away, seed, gamemode, previous, debug, flat),
+        dimensionNbtRespawn(protocol, dimensionType, world, seed, gamemode, previous, debug, flat));
+  }
+
+  private static byte[] dimensionNbtRespawn(ProtocolDefinition protocol, byte[] dimensionType, String world,
+                                            long seed, int gamemode, int previous, boolean debug, boolean flat)
+      throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(bytes);
+    out.write(dimensionType);
+    MinecraftOutput.string(out, world);
+    out.writeLong(seed);
+    out.writeByte(gamemode);
+    out.writeByte(previous);
+    out.writeBoolean(debug);
+    out.writeBoolean(flat);
+    out.writeBoolean(false);                     // copy metadata
+    return PlayPackets.withId(
+        protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN),
+        bytes.toByteArray());
+  }
 
   /**
    * Reads the fields Respawn needs out of Join Game.

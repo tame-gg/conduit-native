@@ -42,6 +42,18 @@ public final class ProtocolEras {
   /** First protocol whose Join Game and Respawn carry a hashed world seed (1.15). */
   public static final int HASHED_SEED_FROM = 573;
 
+  /** First protocol whose Respawn carries the dimension type as NBT beside a world key (1.16.2). */
+  public static final int RESPAWN_DIMENSION_NBT_FROM = 751;
+
+  /**
+   * Whether the legacy world reload writes the dimension-NBT Respawn for this protocol. It stops at
+   * 1.16.5, the last release a real client has shown needing it; 1.17 and 1.18 share the Respawn
+   * layout but change Join Game, and are left out until one of them is exercised.
+   */
+  public static boolean worldReloadDimensionNbt(int protocol) {
+    return protocol >= RESPAWN_DIMENSION_NBT_FROM && protocol <= 754;
+  }
+
   /** Whether this protocol's Join Game and Respawn carry a hashed world seed. */
   public static boolean hashedSeed(int protocol) {
     return protocol >= HASHED_SEED_FROM;
