@@ -607,9 +607,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return;
     }
     if (!protocol.defines(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_ACKNOWLEDGED)) return;
-    // A backend with its own Configuration phase supplies that phase itself and needs no bridge
-    // built from its Join Game; arming one would only move Via off the state that relay runs in.
-    if (backendDefinition.hasConfiguration()) return;
+    // Replayed for a backend with its own Configuration phase too. That backend builds no bridge,
+    // but the exchange is still the only thing that moves Via's client half out of Login: without
+    // it a 1.21.8 client's Client Information reached a 1.20.4 backend untranslated, one field
+    // longer than that backend reads, and the backend closed the connection.
     synchronized (translatorLock) {
       via.backendToClient(ConnectionState.LOGIN, backendPacket);
       via.drainToClient();
@@ -1247,14 +1248,22 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           }
           configurationAck.clear();
         } else {
+        // Conduit asks for this reconfiguration, so the acknowledgement is Conduit's. The new
+        // backend is already in Configuration and has no Play packet to receive it as.
+        conduitOwnsReconfiguration = true;
         writeClient(PlayPackets.startConfiguration(protocol));
         clientEnteredConfiguration = true;
         int waitSeconds = Math.max(1, remainingMillis(deadline) / 1000);
         if (configurationAck.poll(waitSeconds, TimeUnit.SECONDS) == null) throw new IOException("client did not acknowledge reconfiguration");
+        conduitOwnsReconfiguration = false;
         configurationAck.clear();
         knownPacksAck.clear();
-        boolean registrySeen = !protocol.knownPacks();
-        boolean knownPacksDone = !protocol.knownPacks();
+        // Both checks watch what this loop relays, and on the Via engine that is not everything the
+        // client gets: from a 1.20.4 backend's Registry Data Via writes Known Packs and every
+        // registry itself, ahead of the result, answers the client's reply itself, and hands this
+        // loop nothing. Enforced there, they failed a switch whose client had received both.
+        boolean registrySeen = !protocol.knownPacks() || viaEngine();
+        boolean knownPacksDone = !protocol.knownPacks() || viaEngine();
         byte[] lastConfig = null;
         while (!finishAfterCommit && next.state() != ConnectionState.PLAY) {
           enforceDeadline(deadline, "configuration");
@@ -1263,7 +1272,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           int id = PlayPackets.packetId(packet);
           next.login().onBackendPacket(packet, configuration.maxFrameBytes());
           byte[] translated = towardClient(ConnectionState.CONFIGURATION, packet);
-          if (translated == null) continue;
+          if (translated == null) {
+            // A cancelled packet can still have an answer: Via takes a 1.21.8 backend's Known Packs
+            // away from a 1.20.4 client and replies to the backend itself, which waits for it.
+            flushTranslatorExtras(next);
+            continue;
+          }
           var brand = BrandRewriter.rewrite(protocol, ConnectionState.CONFIGURATION, translated, configuration.maxFrameBytes());
           byte[] outbound;
           if (brand.isPresent()) {
@@ -1301,7 +1315,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           writeClient(outbound);
         }
         int finishWait = Math.max(1, remainingMillis(deadline) / 1000);
-        if (protocol.knownPacks()) {
+        // waitForClient reads the backend while it waits and relays what it reads untranslated. On
+        // the Via engine that took a 1.20.4 backend's Join Game past the translator, and the client
+        // disconnected on the Change Difficulty behind it; the read path after commit translates it.
+        if (protocol.knownPacks() && !viaEngine()) {
           if (!waitForClient(configurationAck, next, finishWait)) throw new IOException("client did not finish configuration");
         } else if (configurationAck.poll(finishWait, TimeUnit.SECONDS) == null) {
           throw new IOException("client did not finish configuration");

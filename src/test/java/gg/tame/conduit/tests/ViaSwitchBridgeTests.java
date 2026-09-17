@@ -70,7 +70,51 @@ public final class ViaSwitchBridgeTests {
     require(!bridged.contains(playDifficulty),
         "the bridged session keeps Change Difficulty out of Configuration");
 
+    // A backend with its own Configuration phase still needs the exchange: it is what moves Via's
+    // client half out of Login, and a session left there passes Client Information through in the
+    // client's layout. A real 1.20.4 backend closed a 1.21.8 client's switch over that extra byte.
+    require(clientInformationLength(772, 765, false) == 15, "an unbridged 1.21.8 -> 1.20.4 session passes the 1.21.8 layout");
+    require(clientInformationLength(772, 765, true) == 14, "a bridged 1.21.8 -> 1.20.4 session drops the field 1.20.4 lacks");
+    require(clientInformationLength(765, 772, true) == 15, "a bridged 1.20.4 -> 1.21.8 session adds the field 1.21.8 reads");
+
     System.out.println("ViaSwitchBridgeTests passed.");
+  }
+
+  /**
+   * Client Information (configuration id 0x00 on both sides) after a session is opened the way a
+   * switch opens it, with or without the login exchange replayed into it. 1.21.2 appended a
+   * particle status varint; 1.20.4's body is 13 bytes for these values.
+   */
+  private static int clientInformationLength(int clientProtocol, int backendProtocol, boolean armBridge) throws Exception {
+    try (ConduitViaTranslator via = ConduitViaTranslator.create(clientProtocol, backendProtocol, "127.0.0.1", 25565)) {
+      if (armBridge) {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        DataOutputStream out = new DataOutputStream(bytes);
+        out.writeLong(0x069a79f444e94726L);
+        out.writeLong(0xa5befca90e38aaf5L);
+        MinecraftOutput.string(out, "Notch");
+        MinecraftOutput.varInt(out, 0);
+        via.backendToClient(ConnectionState.LOGIN, PlayPackets.withId(0x02, bytes.toByteArray()));
+        via.drainToClient();
+        via.drainToBackend();
+        via.clientToBackend(ConnectionState.LOGIN, PlayPackets.withId(0x03, new byte[0]));
+        via.drainToClient();
+        via.drainToBackend();
+      }
+      via.backendEntered(ConnectionState.CONFIGURATION);
+      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+      DataOutputStream out = new DataOutputStream(bytes);
+      MinecraftOutput.string(out, "en_us");
+      out.writeByte(8);
+      MinecraftOutput.varInt(out, 0);
+      out.writeBoolean(true);
+      out.writeByte(0x7f);
+      MinecraftOutput.varInt(out, 1);
+      out.writeBoolean(false);
+      out.writeBoolean(true);
+      if (clientProtocol >= 768) MinecraftOutput.varInt(out, 0);
+      return via.clientToBackend(ConnectionState.CONFIGURATION, PlayPackets.withId(0x00, bytes.toByteArray())).length;
+    }
   }
 
   /**
