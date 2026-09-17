@@ -45,24 +45,40 @@ public final class ProtocolEras {
   /** First protocol whose Join Game and Respawn name the world by key (1.16). */
   public static final int RESPAWN_WORLD_KEY_FROM = 735;
 
-  /** First protocol whose Respawn carries the dimension type as NBT beside a world key (1.16.2). */
+  /**
+   * First protocol whose Join Game has a hardcore flag and a VarInt max players, and whose Join Game
+   * and Respawn carry the dimension type as NBT beside the world key (1.16.2).
+   */
   public static final int RESPAWN_DIMENSION_NBT_FROM = 751;
 
-  /**
-   * Whether the legacy world reload writes the 1.16/1.16.1 Respawn, which names the dimension type by
-   * key where 1.16.2 carries it as NBT.
-   */
-  public static boolean worldReloadDimensionKey(int protocol) {
-    return protocol >= RESPAWN_WORLD_KEY_FROM && protocol < RESPAWN_DIMENSION_NBT_FROM;
-  }
+  /** First protocol whose Join Game carries a simulation distance (1.18). */
+  public static final int JOIN_GAME_SIMULATION_DISTANCE_FROM = 757;
 
   /**
-   * Whether the legacy world reload writes the dimension-NBT Respawn for this protocol. It stops at
-   * 1.16.5, the last release a real client has shown needing it; 1.17 and 1.18 share the Respawn
-   * layout but change Join Game, and are left out until one of them is exercised.
+   * First protocol whose Join Game and Respawn name the dimension type by key again and carry an
+   * optional last death location (1.19).
    */
-  public static boolean worldReloadDimensionNbt(int protocol) {
-    return protocol >= RESPAWN_DIMENSION_NBT_FROM && protocol <= 754;
+  public static final int RESPAWN_DEATH_LOCATION_FROM = 759;
+
+  /** First protocol whose Join Game and Respawn end with a portal cooldown (1.20). */
+  public static final int RESPAWN_PORTAL_COOLDOWN_FROM = 763;
+
+  /** Last protocol with no Configuration phase (1.20.1). */
+  public static final int PRE_CONFIGURATION_MAX = 763;
+
+  /**
+   * Whether the legacy world reload writes the world-key Respawn: every release from 1.16, where the
+   * world is named by key, to 1.20.1, the last one with no Configuration phase to reload through.
+   * Real 1.16, 1.16.5, 1.17.1 and 1.18 clients switched between two servers sat on "Loading terrain"
+   * without it.
+   */
+  public static boolean worldReloadWorldKey(int protocol) {
+    return protocol >= RESPAWN_WORLD_KEY_FROM && protocol <= PRE_CONFIGURATION_MAX;
+  }
+
+  /** Whether this protocol's Join Game and Respawn carry the dimension type as NBT (1.16.2-1.18.2). */
+  public static boolean dimensionTypeNbt(int protocol) {
+    return protocol >= RESPAWN_DIMENSION_NBT_FROM && protocol < RESPAWN_DEATH_LOCATION_FROM;
   }
 
   /** Whether this protocol's Join Game and Respawn carry a hashed world seed. */

@@ -45,11 +45,9 @@ public final class LegacyWorldReload {
   public static List<byte[]> afterSwitch(ProtocolDefinition protocol, byte[] joinGame) {
     if (protocol.hasConfiguration()) return List.of();
     int number = protocol.version().number();
-    // Only the layouts below are read and written; 1.17 onward has not been shown to need this, so
-    // it gets nothing rather than a guess.
-    boolean dimensionNbt = ProtocolEras.worldReloadDimensionNbt(number);
-    boolean dimensionKey = ProtocolEras.worldReloadDimensionKey(number);
-    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number) && !dimensionNbt && !dimensionKey) {
+    // Only the layouts below are read and written.
+    boolean worldKey = ProtocolEras.worldReloadWorldKey(number);
+    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number) && !worldKey) {
       return List.of();
     }
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN)) {
@@ -61,8 +59,7 @@ public final class LegacyWorldReload {
           PlayPackets.peekId(joinGame), PacketKind.PLAY_LOGIN)) {
         return List.of();
       }
-      if (dimensionNbt) return dimensionNbtPair(protocol, joinGame);
-      if (dimensionKey) return dimensionKeyPair(protocol, joinGame);
+      if (worldKey) return worldKeyPair(protocol, joinGame);
       world = readWorld(protocol, joinGame);
     } catch (IOException | RuntimeException unreadable) {
       ProtocolTrace.note("could not read the world out of Join Game for a legacy world reload: " + unreadable);
@@ -83,16 +80,19 @@ public final class LegacyWorldReload {
   private record JoinGameWorld(int dimension, int difficulty, int gamemode, String levelType, long hashedSeed) {}
 
   /**
-   * The pair for 1.16.2-1.16.5, where Respawn names the world by key and carries its dimension type
-   * as NBT. A real 1.16.5 client switched from 1.20.4 to 1.21.8 sat on "Loading terrain" without it.
+   * The pair for 1.16 through 1.20.1, which name the world by key. The client rebuilds its world when
+   * the key changes, so the first of the pair names another vanilla world and the second the real one.
    *
-   * <p>Join Game: entity, hardcore, gamemode, previous gamemode, world keys, dimension codec, dimension
-   * type, world key, hashed seed, max players, view distance, reduced debug, respawn screen, debug,
-   * flat. Respawn: dimension type, world key, hashed seed, gamemode, previous gamemode, debug, flat,
-   * copy metadata. The client rebuilds its world when the key changes, so the first of the pair names
-   * another vanilla world with the same dimension type and the second names the real one.
+   * <p>Join Game: entity, hardcore (1.16.2+), gamemode, previous gamemode, world keys, registry codec,
+   * dimension type, world key, hashed seed, max players (a byte before 1.16.2, a VarInt after), view
+   * distance, simulation distance (1.18+), reduced debug, respawn screen, debug, flat, last death
+   * location (1.19+), portal cooldown (1.20+). Respawn: dimension type, world key, hashed seed,
+   * gamemode, previous gamemode, debug, flat, data kept, last death location (1.19+), portal cooldown
+   * (1.20+). The dimension type is NBT from 1.16.2 to 1.18.2 and a key on either side of that; it is
+   * copied from Join Game as it stands either way.
    */
-  private static List<byte[]> dimensionNbtPair(ProtocolDefinition protocol, byte[] packet) throws IOException {
+  private static List<byte[]> worldKeyPair(ProtocolDefinition protocol, byte[] packet) throws IOException {
+    int number = protocol.version().number();
     byte[] dimensionType;
     String world;
     long seed;
@@ -100,83 +100,47 @@ public final class LegacyWorldReload {
     int previous;
     boolean debug;
     boolean flat;
+    int portalCooldown = 0;
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);              // packet id
       input.readInt();                           // entity id
-      input.readBoolean();                       // hardcore
+      if (number >= ProtocolEras.RESPAWN_DIMENSION_NBT_FROM) input.readBoolean();   // hardcore
       gamemode = input.readUnsignedByte();
       previous = input.readByte();
       int worlds = MinecraftInput.varInt(input);
       if (worlds < 0 || worlds > 1024) throw new IOException("world key count " + worlds);
       for (int i = 0; i < worlds; i++) MinecraftInput.string(input, 32767);
-      NetworkNbt.skipNamed(input);               // dimension codec
+      NetworkNbt.skipNamed(input);               // registry codec
       ByteArrayOutputStream type = new ByteArrayOutputStream();
-      NetworkNbt.copyNamed(input, new DataOutputStream(type));
+      if (ProtocolEras.dimensionTypeNbt(number)) NetworkNbt.copyNamed(input, new DataOutputStream(type));
+      else MinecraftOutput.string(new DataOutputStream(type), MinecraftInput.string(input, 32767));
       dimensionType = type.toByteArray();
       world = MinecraftInput.string(input, 32767);
       seed = input.readLong();
-      MinecraftInput.varInt(input);              // max players
+      if (number >= ProtocolEras.RESPAWN_DIMENSION_NBT_FROM) MinecraftInput.varInt(input);   // max players
+      else input.readUnsignedByte();
       MinecraftInput.varInt(input);              // view distance
+      if (number >= ProtocolEras.JOIN_GAME_SIMULATION_DISTANCE_FROM) MinecraftInput.varInt(input);
       input.readBoolean();                       // reduced debug info
       input.readBoolean();                       // respawn screen
       debug = input.readBoolean();
       flat = input.readBoolean();
+      if (number >= ProtocolEras.RESPAWN_DEATH_LOCATION_FROM && input.readBoolean()) {
+        MinecraftInput.string(input, 32767);     // last death dimension
+        input.readLong();                        // last death position
+      }
+      if (number >= ProtocolEras.RESPAWN_PORTAL_COOLDOWN_FROM) portalCooldown = MinecraftInput.varInt(input);
     }
     String away = "minecraft:overworld".equals(world) ? "minecraft:the_nether" : "minecraft:overworld";
     return List.of(
-        dimensionNbtRespawn(protocol, dimensionType, away, seed, gamemode, previous, debug, flat),
-        dimensionNbtRespawn(protocol, dimensionType, world, seed, gamemode, previous, debug, flat));
+        worldKeyRespawn(protocol, dimensionType, away, seed, gamemode, previous, debug, flat, portalCooldown),
+        worldKeyRespawn(protocol, dimensionType, world, seed, gamemode, previous, debug, flat, portalCooldown));
   }
 
-  /**
-   * The pair for 1.16 and 1.16.1, whose Join Game and Respawn name the dimension type by key where
-   * 1.16.2 carries it as NBT. A real 1.16 client switched DIRECT between two 1.16 servers sat on
-   * "Loading terrain" without it, as 1.16.5 had.
-   *
-   * <p>Join Game: entity, gamemode, previous gamemode, world keys, dimension codec, dimension type key,
-   * world key, hashed seed, max players (a byte), view distance, reduced debug, respawn screen, debug,
-   * flat. Respawn: dimension type key, world key, hashed seed, gamemode, previous gamemode, debug,
-   * flat, copy metadata.
-   */
-  private static List<byte[]> dimensionKeyPair(ProtocolDefinition protocol, byte[] packet) throws IOException {
-    byte[] dimensionType;
-    String world;
-    long seed;
-    int gamemode;
-    int previous;
-    boolean debug;
-    boolean flat;
-    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
-      MinecraftInput.varInt(input);              // packet id
-      input.readInt();                           // entity id
-      gamemode = input.readUnsignedByte();
-      previous = input.readByte();
-      int worlds = MinecraftInput.varInt(input);
-      if (worlds < 0 || worlds > 1024) throw new IOException("world key count " + worlds);
-      for (int i = 0; i < worlds; i++) MinecraftInput.string(input, 32767);
-      NetworkNbt.skipNamed(input);               // dimension codec
-      ByteArrayOutputStream type = new ByteArrayOutputStream();
-      MinecraftOutput.string(new DataOutputStream(type), MinecraftInput.string(input, 32767));
-      dimensionType = type.toByteArray();
-      world = MinecraftInput.string(input, 32767);
-      seed = input.readLong();
-      input.readUnsignedByte();                  // max players
-      MinecraftInput.varInt(input);              // view distance
-      input.readBoolean();                       // reduced debug info
-      input.readBoolean();                       // respawn screen
-      debug = input.readBoolean();
-      flat = input.readBoolean();
-    }
-    // The Respawn is the 1.16.2 one with the key where the NBT was, so the same writer serves both.
-    String away = "minecraft:overworld".equals(world) ? "minecraft:the_nether" : "minecraft:overworld";
-    return List.of(
-        dimensionNbtRespawn(protocol, dimensionType, away, seed, gamemode, previous, debug, flat),
-        dimensionNbtRespawn(protocol, dimensionType, world, seed, gamemode, previous, debug, flat));
-  }
-
-  private static byte[] dimensionNbtRespawn(ProtocolDefinition protocol, byte[] dimensionType, String world,
-                                            long seed, int gamemode, int previous, boolean debug, boolean flat)
+  private static byte[] worldKeyRespawn(ProtocolDefinition protocol, byte[] dimensionType, String world, long seed,
+                                        int gamemode, int previous, boolean debug, boolean flat, int portalCooldown)
       throws IOException {
+    int number = protocol.version().number();
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(bytes);
     out.write(dimensionType);
@@ -186,7 +150,9 @@ public final class LegacyWorldReload {
     out.writeByte(previous);
     out.writeBoolean(debug);
     out.writeBoolean(flat);
-    out.writeBoolean(false);                     // copy metadata
+    out.writeByte(0);                            // data kept: nothing
+    if (number >= ProtocolEras.RESPAWN_DEATH_LOCATION_FROM) out.writeBoolean(false);   // no last death location
+    if (number >= ProtocolEras.RESPAWN_PORTAL_COOLDOWN_FROM) MinecraftOutput.varInt(out, portalCooldown);
     return PlayPackets.withId(
         protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN),
         bytes.toByteArray());

@@ -70,6 +70,7 @@ public final class CompatibilityProbeTests {
     require(!unknownClient.usable(), "not usable without a client table");
 
     legacyWorldReload();
+    worldKeyReloadThroughPreConfiguration();
     legacyChat();
     System.out.println("CompatibilityProbeTests passed.");
   }
@@ -187,6 +188,74 @@ public final class CompatibilityProbeTests {
         require(!in.readBoolean() && in.available() == 0, "then copy metadata, and nothing after it");
       }
     }
+  }
+
+  /**
+   * 1.17 through 1.20.1: the pair under each release's own Respawn id, which the derived tables once
+   * left at 1.16.5's 0x39. Real 1.17.1 and 1.18 clients switched DIRECT sat on "Loading terrain".
+   */
+  private static void worldKeyReloadThroughPreConfiguration() throws Exception {
+    // protocol, published Join Game id, published Respawn id
+    int[][] releases = {{755, 0x26, 0x3D}, {756, 0x26, 0x3D}, {757, 0x26, 0x3D}, {758, 0x26, 0x3D},
+        {759, 0x23, 0x3B}, {760, 0x25, 0x3E}, {761, 0x24, 0x3D}, {762, 0x28, 0x41}, {763, 0x28, 0x41}};
+    String[] expectedWorld = {"minecraft:the_nether", "minecraft:overworld"};
+    for (int[] release : releases) {
+      int protocol = release[0];
+      ProtocolDefinition definition = ProtocolDefinition.forVersion(protocol);
+      var reload = LegacyWorldReload.afterSwitch(definition, joinGameWorldKey(protocol, release[1]));
+      require(reload.size() == 2, protocol + " gets its pair");
+      for (int i = 0; i < 2; i++) {
+        require(PlayPackets.packetId(reload.get(i)) == release[2],
+            protocol + " Respawn is 0x" + Integer.toHexString(release[2]) + ", got 0x" + Integer.toHexString(PlayPackets.packetId(reload.get(i))));
+        var in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(reload.get(i))));
+        if (protocol < 759) {
+          byte[] type = new byte[DIMENSION_TYPE_1165.length];
+          in.readFully(type);
+          require(java.util.Arrays.equals(type, DIMENSION_TYPE_1165), protocol + " copies the NBT dimension type");
+        } else {
+          require(gg.tame.conduit.protocol.MinecraftInput.string(in, 32767).equals("minecraft:overworld"), protocol + " copies the dimension type key");
+        }
+        require(gg.tame.conduit.protocol.MinecraftInput.string(in, 32767).equals(expectedWorld[i]), protocol + " away, then back");
+        require(in.readLong() == 0x1122334455667788L, protocol + " hashed seed");
+        require(in.readUnsignedByte() == 1 && in.readByte() == -1, protocol + " gamemode and previous gamemode");
+        require(!in.readBoolean() && in.readBoolean(), protocol + " debug and flat");
+        require(in.readByte() == 0, protocol + " keeps no data");
+        if (protocol >= 759) require(!in.readBoolean(), protocol + " no last death location");
+        if (protocol >= 763) require(gg.tame.conduit.protocol.MinecraftInput.varInt(in) == 80, protocol + " portal cooldown from Join Game");
+        require(in.available() == 0, protocol + " nothing after the Respawn fields");
+      }
+    }
+  }
+
+  /** Join Game for 1.17-1.20.1, in each release's layout, in the overworld with a last death location. */
+  private static byte[] joinGameWorldKey(int protocol, int id) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(bytes);
+    out.writeInt(7);
+    out.writeBoolean(false);                        // hardcore
+    out.writeByte(1);                               // creative
+    out.writeByte(-1);                              // no previous gamemode
+    MinecraftOutput.varInt(out, 1);
+    MinecraftOutput.string(out, "minecraft:overworld");
+    out.write(java.util.HexFormat.of().parseHex("0a000000"));   // empty named codec compound
+    if (protocol < 759) out.write(DIMENSION_TYPE_1165);
+    else MinecraftOutput.string(out, "minecraft:overworld");
+    MinecraftOutput.string(out, "minecraft:overworld");
+    out.writeLong(0x1122334455667788L);
+    MinecraftOutput.varInt(out, 20);                // max players
+    MinecraftOutput.varInt(out, 10);                // view distance
+    if (protocol >= 757) MinecraftOutput.varInt(out, 8);        // simulation distance
+    out.writeBoolean(false);                        // reduced debug
+    out.writeBoolean(true);                         // respawn screen
+    out.writeBoolean(false);                        // debug
+    out.writeBoolean(true);                         // flat
+    if (protocol >= 759) {
+      out.writeBoolean(true);                       // last death location, which the Respawn pair drops
+      MinecraftOutput.string(out, "minecraft:the_end");
+      out.writeLong(123456789L);
+    }
+    if (protocol >= 763) MinecraftOutput.varInt(out, 80);       // portal cooldown
+    return PlayPackets.withId(id, bytes.toByteArray());
   }
 
   /** 1.16.1 Join Game: no hardcore flag, the dimension type as a key, max players as a byte. */
