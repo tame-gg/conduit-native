@@ -117,6 +117,7 @@ KINDS: dict[tuple[str, str, str], list[str]] = {
     (STATE_PLAY, TO_CLIENT, "PLAY_BLOCK_UPDATE"): ["block_change"],
     (STATE_PLAY, TO_CLIENT, "PLAY_MULTI_BLOCK_CHANGE"): ["multi_block_change"],
     (STATE_PLAY, TO_CLIENT, "PLAY_ENTITY_DESTROY"): ["entity_destroy"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_RESPAWN"): ["respawn"],
 
     (STATE_PLAY, TO_SERVER, "PLAY_CLIENT_INFORMATION"): ["settings"],
     (STATE_PLAY, TO_SERVER, "PLAY_CHAT_COMMAND"): ["chat_command", "chat"],

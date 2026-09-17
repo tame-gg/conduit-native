@@ -15,6 +15,18 @@ public final class ProtocolEras {
   public static final int LEGACY_POSITION_MAX = 404;
 
   /** First protocol with heightmaps NBT on Chunk Data and no section-embedded light. */
+  /**
+   * First protocol whose Join Game carries the dimension as an int rather than a signed byte
+   * (1.9.1). Only matters for releases with no Configuration phase, which are the only ones whose
+   * Join Game is still read field by field.
+   */
+  public static final int JOIN_GAME_DIMENSION_INT_FROM = 108;
+
+  /** Whether this protocol's Join Game writes its dimension as an int. */
+  public static boolean joinGameDimensionIsInt(int protocol) {
+    return protocol >= JOIN_GAME_DIMENSION_INT_FROM;
+  }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */

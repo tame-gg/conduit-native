@@ -553,19 +553,36 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return;
     }
     if (!protocol.hasConfiguration()) {
-      // No Configuration phase on this client, so there is no bridge to arm and no packet left to
-      // arm it with: the Join Game that moved this client into Play belongs to the backend it is
-      // leaving. The state is handed over instead, which is safe precisely because the phase this
-      // guard excludes is the one that must not be skipped.
-      via.adoptClientState(clientState.state());
-      // The backend half needs the same treatment and for the same reason. A backend with no
-      // Configuration phase is in Play the moment this Login Success is written, and the packet
-      // that says so is the one Conduit is holding: Via would have moved itself had it been
-      // forwarded. Left in Login, Via reads the backend's Join Game in a state it has no Join Game
-      // in and hands it to the client unchanged -- a 1.13 packet with a 1.13 id, to a 1.8 client.
-      if (!backendDefinition.hasConfiguration()) {
-        via.backendEntered(ConnectionState.PLAY);
+      if (backendDefinition.hasConfiguration()) {
+        // This pair is relayed by runBackendConfigurationThroughVia, and that relay only works on a
+        // session that watched the login it is downgrading the Configuration phase of. A first
+        // connection supplies it: Conduit forwards the backend's Login Success through the
+        // translator, which is what puts the translator's downgrade into the mode that buffers a
+        // Configuration phase for a client that has none. A switch withholds that packet, and the
+        // relay then fails on the first registry packet it is handed, with the 1.20.2 downgrade
+        // remapping a Configuration id to nothing.
+        //
+        // So the packet is replayed, and only it: this client has no Login Acknowledged to follow
+        // it with, and needs none -- it leaves Login when the translator writes it a Login Success,
+        // which is the very packet being replayed. What the translator produces is discarded,
+        // because the client completed this login against a different backend already.
+        synchronized (translatorLock) {
+          via.backendToClient(ConnectionState.LOGIN, backendPacket);
+          via.drainToClient();
+          via.drainToBackend();
+        }
+        ProtocolTrace.note("switch replayed login for a legacy client; via state " + via.stateDescription());
+        return;
       }
+      // Neither end has a Configuration phase, so there is no bridge to arm and no packet left to
+      // arm it with: the Join Game that moved this client into Play belongs to the backend it is
+      // leaving, and the backend is in Play the moment the Login Success Conduit is holding was
+      // written. Both are handed over, which is safe precisely because the phase the guard above
+      // excludes is the one that must not be skipped. Left in Login, the translator reads the new
+      // backend's Join Game in a state it has no Join Game in and passes it through unchanged --
+      // a 1.13 packet with a 1.13 id, to a 1.8 client.
+      via.adoptClientState(clientState.state());
+      via.backendEntered(ConnectionState.PLAY);
       ProtocolTrace.note("switch adopted both states; via state " + via.stateDescription());
       return;
     }
@@ -910,6 +927,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           if (joinGameArrived) {
             awaitingBackendJoinGame = false;
             ProtocolTrace.note("switched translator has the new backend's Join Game; client packets resume");
+            // A client with no Configuration phase has no transition left that rebuilds its world,
+            // so a second Join Game leaves it holding the previous backend's one. These move it.
+            for (byte[] reload : gg.tame.conduit.protocol.LegacyWorldReload.afterSwitch(protocol, translated)) {
+              writeClient(reload, true);
+            }
             // Held back with them, and for the same reason: the replay is a client packet Conduit
             // sends on the player's behalf, and it goes through the same translator that had no
             // world to translate it against until this packet arrived.
