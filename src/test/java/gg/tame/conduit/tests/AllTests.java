@@ -249,6 +249,18 @@ public final class AllTests {
     require(pipeline.onBackendPacket(new byte[] {2}, 1024) == null && pipeline.state() == ConnectionState.PLAY, "Finish Configuration transition failed");
     try { pipeline(secret).onBackendPacket(modernRequest(1, 5), 1024); throw new AssertionError("unsupported forwarding version accepted"); }
     catch (java.io.IOException expected) { }
+    // Versions 2 and 3 carry the player's chat signing key, which Conduit does not forward. A request
+    // names the highest version the backend reads, so they are answered in version 1: a real Paper
+    // 1.19 asked for 2 and accepted 1, and answered "2" in the key-less layout it failed reading the
+    // key's expiry (IndexOutOfBoundsException), as a real 1.19.2 did for 3.
+    for (int keyed : new int[] {ModernForwardingVersion.V2_WITH_KEY, ModernForwardingVersion.V3_WITH_KEY_V2}) {
+      byte[] keyedResponse = pipeline(secret).onBackendPacket(modernRequest(7, keyed), 1024);
+      try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(keyedResponse))) {
+        require(MinecraftInput.varInt(input) == 2 && MinecraftInput.varInt(input) == 7 && input.readBoolean(), "keyed request answered");
+        input.readNBytes(32);
+        require(MinecraftInput.varInt(input) == ModernForwardingVersion.V1_DEFAULT, "a version " + keyed + " request is answered in version 1");
+      }
+    }
     byte[] lazyResponse = pipeline(secret).onBackendPacket(modernRequest(-333808985, 4), 1024);
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(lazyResponse))) {
       require(MinecraftInput.varInt(input) == 2 && MinecraftInput.varInt(input) == -333808985 && input.readBoolean(), "negative Paper message id must be echoed");

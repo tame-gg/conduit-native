@@ -72,12 +72,14 @@ public final class BackendLoginPipeline {
     // The request names the highest forwarding version the backend reads. A backend from before that
     // byte existed sends no data and reads only the first version: Paper 1.13.1 does.
     if (request.data().length > 1) throw new IOException("malformed modern forwarding request payload");
-    int version = request.data().length == 0
+    int requested = request.data().length == 0
         ? gg.tame.conduit.forwarding.ModernForwardingVersion.V1_DEFAULT
         : Byte.toUnsignedInt(request.data()[0]);
+    int version = gg.tame.conduit.forwarding.ModernForwardingVersion.answerFor(requested);
     PlayerProfile canonical = AuthenticatedPlayerProfile.require(player);
     System.out.println("BACKEND LOGIN forwarding=" + forwarder.mode()
         + " forwardingVersion=" + version
+        + (version == requested ? "" : " (backend reads up to " + requested + ")")
         + " clientProtocol=" + protocol.version().number()
         + " hideLoginSuccess=" + hideLoginSuccess
         + " " + canonical.summary());
