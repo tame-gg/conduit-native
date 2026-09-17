@@ -45,6 +45,10 @@ public final class PlayPackets {
       if (protocol.capabilities().legacyPlayChat()) {
         gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, false);
         if (ProtocolEras.chatHasPosition(protocol.version().number())) output.writeByte(1); // system position
+        if (ProtocolEras.chatHasSender(protocol.version().number())) {
+          output.writeLong(0L); // nil UUID: the sender vanilla uses for system messages
+          output.writeLong(0L);
+        }
       } else {
         gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
         output.writeBoolean(false);

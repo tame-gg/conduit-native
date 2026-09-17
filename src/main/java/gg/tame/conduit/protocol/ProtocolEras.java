@@ -58,6 +58,17 @@ public final class ProtocolEras {
     return protocol >= CHAT_POSITION_FROM;
   }
 
+  /**
+   * First protocol whose clientbound Chat Message ends with the sender's UUID after the position
+   * (1.16). A 1.16.5 client reads a long past the end of a message that stops at the position.
+   */
+  public static final int CHAT_SENDER_FROM = 735;
+
+  /** Whether this protocol's clientbound Chat Message carries a sender UUID after the position. */
+  public static boolean chatHasSender(int protocol) {
+    return protocol >= CHAT_SENDER_FROM;
+  }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */

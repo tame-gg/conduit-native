@@ -86,6 +86,12 @@ public final class CompatibilityProbeTests {
         "a 1.7 chat message ends at its JSON");
     require(trailingBytesAfterText(ProtocolDefinition.forVersion(47)) == 1,
         "a 1.8 chat message keeps its position byte");
+    require(trailingBytesAfterText(ProtocolDefinition.forVersion(578)) == 1,
+        "a 1.15.2 chat message ends at its position byte");
+    // A real 1.16.5 client typed /server and was shown "readerIndex(114) + length(8) exceeds
+    // writerIndex(114)": the message stopped where 1.16 expects the sender's UUID.
+    require(trailingBytesAfterText(ProtocolDefinition.forVersion(754)) == 1 + 16,
+        "a 1.16.5 chat message carries position and sender UUID");
   }
 
   private static int trailingBytesAfterText(ProtocolDefinition protocol) throws Exception {
