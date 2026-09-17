@@ -103,7 +103,12 @@ public final class Phase8Tests {
         try (Socket socket = backendListener.accept()) {
           MinecraftFrames.read(socket.getInputStream(), 2048);
           MinecraftFrames.read(socket.getInputStream(), 2048);
+          // Conduit completes the backend login itself, in every forwarding mode, before relaying.
+          MinecraftFrames.write(socket.getOutputStream(), loginSuccess());
           for (int i = 0; i < 200; i++) MinecraftFrames.write(socket.getOutputStream(), new byte[] {1, (byte) i});
+          // Reads Conduit's Login Acknowledged until the session ends. Closing with it unread resets the
+          // connection, and the reset discards relayed packets Conduit has not read yet.
+          socket.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
         } catch (Exception exception) { throw new RuntimeException(exception); }
       });
       ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 2048,
@@ -115,6 +120,7 @@ public final class Phase8Tests {
         try (Socket client = new Socket("127.0.0.1", proxyPort)) {
           MinecraftFrames.write(client.getOutputStream(), new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2});
           MinecraftFrames.write(client.getOutputStream(), loginStart());
+          require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 2048), loginSuccess()), "Login Success relayed");
           for (int i = 0; i < 200; i++) MinecraftFrames.read(client.getInputStream(), 2048);
         }
         long elapsedMs = (System.nanoTime() - start) / 1_000_000;
@@ -171,6 +177,8 @@ public final class Phase8Tests {
     runtime.close();
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }
+  /** 1.20.4 Login Success for the same player: zero UUID, name, no properties. */
+  private static byte[] loginSuccess() { return new byte[] {2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 'p', 'l', 'a', 'y', 'r', 0}; }
   private static int reservePort() throws Exception { try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); } }
   private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
 }

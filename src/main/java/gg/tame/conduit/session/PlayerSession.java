@@ -9,7 +9,6 @@ import gg.tame.conduit.command.CommandSource;
 import gg.tame.conduit.command.Messages;
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
-import gg.tame.conduit.config.ForwardingMode;
 import gg.tame.conduit.forwarding.PlayerInfoForwarder;
 import gg.tame.conduit.login.AuthenticatedPlayerProfile;
 import gg.tame.conduit.login.LoginPipeline;
@@ -240,13 +239,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         writeBackendHandshake(socket, server);
         MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile(), backendDefinition));
         BackendConnection connection = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false);
-        // MODERN forwarding always needs the login plugin exchange.
-        // TRANSLATED (e.g. 393→765) must also finish LOGIN here so Set Compression is consumed
-        // and Configuration can be absorbed before Play — otherwise mode=none leaks compression
-        // to the client (observed with real 1.13 → Paper 1.20.4).
-        if (forwarder.mode() == ForwardingMode.MODERN || translationSupport == TranslationSupport.TRANSLATED) {
-          completeBackendLogin(connection, true);
-        }
+        // Every pair and every forwarding mode, as a switch already does. This is where the backend's
+        // Set Compression is consumed: the client's link is never compressed. Left to the relay, a
+        // DIRECT 1.20.4 session with forwarding "none" handed that packet to the client, and Conduit
+        // then read both sockets in the wrong format until the backend's Finish Configuration parsed
+        // as a plugin message and ended the session.
+        completeBackendLogin(connection, true);
         return connection;
       } catch (IOException exception) {
         last = exception;

@@ -86,6 +86,7 @@ public final class AllTests {
     CompatibilityProbeTests.run();
     SwitchJoinGateTests.run();
     ViaOrderingTests.run();
+    DirectLoginCompressionTests.run();
     System.out.println("All Conduit foundation tests passed.");
     // Release Via's non-daemon platform executors so this JVM can exit on its own.
     gg.tame.conduit.viaversion.ConduitViaBootstrap.stop();
@@ -169,7 +170,12 @@ public final class AllTests {
           byte[] handshake = MinecraftFrames.read(socket.getInputStream(), 128);
           require(Handshake.decode(handshake).nextState() == 2, "proxy did not forward handshake");
           MinecraftFrames.read(socket.getInputStream(), 128);
+          // Conduit completes the backend login itself, in every forwarding mode, before relaying.
+          MinecraftFrames.write(socket.getOutputStream(), loginSuccess());
           MinecraftFrames.write(socket.getOutputStream(), new byte[] {1, 42});
+          // Reads Conduit's Login Acknowledged. Closing with it unread resets the connection, and the
+          // reset discards the packet above before Conduit has read it.
+          drain(socket);
         } catch (Exception exception) { throw new RuntimeException(exception); }
       });
       int proxyPort;
@@ -181,6 +187,7 @@ public final class AllTests {
         try (Socket client = new Socket("127.0.0.1", proxyPort)) {
           MinecraftFrames.write(client.getOutputStream(), new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2});
           MinecraftFrames.write(client.getOutputStream(), loginStart());
+          require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 128), loginSuccess()), "proxy did not relay Login Success");
           require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 128), new byte[] {1, 42}), "proxy did not relay backend packet");
         }
         backend.join(); serving.interrupt();
@@ -517,6 +524,8 @@ public final class AllTests {
     } catch (Exception ignored) { }
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }
+  /** 1.20.4 Login Success for the same player: zero UUID, name, no properties. */
+  private static byte[] loginSuccess() { return new byte[] {2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 'p', 'l', 'a', 'y', 'r', 0}; }
   private static int reservePort() throws Exception { try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); } }
   private static String configuration(String mode) { return "[listener]\nhost = \"127.0.0.1\"\nport = 25565\nmax-frame-bytes = 64\n[forwarding]\nmode = \"" + mode + "\"\n[servers.lobby]\nhost = \"127.0.0.1\"\nport = 25566\n[routing]\ninitial = [\"lobby\"]\nfallback = [\"lobby\"]\n"; }
   private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
