@@ -44,7 +44,7 @@ public final class PlayPackets {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT));
       if (protocol.capabilities().legacyPlayChat()) {
         gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, false);
-        output.writeByte(1); // system position
+        if (ProtocolEras.chatHasPosition(protocol.version().number())) output.writeByte(1); // system position
       } else {
         gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
         output.writeBoolean(false);

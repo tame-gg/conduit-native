@@ -70,7 +70,29 @@ public final class CompatibilityProbeTests {
     require(!unknownClient.usable(), "not usable without a client table");
 
     legacyWorldReload();
+    legacyChat();
     System.out.println("CompatibilityProbeTests passed.");
+  }
+
+  /**
+   * Conduit's own chat messages, which Via never sees, in the layout each legacy client reads.
+   *
+   * <p>A real 1.7.6 client typed /server and was shown "Packet was larger than I expected, found 1
+   * bytes extra whilst reading packet 2": the "Connecting to..." message carried the position byte
+   * 1.8 added after the text.
+   */
+  private static void legacyChat() throws Exception {
+    require(trailingBytesAfterText(ProtocolDefinition.forVersion(5)) == 0,
+        "a 1.7 chat message ends at its JSON");
+    require(trailingBytesAfterText(ProtocolDefinition.forVersion(47)) == 1,
+        "a 1.8 chat message keeps its position byte");
+  }
+
+  private static int trailingBytesAfterText(ProtocolDefinition protocol) throws Exception {
+    byte[] body = PlayPackets.body(PlayPackets.systemChat(protocol, "Connecting to v113..."));
+    var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(body));
+    gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);
+    return input.available();
   }
 
   /**

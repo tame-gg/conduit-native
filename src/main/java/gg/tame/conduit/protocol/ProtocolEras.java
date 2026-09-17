@@ -27,6 +27,17 @@ public final class ProtocolEras {
     return protocol >= JOIN_GAME_DIMENSION_INT_FROM;
   }
 
+  /**
+   * First protocol whose clientbound Chat Message ends with a position byte (1.8). A 1.7 client
+   * reads the JSON and nothing else, and drops the connection over the one byte left behind.
+   */
+  public static final int CHAT_POSITION_FROM = 47;
+
+  /** Whether this protocol's clientbound Chat Message carries a position byte after the text. */
+  public static boolean chatHasPosition(int protocol) {
+    return protocol >= CHAT_POSITION_FROM;
+  }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */
