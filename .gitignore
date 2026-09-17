@@ -1,7 +1,7 @@
 .gradle/
 build/
 out/
-out-phase7/
+out-*/
 run/
 *.class
 *.secret
@@ -13,10 +13,9 @@ lib/via/
 conduit-start.log
 conduit-start.err.log
 
-out-run/
-out-compile/
 
-# Rotated proxy logs
-logs/*.log.gz
+# Runtime output: proxy/client logs and diagnostic dumps are never committed
+logs/
+dumps/
 tools/__pycache__/
 config/via/
