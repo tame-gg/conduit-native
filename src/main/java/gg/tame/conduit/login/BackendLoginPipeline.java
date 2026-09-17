@@ -69,8 +69,12 @@ public final class BackendLoginPipeline {
     LoginPluginRequest request = LoginPluginRequest.decode(body, maximumPacketBytes);
     if (!MODERN_CHANNEL.equals(request.channel())) throw new IOException("unknown login plugin channel");
     if (forwarder.mode() != ForwardingMode.MODERN) throw new IOException("backend requested modern forwarding but Conduit is not configured for it");
-    if (request.data().length != 1) throw new IOException("malformed modern forwarding request payload");
-    int version = Byte.toUnsignedInt(request.data()[0]);
+    // The request names the highest forwarding version the backend reads. A backend from before that
+    // byte existed sends no data and reads only the first version: Paper 1.13.1 does.
+    if (request.data().length > 1) throw new IOException("malformed modern forwarding request payload");
+    int version = request.data().length == 0
+        ? gg.tame.conduit.forwarding.ModernForwardingVersion.V1_DEFAULT
+        : Byte.toUnsignedInt(request.data()[0]);
     PlayerProfile canonical = AuthenticatedPlayerProfile.require(player);
     System.out.println("BACKEND LOGIN forwarding=" + forwarder.mode()
         + " forwardingVersion=" + version

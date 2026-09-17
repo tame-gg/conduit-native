@@ -21,6 +21,7 @@ import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
 import gg.tame.conduit.forwarding.ForwardingSecret;
 import gg.tame.conduit.forwarding.ModernForwarder;
+import gg.tame.conduit.forwarding.ModernForwardingVersion;
 import gg.tame.conduit.forwarding.ForwardingRequest;
 import gg.tame.conduit.login.PlayerProfile;
 import gg.tame.conduit.login.ProfileProperty;
@@ -279,7 +280,15 @@ public final class AllTests {
     require(negative.messageId() == -1, "signed login plugin message ids must round-trip");
     expectIO(() -> pipeline(secret).onBackendPacket(pluginRequest(1, "minecraft:brand", new byte[] {1}), 1024), "unknown channel accepted");
     expectIO(() -> pipeline(secret).onBackendPacket(pluginRequest(1, "velocity:player_info", new byte[] {1, 2}), 1024), "malformed payload accepted");
-    expectIO(() -> pipeline(secret).onBackendPacket(pluginRequest(1, "velocity:player_info", new byte[0]), 1024), "empty payload accepted");
+    // A backend that predates the version byte asks with no data at all and reads only the first
+    // format. Paper 1.13.1 does (message id 2030080267, captured from a real server); refusing it
+    // sent every modern-forwarding join to a Paper backend of that age to the fallback server.
+    byte[] versionless = pipeline(secret).onBackendPacket(pluginRequest(2030080267, "velocity:player_info", new byte[0]), 1024);
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(versionless))) {
+      require(MinecraftInput.varInt(input) == 2 && MinecraftInput.varInt(input) == 2030080267 && input.readBoolean(), "versionless request answered with its message id");
+      input.readNBytes(32);
+      require(MinecraftInput.varInt(input) == ModernForwardingVersion.V1_DEFAULT, "versionless request answered in forwarding version 1");
+    }
     expectIO(() -> LoginPluginRequest.decode(pluginBody(1, "velocity:player_info", new byte[8]), 4), "oversized payload accepted");
     expectIO(() -> LoginPluginRequest.decode(new byte[] {(byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80, (byte) 0x80}, 1024), "malformed VarInt accepted");
     expectIO(() -> LoginPluginRequest.decode(new byte[] {(byte) 0x80}, 1024), "truncated packet accepted");
