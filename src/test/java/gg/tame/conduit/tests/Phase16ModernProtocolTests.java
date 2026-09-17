@@ -170,6 +170,58 @@ public final class Phase16ModernProtocolTests {
     require(decoded.clientUuid().equals(LoginStart.offlineUuid("Steve")), "offline uuid derived");
     byte[] modern = LoginStart.encode(profile, ProtocolDefinition.forVersion(765));
     require(PlayPackets.body(modern).length > body.length, "modern login start longer");
+    loginStartOptionalFields();
+  }
+
+  /**
+   * 1.19 to 1.20.1, whose Login Start fields after the username are optional. Each release's own
+   * bytes, as a real client sends them: every one was refused as "unsupported extra fields".
+   */
+  private static void loginStartOptionalFields() throws Exception {
+    UUID id = UUID.fromString("22222222-3333-4444-5555-666666666666");
+    PlayerProfile profile = new PlayerProfile(id, "Steve", List.of(), false);
+    byte[] key = new byte[294];
+    byte[] signature = new byte[512];
+    // 1.19: username, then a present signature (expiry, public key, Mojang's signature).
+    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+    try (java.io.DataOutputStream out = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.string(out, "Steve");
+      out.writeBoolean(true); out.writeLong(1234L);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(out, key.length); out.write(key);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(out, signature.length); out.write(signature);
+    }
+    LoginStart signed119 = LoginStart.decode(bytes.toByteArray(), ProtocolDefinition.forVersion(759));
+    require(signed119.username().equals("Steve") && signed119.clientUuid().equals(LoginStart.offlineUuid("Steve")), "1.19 signed login start");
+    // 1.19.2: no signature, a present UUID.
+    bytes.reset();
+    try (java.io.DataOutputStream out = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.string(out, "Steve");
+      out.writeBoolean(false);
+      out.writeBoolean(true); out.writeLong(id.getMostSignificantBits()); out.writeLong(id.getLeastSignificantBits());
+    }
+    require(LoginStart.decode(bytes.toByteArray(), ProtocolDefinition.forVersion(760)).clientUuid().equals(id), "1.19.2 login start keeps its uuid");
+    // 1.19.3-1.20.1: username and an optional UUID, present or absent.
+    bytes.reset();
+    try (java.io.DataOutputStream out = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.string(out, "Steve");
+      out.writeBoolean(true); out.writeLong(id.getMostSignificantBits()); out.writeLong(id.getLeastSignificantBits());
+    }
+    for (int protocol : new int[] {761, 762, 763}) {
+      require(LoginStart.decode(bytes.toByteArray(), ProtocolDefinition.forVersion(protocol)).clientUuid().equals(id), protocol + " login start keeps its uuid");
+    }
+    byte[] absent = java.util.Arrays.copyOf(bytes.toByteArray(), 6 + 1);
+    absent[6] = 0;
+    require(LoginStart.decode(absent, ProtocolDefinition.forVersion(763)).clientUuid().equals(LoginStart.offlineUuid("Steve")), "1.20.1 without uuid");
+    // What Conduit sends a backend of each release parses back as that release reads it.
+    int[] lengths = {759, 7, 760, 24, 761, 23, 762, 23, 763, 23};
+    for (int i = 0; i < lengths.length; i += 2) {
+      ProtocolDefinition definition = ProtocolDefinition.forVersion(lengths[i]);
+      byte[] body = PlayPackets.body(LoginStart.encode(profile, definition));
+      require(body.length == lengths[i + 1], lengths[i] + " login start is " + lengths[i + 1] + " bytes, got " + body.length);
+      LoginStart back = LoginStart.decode(body, definition);
+      require(back.username().equals("Steve"), lengths[i] + " round trip username");
+      require(back.clientUuid().equals(lengths[i] == 759 ? LoginStart.offlineUuid("Steve") : id), lengths[i] + " round trip uuid");
+    }
   }
 
   private static void loginSuccess113() throws Exception {

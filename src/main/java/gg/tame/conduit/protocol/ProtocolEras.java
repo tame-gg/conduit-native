@@ -42,6 +42,41 @@ public final class ProtocolEras {
   /** First protocol whose Join Game and Respawn carry a hashed world seed (1.15). */
   public static final int HASHED_SEED_FROM = 573;
 
+  /** The one protocol whose System Chat names a chat type by registry id instead of an action-bar flag (1.19). */
+  public static final int SYSTEM_CHAT_TYPE_ID = 759;
+
+  /** Whether this protocol's System Chat ends with a chat type id rather than a boolean. */
+  public static boolean systemChatTypeId(int protocol) {
+    return protocol == SYSTEM_CHAT_TYPE_ID;
+  }
+
+  /** First protocol whose Login Start carries the client's optional profile key signature (1.19). */
+  public static final int LOGIN_START_SIGNATURE_FROM = 759;
+
+  /** First protocol whose Login Start carries the client's UUID as an optional field (1.19.1). */
+  public static final int LOGIN_START_OPTIONAL_UUID_FROM = 760;
+
+  /** Last protocol whose Login Start carries the profile key signature (1.19.2); 1.19.3 dropped it. */
+  public static final int LOGIN_START_SIGNATURE_MAX = 760;
+
+  /** Last protocol whose Login Start UUID is optional (1.20.1); from 1.20.2 it is always present. */
+  public static final int LOGIN_START_OPTIONAL_UUID_MAX = 763;
+
+  /** Whether this protocol's Login Start has optional fields after the username (1.19-1.20.1). */
+  public static boolean loginStartOptionalFields(int protocol) {
+    return protocol >= LOGIN_START_SIGNATURE_FROM && protocol <= LOGIN_START_OPTIONAL_UUID_MAX;
+  }
+
+  /** Whether this protocol's Login Start has the optional profile key signature (1.19-1.19.2). */
+  public static boolean loginStartSignature(int protocol) {
+    return protocol >= LOGIN_START_SIGNATURE_FROM && protocol <= LOGIN_START_SIGNATURE_MAX;
+  }
+
+  /** Whether this protocol's Login Start has an optional UUID (1.19.1-1.20.1). */
+  public static boolean loginStartOptionalUuid(int protocol) {
+    return protocol >= LOGIN_START_OPTIONAL_UUID_FROM && protocol <= LOGIN_START_OPTIONAL_UUID_MAX;
+  }
+
   /** First protocol whose Join Game and Respawn name the world by key (1.16). */
   public static final int RESPAWN_WORLD_KEY_FROM = 735;
 
