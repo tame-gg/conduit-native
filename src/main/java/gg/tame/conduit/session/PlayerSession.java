@@ -119,6 +119,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final List<byte[]> deferredPlay = new java.util.ArrayList<>();
   private boolean playLoginSent;
   private boolean needSelfPlayerInfo = true;
+  /** The UUID the client was told is its own, by the Login Success that reached it. */
+  private volatile java.util.UUID clientUuid;
   private volatile Thread clientReader;
   /**
    * Body of the client's most recent Client Information packet, without the packet id.
@@ -1511,10 +1513,27 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return;
     }
     if (gg.tame.conduit.protocol.ProfileTrace.enabled()) System.out.println("TRACE conduit synthesizing self ADD_PLAYER");
-    writeClient(gg.tame.conduit.protocol.PlayerInfoUpdate.selfAdd(protocol, profile()));
+    // The entry is the player as the client knows itself. With forwarding none an offline backend
+    // names the player by a UUID of its own, which its Login Success carries to the client unchanged;
+    // an entry under the session's UUID listed a real 1.21.3 client twice, once with no latency.
+    PlayerProfile self = profile();
+    java.util.UUID known = clientUuid;
+    if (known != null && !known.equals(self.uniqueId())) {
+      self = new PlayerProfile(known, self.username(), self.properties(), self.authenticated());
+    }
+    writeClient(gg.tame.conduit.protocol.PlayerInfoUpdate.selfAdd(protocol, self));
     needSelfPlayerInfo = false;
   }
   private void writeClient(byte[] packet) throws IOException { writeClient(packet, true); }
+  private void rememberClientUuid(byte[] packet) {
+    try {
+      if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PlayPackets.peekId(packet), PacketKind.LOGIN_SUCCESS)) {
+        clientUuid = gg.tame.conduit.protocol.codec.JoinGameCodec.decodeLoginSuccess(protocol, packet).uniqueId();
+      }
+    } catch (IOException | RuntimeException unreadable) {
+      // The session's own UUID stands in for one that cannot be read.
+    }
+  }
   /** Adds Conduit's matching command names to the backend's reply to a pre-1.13 command-name Tab. */
   private byte[] withProxyCommandNames(byte[] packet) {
     String typed = legacyCommandCompletion;
@@ -1543,6 +1562,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         ? ConnectionState.CLOSED
         : clientState.state();
     byte[] outbound = ProtocolProfileAdapter.backendToClient(protocol, adaptAs, packet, profile());
+    if (clientState.state() == ConnectionState.LOGIN) rememberClientUuid(outbound);
     // Last stop before the socket: a recipe list the client cannot parse costs the whole session,
     // and a correct one passes through this untouched.
     outbound = gg.tame.conduit.protocol.RecipeListRepair.apply(protocol, outbound);
