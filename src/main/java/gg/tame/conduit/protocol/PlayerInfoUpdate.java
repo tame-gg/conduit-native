@@ -34,7 +34,7 @@ public final class PlayerInfoUpdate {
     }
     int id = protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE);
     int actions = ADD_PLAYER | UPDATE_GAME_MODE | UPDATE_LISTED | UPDATE_LATENCY;
-    if (protocol.version().number() >= 768) actions |= UPDATE_HAT;
+    if (ProtocolEras.playerInfoHat(protocol.version().number())) actions |= UPDATE_HAT;
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, id);

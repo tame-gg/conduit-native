@@ -54,6 +54,18 @@ public final class ProtocolEras {
     return protocol >= TEXT_COMPONENT_NBT_FROM;
   }
 
+  /**
+   * First protocol whose Player Info Update has the show-hat action (1.21.4). 1.21.2 and 1.21.3 end
+   * at list priority, and a real 1.21.3 client given the hat's byte was disconnected with "found 1
+   * bytes extra whilst reading packet player_info_update".
+   */
+  public static final int PLAYER_INFO_HAT_FROM = 769;
+
+  /** Whether this protocol's Player Info Update carries the show-hat action. */
+  public static boolean playerInfoHat(int protocol) {
+    return protocol >= PLAYER_INFO_HAT_FROM;
+  }
+
   /** The one protocol whose System Chat names a chat type by registry id instead of an action-bar flag (1.19). */
   public static final int SYSTEM_CHAT_TYPE_ID = 759;
 

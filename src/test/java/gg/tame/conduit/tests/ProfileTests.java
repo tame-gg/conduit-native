@@ -213,6 +213,24 @@ final class ProfileTests {
       MinecraftInput.varInt(input);
       require((input.readUnsignedByte() & PlayerInfoUpdate.UPDATE_HAT) == 0, "765 has no hat action");
     }
+    // 1.21.2-1.21.3 (768) end at list priority; the hat came with 1.21.4. A real 1.21.3 client was
+    // disconnected with "found 1 bytes extra whilst reading packet player_info_update".
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayerInfoUpdate.selfAdd(ProtocolDefinition.forVersion(768), profile)))) {
+      require(MinecraftInput.varInt(input) == 0x40, "768 player-info id");
+      require((input.readUnsignedByte() & PlayerInfoUpdate.UPDATE_HAT) == 0, "768 has no hat action");
+      require(MinecraftInput.varInt(input) == 1, "768 count");
+      GameProfiles.readUuid(input);
+      MinecraftInput.string(input, 16);
+      GameProfiles.readProperties(input);
+      MinecraftInput.varInt(input);
+      input.readBoolean();
+      MinecraftInput.varInt(input);
+      require(input.available() == 0, "768 entry ends after latency, " + input.available() + " bytes left");
+    }
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(PlayerInfoUpdate.selfAdd(ProtocolDefinition.forVersion(769), profile)))) {
+      MinecraftInput.varInt(input);
+      require((input.readUnsignedByte() & PlayerInfoUpdate.UPDATE_HAT) != 0, "769 shows the hat layer");
+    }
   }
   private static void forwardingPayloadIdenticalOnRepeatedSwitch() throws Exception {
     var secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
