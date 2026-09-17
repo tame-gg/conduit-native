@@ -169,8 +169,46 @@ public final class CompatibilityProbeTests {
       require(!in.readBoolean() && in.readBoolean(), "then debug and flat");
       require(!in.readBoolean() && in.available() == 0, "then copy metadata, and nothing after it");
     }
-    require(LegacyWorldReload.afterSwitch(ProtocolDefinition.forVersion(736), joinGame1165()).isEmpty(),
-        "1.16.1 names its dimension type by id and is not rebuilt this way");
+
+    // 1.16 and 1.16.1: the same pair with the dimension type named by key. Without it a real 1.16
+    // client switched DIRECT between two 1.16 servers sat on "Loading terrain".
+    for (int protocol : new int[] {735, 736}) {
+      var reload116 = LegacyWorldReload.afterSwitch(ProtocolDefinition.forVersion(protocol), joinGame1161());
+      require(reload116.size() == 2, protocol + " gets its pair");
+      for (int i = 0; i < 2; i++) {
+        require(PlayPackets.packetId(reload116.get(i)) == 0x3A, "1.16/1.16.1 Respawn is 0x3A");
+        var in = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(reload116.get(i))));
+        require(gg.tame.conduit.protocol.MinecraftInput.string(in, 32767).equals("minecraft:overworld"), "the dimension type key is Join Game's");
+        require(gg.tame.conduit.protocol.MinecraftInput.string(in, 32767).equals(expectedWorld[i]),
+            "away to another world key, then back to the real one");
+        require(in.readLong() == 0x1122334455667788L, "then the hashed seed");
+        require(in.readUnsignedByte() == 1 && in.readByte() == -1, "then gamemode and previous gamemode");
+        require(!in.readBoolean() && in.readBoolean(), "then debug and flat");
+        require(!in.readBoolean() && in.available() == 0, "then copy metadata, and nothing after it");
+      }
+    }
+  }
+
+  /** 1.16.1 Join Game: no hardcore flag, the dimension type as a key, max players as a byte. */
+  private static byte[] joinGame1161() throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    DataOutputStream out = new DataOutputStream(bytes);
+    out.writeInt(7);
+    out.writeByte(1);                               // creative
+    out.writeByte(-1);                              // no previous gamemode
+    MinecraftOutput.varInt(out, 1);
+    MinecraftOutput.string(out, "minecraft:overworld");
+    out.write(java.util.HexFormat.of().parseHex("0a000000"));   // empty named codec compound
+    MinecraftOutput.string(out, "minecraft:overworld");         // dimension type key
+    MinecraftOutput.string(out, "minecraft:overworld");         // world key
+    out.writeLong(0x1122334455667788L);
+    out.writeByte(20);                              // max players
+    MinecraftOutput.varInt(out, 10);                // view distance
+    out.writeBoolean(false);                        // reduced debug
+    out.writeBoolean(true);                         // respawn screen
+    out.writeBoolean(false);                        // debug
+    out.writeBoolean(true);                         // flat
+    return PlayPackets.withId(0x25, bytes.toByteArray());
   }
 
   /** A named compound holding one byte tag: the smallest dimension type the reload has to carry. */

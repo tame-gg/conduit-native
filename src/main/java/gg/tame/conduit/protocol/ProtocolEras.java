@@ -42,8 +42,19 @@ public final class ProtocolEras {
   /** First protocol whose Join Game and Respawn carry a hashed world seed (1.15). */
   public static final int HASHED_SEED_FROM = 573;
 
+  /** First protocol whose Join Game and Respawn name the world by key (1.16). */
+  public static final int RESPAWN_WORLD_KEY_FROM = 735;
+
   /** First protocol whose Respawn carries the dimension type as NBT beside a world key (1.16.2). */
   public static final int RESPAWN_DIMENSION_NBT_FROM = 751;
+
+  /**
+   * Whether the legacy world reload writes the 1.16/1.16.1 Respawn, which names the dimension type by
+   * key where 1.16.2 carries it as NBT.
+   */
+  public static boolean worldReloadDimensionKey(int protocol) {
+    return protocol >= RESPAWN_WORLD_KEY_FROM && protocol < RESPAWN_DIMENSION_NBT_FROM;
+  }
 
   /**
    * Whether the legacy world reload writes the dimension-NBT Respawn for this protocol. It stops at

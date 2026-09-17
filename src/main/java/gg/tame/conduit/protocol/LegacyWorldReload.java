@@ -45,10 +45,11 @@ public final class LegacyWorldReload {
   public static List<byte[]> afterSwitch(ProtocolDefinition protocol, byte[] joinGame) {
     if (protocol.hasConfiguration()) return List.of();
     int number = protocol.version().number();
-    // Only the layouts below are read and written. 1.16 and 1.16.1 name the dimension type by id,
-    // and 1.17 onward has not been shown to need this, so they get nothing rather than a guess.
+    // Only the layouts below are read and written; 1.17 onward has not been shown to need this, so
+    // it gets nothing rather than a guess.
     boolean dimensionNbt = ProtocolEras.worldReloadDimensionNbt(number);
-    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number) && !dimensionNbt) {
+    boolean dimensionKey = ProtocolEras.worldReloadDimensionKey(number);
+    if (!ProtocolEras.joinGameHasDifficulty(number) && !ProtocolEras.joinGame114(number) && !dimensionNbt && !dimensionKey) {
       return List.of();
     }
     if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESPAWN)) {
@@ -61,6 +62,7 @@ public final class LegacyWorldReload {
         return List.of();
       }
       if (dimensionNbt) return dimensionNbtPair(protocol, joinGame);
+      if (dimensionKey) return dimensionKeyPair(protocol, joinGame);
       world = readWorld(protocol, joinGame);
     } catch (IOException | RuntimeException unreadable) {
       ProtocolTrace.note("could not read the world out of Join Game for a legacy world reload: " + unreadable);
@@ -120,6 +122,52 @@ public final class LegacyWorldReload {
       debug = input.readBoolean();
       flat = input.readBoolean();
     }
+    String away = "minecraft:overworld".equals(world) ? "minecraft:the_nether" : "minecraft:overworld";
+    return List.of(
+        dimensionNbtRespawn(protocol, dimensionType, away, seed, gamemode, previous, debug, flat),
+        dimensionNbtRespawn(protocol, dimensionType, world, seed, gamemode, previous, debug, flat));
+  }
+
+  /**
+   * The pair for 1.16 and 1.16.1, whose Join Game and Respawn name the dimension type by key where
+   * 1.16.2 carries it as NBT. A real 1.16 client switched DIRECT between two 1.16 servers sat on
+   * "Loading terrain" without it, as 1.16.5 had.
+   *
+   * <p>Join Game: entity, gamemode, previous gamemode, world keys, dimension codec, dimension type key,
+   * world key, hashed seed, max players (a byte), view distance, reduced debug, respawn screen, debug,
+   * flat. Respawn: dimension type key, world key, hashed seed, gamemode, previous gamemode, debug,
+   * flat, copy metadata.
+   */
+  private static List<byte[]> dimensionKeyPair(ProtocolDefinition protocol, byte[] packet) throws IOException {
+    byte[] dimensionType;
+    String world;
+    long seed;
+    int gamemode;
+    int previous;
+    boolean debug;
+    boolean flat;
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      MinecraftInput.varInt(input);              // packet id
+      input.readInt();                           // entity id
+      gamemode = input.readUnsignedByte();
+      previous = input.readByte();
+      int worlds = MinecraftInput.varInt(input);
+      if (worlds < 0 || worlds > 1024) throw new IOException("world key count " + worlds);
+      for (int i = 0; i < worlds; i++) MinecraftInput.string(input, 32767);
+      NetworkNbt.skipNamed(input);               // dimension codec
+      ByteArrayOutputStream type = new ByteArrayOutputStream();
+      MinecraftOutput.string(new DataOutputStream(type), MinecraftInput.string(input, 32767));
+      dimensionType = type.toByteArray();
+      world = MinecraftInput.string(input, 32767);
+      seed = input.readLong();
+      input.readUnsignedByte();                  // max players
+      MinecraftInput.varInt(input);              // view distance
+      input.readBoolean();                       // reduced debug info
+      input.readBoolean();                       // respawn screen
+      debug = input.readBoolean();
+      flat = input.readBoolean();
+    }
+    // The Respawn is the 1.16.2 one with the key where the NBT was, so the same writer serves both.
     String away = "minecraft:overworld".equals(world) ? "minecraft:the_nether" : "minecraft:overworld";
     return List.of(
         dimensionNbtRespawn(protocol, dimensionType, away, seed, gamemode, previous, debug, flat),
