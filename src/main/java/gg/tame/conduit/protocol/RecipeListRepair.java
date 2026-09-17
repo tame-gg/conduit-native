@@ -70,9 +70,12 @@ public final class RecipeListRepair {
     if (id != expected) return packet;
     int body = head.offset();
 
-    if (scan(packet, body, false) != null) return packet;
+    // 1.13.2 changed the slot to a present flag and a VarInt id. Read with 1.13's short id, a real
+    // 1.13.2 server's recipe list fit neither reading and every 1.13.2 client got an empty one.
+    boolean presentFlag = ProtocolEras.slotPresentFlag(client.version().number());
+    if (scan(packet, body, false, presentFlag) != null) return packet;
 
-    List<int[]> recipes = scan(packet, body, true);
+    List<int[]> recipes = scan(packet, body, true, presentFlag);
     if (recipes == null) {
       warnOnce("Conduit could not read the translated Declare Recipes packet for protocol "
           + client.version().number() + " (" + packet.length + " bytes); sending an empty recipe list");
@@ -125,8 +128,9 @@ public final class RecipeListRepair {
    * Reads the recipe list and returns one {@code {start, end, hasEmptySlot}} triple per recipe, or
    * {@code null} if the reading does not account for the packet exactly.
    */
-  private static List<int[]> scan(byte[] packet, int body, boolean tolerant) {
+  private static List<int[]> scan(byte[] packet, int body, boolean tolerant, boolean presentFlag) {
     Cursor cursor = new Cursor(packet, body);
+    cursor.presentFlag = presentFlag;
     try {
       int count = cursor.varInt();
       if (count < 0 || count > 1_000_000) return null;
@@ -181,6 +185,8 @@ public final class RecipeListRepair {
     private final DataInputStream input;
     private final ByteArrayInputStream source;
     private boolean empty;
+    /** 1.13.2's slot layout: a present flag, then a VarInt id. */
+    private boolean presentFlag;
 
     Cursor(byte[] data) { this(data, 0); }
 
@@ -205,8 +211,13 @@ public final class RecipeListRepair {
     }
 
     void slot(boolean tolerant) throws IOException {
-      int id = input.readShort();
-      if (id == -1) {
+      if (presentFlag) {
+        if (!input.readBoolean()) {
+          empty = true;
+          if (!tolerant) return;
+        }
+        varInt();
+      } else if (input.readShort() == -1) {
         empty = true;
         if (!tolerant) return;
       }

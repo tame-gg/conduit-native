@@ -44,6 +44,14 @@ public final class RecipeListRepairTests {
     byte[] other = new byte[] {0x21, 0x00, 0x00};
     require(RecipeListRepair.apply(client, other) == other, "unrelated packets pass through");
 
+    // 1.13.2 writes a slot as a present flag and a VarInt id. Read in 1.13's short-id layout, a real
+    // 1.13.2 server's recipe list fit neither reading and every 1.13.2 client was sent an empty one.
+    ProtocolDefinition v1132 = ProtocolDefinition.forVersion(404);
+    int id1132 = v1132.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES);
+    byte[] wellFormed1132 = recipeList1132(id1132);
+    require(RecipeListRepair.apply(v1132, wellFormed1132) == wellFormed1132,
+        "a correct 1.13.2 recipe list is forwarded untouched, by identity");
+
     // A client whose recipe layout this does not cover is never touched.
     require(!RecipeListRepair.handles(477), "1.14 is out of scope for the 1.13 recipe layout");
     require(!RecipeListRepair.handles(765), "1.20.4 is out of scope for the 1.13 recipe layout");
@@ -86,6 +94,39 @@ public final class RecipeListRepairTests {
   private static void slot(DataOutputStream sink, int id, boolean trailing) throws IOException {
     sink.writeShort(id);
     if (id == -1 && !trailing) return;
+    sink.writeByte(1);
+    sink.writeByte(0); // TAG_End: no tag
+  }
+
+  /** A shaped recipe, a smelting recipe with an empty-flagged ingredient option, in 1.13.2's slot layout. */
+  private static byte[] recipeList1132(int packetId) throws IOException {
+    ByteArrayOutputStream out = new ByteArrayOutputStream();
+    DataOutputStream sink = new DataOutputStream(out);
+    MinecraftOutput.varInt(sink, packetId);
+    MinecraftOutput.varInt(sink, 2);
+    MinecraftOutput.string(sink, "minecraft:oak_planks");
+    MinecraftOutput.string(sink, "crafting_shaped");
+    MinecraftOutput.varInt(sink, 1);
+    MinecraftOutput.varInt(sink, 1);
+    MinecraftOutput.string(sink, "planks");
+    MinecraftOutput.varInt(sink, 1);
+    slot1132(sink, 32);
+    slot1132(sink, 13);
+    MinecraftOutput.string(sink, "minecraft:glass");
+    MinecraftOutput.string(sink, "smelting");
+    MinecraftOutput.string(sink, "");
+    MinecraftOutput.varInt(sink, 2);
+    slot1132(sink, 26);
+    slot1132(sink, 300); // a two-byte VarInt id
+    slot1132(sink, 64);
+    sink.writeFloat(0.1f);
+    MinecraftOutput.varInt(sink, 200);
+    return out.toByteArray();
+  }
+
+  private static void slot1132(DataOutputStream sink, int id) throws IOException {
+    sink.writeBoolean(true);
+    MinecraftOutput.varInt(sink, id);
     sink.writeByte(1);
     sink.writeByte(0); // TAG_End: no tag
   }

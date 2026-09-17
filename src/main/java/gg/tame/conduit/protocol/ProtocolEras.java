@@ -110,6 +110,17 @@ public final class ProtocolEras {
    */
   public static final int RESPAWN_DIMENSION_NBT_FROM = 751;
 
+  /**
+   * First protocol whose item slot is a present flag and a VarInt id rather than a short id where -1
+   * is empty (1.13.2). The layout is otherwise unchanged until 1.20.2's nameless NBT root.
+   */
+  public static final int SLOT_PRESENT_FLAG_FROM = 404;
+
+  /** Whether this protocol writes an item slot as a present flag and a VarInt id. */
+  public static boolean slotPresentFlag(int protocol) {
+    return protocol >= SLOT_PRESENT_FLAG_FROM;
+  }
+
   /** First protocol whose Join Game carries a simulation distance (1.18). */
   public static final int JOIN_GAME_SIMULATION_DISTANCE_FROM = 757;
 
