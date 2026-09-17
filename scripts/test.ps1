@@ -1,6 +1,8 @@
+param([string]$Out = "out", [string]$Only = "")
+
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSScriptRoot
-$out = Join-Path $root "out"
+$out = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $root $Out }
 $lib = Join-Path $root "lib"
 $viaLib = Join-Path $lib "via"
 $fetch = Join-Path $PSScriptRoot "fetch-velocity-compat.ps1"
@@ -49,5 +51,6 @@ $resources = Join-Path $root "src/test/resources"
 if (Test-Path $resources) { Copy-Item (Join-Path $resources "*") $out -Recurse -Force }
 
 $runCp = ($libJars + $viaJars + $out) -join ";"
-cmd /c "java -ea -cp `"$runCp`" gg.tame.conduit.tests.AllTests"
+$runner = if ($Only) { $Only } else { "gg.tame.conduit.tests.AllTests" }
+cmd /c "java -ea -cp `"$runCp`" $runner"
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }
