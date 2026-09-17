@@ -451,9 +451,9 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_19 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_19,
       758,
-      null,
+      ProtocolCapabilities.chatCommands119(),
       CodecStatus.DERIVED,
-      "published packet ids for 1.19; capabilities inherited from 1.18.2",
+      "published packet ids for 1.19; capabilities inherited from 1.18.2 except 1.19's command chat",
       List.of(
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x2F),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BLOCK_UPDATE, 0x09),

@@ -106,6 +106,23 @@ public record ProtocolCapabilities(
         false, false, false, false, false, resourcePacks, true, true);
   }
 
+  /**
+   * 1.19 to 1.19.4: the 1.13 capabilities with 1.19's chat, where a command arrives in its own Chat
+   * Command packet with no leading slash and the server's own messages in System Chat. Inheriting
+   * 1.13's legacy chat left Conduit waiting for a slash that never comes: a real 1.19 client's
+   * /server and /conduit went to the backend, which answered "Unknown or incomplete command".
+   */
+  public static ProtocolCapabilities chatCommands119() {
+    ProtocolCapabilities base = flattening113();
+    return new ProtocolCapabilities(
+        base.configurationPhase(), base.loginShouldAuthenticate(), base.knownPacks(), base.joinGameOnlineMode(),
+        base.cookiePackets(), base.transferPackets(), base.chatSigning(), base.secureChat(),
+        base.loginStartUuid(), base.loginSuccessProperties(), base.loginSuccessBinaryUuid(),
+        base.loginPluginMessage(), base.compression(), base.encryption(), base.modernForwarding(),
+        base.registrySync(), base.tags(), base.commandTree(), base.playerInfoUpdate(), base.bundlePackets(),
+        base.resourcePacks(), base.pluginMessages(), false);
+  }
+
   public Set<String> named() {
     EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
     if (configurationPhase) flags.add(Flag.CONFIGURATION);

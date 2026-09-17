@@ -44,7 +44,83 @@ public final class Phase6Tests {
     commandGraphMergeKeepsIndexesValid();
     legacyTabCompleteKeepsSession();
     legacySwitchWaitsForJoinGame();
+    chatCommand119IsConduits();
     Phase7Tests.run();
+  }
+  /**
+   * 1.19 sends a command in its own Chat Command packet, without the slash. A real 1.19.4 client's
+   * /conduit and /server reached the backend, which answered "Unknown or incomplete command": the
+   * table inherited 1.13's legacy chat and Conduit waited for a slash. The command must be Conduit's,
+   * answered in a System Chat the client reads, and never reach the backend.
+   */
+  private static void chatCommand119IsConduits() throws Exception {
+    ProtocolDefinition v1194 = ProtocolDefinition.forVersion(762);
+    int commandId = v1194.id(ConnectionState.PLAY, gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER, gg.tame.conduit.protocol.PacketKind.PLAY_CHAT_COMMAND);
+    int systemChatId = v1194.id(ConnectionState.PLAY, gg.tame.conduit.protocol.PacketDirection.SERVER_TO_CLIENT, gg.tame.conduit.protocol.PacketKind.PLAY_SYSTEM_CHAT);
+    require(commandId == 0x04 && systemChatId == 0x64, "1.19.4 Chat Command 0x04 and System Chat 0x64");
+    require(!v1194.capabilities().legacyPlayChat(), "1.19.4 is not legacy chat");
+    try (ServerSocket backendListener = new ServerSocket(0)) {
+      AtomicReference<String> forwarded = new AtomicReference<>("");
+      Thread backend = Thread.startVirtualThread(() -> {
+        try (Socket socket = backendListener.accept()) {
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          byte[] loginStart = MinecraftFrames.read(socket.getInputStream(), 4096);
+          require(gg.tame.conduit.login.LoginStart.decode(PlayPackets.body(loginStart), v1194).username().equals("playr"), "1.19.4 Login Start reaches the backend in its layout");
+          ByteArrayOutputStream success = new ByteArrayOutputStream();
+          try (DataOutputStream output = new DataOutputStream(success)) {
+            MinecraftOutput.varInt(output, 2); output.writeLong(0); output.writeLong(0);
+            MinecraftOutput.string(output, "playr"); MinecraftOutput.varInt(output, 0);
+          }
+          MinecraftFrames.write(socket.getOutputStream(), success.toByteArray());
+          while (true) {
+            byte[] packet = MinecraftFrames.read(socket.getInputStream(), 4096);
+            if (PlayPackets.packetId(packet) == commandId) forwarded.set("backend got a Chat Command");
+          }
+        } catch (Exception ignored) { }
+      });
+      ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 4096,
+          ForwardingMode.NONE, Optional.empty(),
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", backendListener.getLocalPort()))),
+          List.of("lobby"), List.of("lobby"));
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(10_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(762, "localhost", 25565, 2).encode());
+          ByteArrayOutputStream loginStart = new ByteArrayOutputStream();
+          try (DataOutputStream output = new DataOutputStream(loginStart)) {
+            MinecraftOutput.varInt(output, 0); MinecraftOutput.string(output, "playr");
+            output.writeBoolean(true); output.writeLong(0); output.writeLong(0);
+          }
+          MinecraftFrames.write(client.getOutputStream(), loginStart.toByteArray());
+          require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.19.4 Login Success");
+          ByteArrayOutputStream command = new ByteArrayOutputStream();
+          try (DataOutputStream output = new DataOutputStream(command)) {
+            MinecraftOutput.varInt(output, commandId); MinecraftOutput.string(output, "conduit");
+            output.writeLong(0); output.writeLong(0); MinecraftOutput.varInt(output, 0);
+            MinecraftOutput.varInt(output, 0); output.write(new byte[3]);
+          }
+          MinecraftFrames.write(client.getOutputStream(), command.toByteArray());
+          byte[] reply = readUntilPacket(client, systemChatId);
+          var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(reply)));
+          require(MinecraftInput.string(input, 32767).contains("Conduit"), "/conduit is answered by Conduit");
+          require(!input.readBoolean() && input.available() == 0, "1.19.4 System Chat ends with its action-bar flag");
+          Thread.sleep(300);
+        }
+        require(forwarded.get().isEmpty(), "the command must not reach the backend: " + forwarded.get());
+        serving.interrupt();
+      }
+      backend.interrupt();
+    }
+    // 1.19 alone names a chat type by id at the end of System Chat, where 1 is "system".
+    var body119 = new java.io.DataInputStream(new java.io.ByteArrayInputStream(
+        PlayPackets.body(PlayPackets.systemChat(ProtocolDefinition.forVersion(759), "hello"))));
+    MinecraftInput.string(body119, 32767);
+    require(MinecraftInput.varInt(body119) == 1 && body119.available() == 0, "1.19 System Chat carries chat type 1");
+    for (int protocol : new int[] {759, 760, 761, 762}) {
+      require(!ProtocolDefinition.forVersion(protocol).capabilities().legacyPlayChat(), protocol + " has 1.19's command chat");
+    }
+    require(ProtocolDefinition.forVersion(758).capabilities().legacyPlayChat(), "1.18.2 keeps legacy chat");
   }
   /**
    * A backend with no Configuration phase decodes Login until it sends Join Game. Switching a real

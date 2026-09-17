@@ -51,7 +51,10 @@ public final class PlayPackets {
         }
       } else {
         gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.hasConfiguration());
-        output.writeBoolean(false);
+        // 1.19 names the message's chat type by registry id, where 1 is "system"; from 1.19.1 the
+        // field is a boolean that only says whether it belongs on the action bar.
+        if (ProtocolEras.systemChatTypeId(protocol.version().number())) MinecraftOutput.varInt(output, 1);
+        else output.writeBoolean(false);
       }
     }
     return bytes.toByteArray();

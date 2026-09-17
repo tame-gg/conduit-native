@@ -107,11 +107,20 @@ def java_capabilities(protocol: int) -> str:
     transfer packets that 1.20.5 introduced and every later version keeps.
     Inheriting there would understate what those versions can do, so state it.
     """
+    if protocol == 759:
+        # 1.19 moved commands into their own slash-less Chat Command packet; 1.13's legacy chat,
+        # which the chain would otherwise inherit, has Conduit waiting for a slash. Inherited by
+        # 1.19.1-1.19.4 from here.
+        return "ProtocolCapabilities.chatCommands119()"
     if protocol >= 766:
         # configuration, loginShouldAuthenticate, knownPacks, joinGameOnlineMode,
         # cookiePackets, transferPackets, chatSigning, secureChat
         return "new ProtocolCapabilities(true, false, true, false, true, true, true, true)"
     return "null"  # inherit the base definition's capabilities; resolved in derive()
+
+
+def capability_note(protocol: int) -> str:
+    return " except 1.19's command chat" if protocol == 759 else ""
 
 
 def main() -> None:
@@ -155,7 +164,7 @@ def main() -> None:
       {base_protocol},
       {java_capabilities(protocol)},
       CodecStatus.DERIVED,
-      "published packet ids for {release}; capabilities inherited from {base_release}",
+      "published packet ids for {release}; capabilities inherited from {base_release}{capability_note(protocol)}",
       List.of(
 {body}));
 ''')
