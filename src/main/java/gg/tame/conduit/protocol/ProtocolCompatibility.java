@@ -1,7 +1,5 @@
 package gg.tame.conduit.protocol;
 
-import gg.tame.conduit.config.TranslationSettings;
-import gg.tame.conduit.viaversion.ConduitViaBootstrap;
 import gg.tame.conduit.viaversion.ConduitViaSupport;
 
 /**
@@ -22,31 +20,6 @@ public final class ProtocolCompatibility {
   public static boolean implemented(int protocol) { return ProtocolDefinition.hasCodec(protocol); }
 
   public static TranslationSupport between(int clientProtocol, int backendProtocol) {
-    if (clientProtocol == backendProtocol) {
-      if (implemented(clientProtocol) || ConduitViaSupport.knowsProtocol(clientProtocol)) {
-        return TranslationSupport.DIRECT;
-      }
-      return TranslationSupport.UNSUPPORTED;
-    }
-
-    TranslationSettings settings = ConduitViaBootstrap.settings();
-    TranslationSettings.TranslationEngine engine = settings.engine();
-
-    boolean viaPossible = settings.enabled()
-        && engine != TranslationSettings.TranslationEngine.NATIVE
-        && ConduitViaSupport.supportsTranslation(clientProtocol, backendProtocol);
-    boolean nativePossible = implemented(clientProtocol)
-        && implemented(backendProtocol)
-        && TranslatorRegistry.has(clientProtocol, backendProtocol);
-
-    if (engine == TranslationSettings.TranslationEngine.VIA) {
-      return viaPossible ? TranslationSupport.TRANSLATED : TranslationSupport.UNSUPPORTED;
-    }
-    if (engine == TranslationSettings.TranslationEngine.NATIVE) {
-      return nativePossible ? TranslationSupport.TRANSLATED : TranslationSupport.UNSUPPORTED;
-    }
-    // via-preferred
-    if (viaPossible || nativePossible) return TranslationSupport.TRANSLATED;
-    return TranslationSupport.UNSUPPORTED;
+    return CompatibilityProbe.probe(clientProtocol, backendProtocol).support();
   }
 }

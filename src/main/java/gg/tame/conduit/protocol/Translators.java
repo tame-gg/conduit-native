@@ -1,8 +1,5 @@
 package gg.tame.conduit.protocol;
 
-import gg.tame.conduit.config.TranslationSettings;
-import gg.tame.conduit.viaversion.ConduitViaBootstrap;
-import gg.tame.conduit.viaversion.ConduitViaSupport;
 import gg.tame.conduit.viaversion.ConduitViaTranslator;
 
 /**
@@ -20,39 +17,15 @@ public final class Translators {
   }
 
   public static ProtocolTranslator forPair(int clientProtocol, int backendProtocol, String host, int port) {
-    TranslationSupport support = ProtocolCompatibility.between(clientProtocol, backendProtocol);
-    if (support == TranslationSupport.DIRECT) return IdentityTranslator.INSTANCE;
-
-    TranslationSettings settings = ConduitViaBootstrap.settings();
-    TranslationSettings.TranslationEngine engine = settings.engine();
-    boolean viaPossible = settings.enabled()
-        && engine != TranslationSettings.TranslationEngine.NATIVE
-        && ConduitViaSupport.supportsTranslation(clientProtocol, backendProtocol);
-    boolean nativePossible = ProtocolDefinition.hasCodec(clientProtocol)
-        && ProtocolDefinition.hasCodec(backendProtocol)
-        && TranslatorRegistry.has(clientProtocol, backendProtocol);
-
-    if (engine == TranslationSettings.TranslationEngine.VIA) {
-      if (!viaPossible) {
-        throw new IllegalArgumentException("ViaVersion cannot translate " + clientProtocol + " → " + backendProtocol);
-      }
-      return ConduitViaTranslator.create(clientProtocol, backendProtocol, host, port);
-    }
-    if (engine == TranslationSettings.TranslationEngine.NATIVE) {
-      return TranslatorRegistry.find(clientProtocol, backendProtocol)
+    CompatibilityProbe.Result probe = CompatibilityProbe.probe(clientProtocol, backendProtocol);
+    return switch (probe.engine()) {
+      case DIRECT -> IdentityTranslator.INSTANCE;
+      case VIA -> ConduitViaTranslator.create(clientProtocol, backendProtocol, host, port);
+      case NATIVE -> TranslatorRegistry.find(clientProtocol, backendProtocol)
           .orElseThrow(() -> new IllegalArgumentException(
               "no packet translator for " + clientProtocol + " → " + backendProtocol));
-    }
-    // via-preferred
-    if (viaPossible) {
-      return ConduitViaTranslator.create(clientProtocol, backendProtocol, host, port);
-    }
-    if (nativePossible) {
-      return TranslatorRegistry.find(clientProtocol, backendProtocol)
-          .orElseThrow(() -> new IllegalArgumentException(
-              "no packet translator for " + clientProtocol + " → " + backendProtocol));
-    }
-    throw new IllegalArgumentException(
-        "no packet translator for " + clientProtocol + " → " + backendProtocol + " (" + support + ")");
+      case NONE -> throw new IllegalArgumentException("no packet translator for "
+          + clientProtocol + " → " + backendProtocol + " (" + probe.reason() + ")");
+    };
   }
 }

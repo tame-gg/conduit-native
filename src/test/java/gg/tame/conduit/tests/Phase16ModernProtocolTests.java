@@ -74,7 +74,13 @@ public final class Phase16ModernProtocolTests {
     require(ProtocolFamily.ofProtocol(340) == ProtocolFamily.LEGACY_OUT_OF_SCOPE, "340 legacy family");
     require(!ProtocolCatalog.inModernProgram(340), "340 not modern");
     require(ProtocolCatalog.inModernProgram(393), "393 modern");
-    require(!ProtocolDefinition.hasCodec(340), "no 1.12.2 codec");
+    // Out of the modern program and having a table are different claims, and 1.12.2 now makes
+    // both at once: Conduit does not translate it, but it holds enough of its table to admit the
+    // client and let Via do that. The pairing is the point -- "out of scope" is about whose
+    // translators carry the version, not about whether it can connect.
+    require(ProtocolDefinition.hasCodec(340), "1.12.2 has an admission table");
+    require(ProtocolDefinition.codecStatus(340) == gg.tame.conduit.protocol.CodecStatus.DECLARED,
+        "1.12.2 table is declared, not verified");
   }
 
   private static void families() {
@@ -106,8 +112,12 @@ public final class Phase16ModernProtocolTests {
     // known identities with no packet table at all.
     require(!ProtocolDefinition.hasCodec(485), "1.14.2 catalog only, no published data to derive");
     require(ProtocolDefinition.codecStatus(485) == CodecStatus.NONE, "485 has no codec");
-    require(!ProtocolDefinition.hasCodec(47), "1.8.9 out of program");
-    require(ProtocolDefinition.codecStatus(47) == CodecStatus.NONE, "47 has no codec");
+    require(ProtocolDefinition.hasCodec(47), "1.8.x has an admission table");
+    require(ProtocolDefinition.codecStatus(47) == CodecStatus.DECLARED, "47 table is declared");
+    // 1.14.2 is the shape the pre-flattening tables are not: a catalog identity with nothing
+    // behind it. Keeping both cases here is what stops "in the catalog" and "has a table" from
+    // collapsing into one idea again.
+    require(!ProtocolDefinition.hasCodec(485), "485 is still catalog-only");
 
     // Having a codec on both sides never by itself implies a translation path.
     require(ProtocolDefinition.hasCodec(401) && ProtocolDefinition.hasCodec(765), "both have codecs");

@@ -85,6 +85,27 @@ public record ProtocolCapabilities(
         false, true, true, false, false, true, true, true);
   }
 
+  /**
+   * Pre-flattening releases: 1.7.6&ndash;1.7.10 (5), 1.8.x (47) and 1.12.2 (340).
+   *
+   * <p>Conduit does not translate these itself &mdash; ViaRewind and ViaVersion do. What Conduit
+   * needs from the table is the handful of client packets it reasons about on its own behalf: the
+   * chat line a command arrives on, the tab-complete request, keep-alive, and the login exchange.
+   * The capabilities that differ from {@link #flattening113()} are the ones that decide whether
+   * Conduit tries something the release has no packet for at all: there is no login plugin message
+   * before 1.13, so no modern forwarding either; no command tree before 1.13, so no merged proxy
+   * command list; and no tag packet to withhold.
+   *
+   * @param compression   1.8 introduced Set Compression; 1.7 has no such packet
+   * @param resourcePacks 1.8 introduced the resource-pack exchange
+   */
+  public static ProtocolCapabilities preFlattening(boolean compression, boolean resourcePacks) {
+    return new ProtocolCapabilities(
+        false, false, false, false, false, false, false, false,
+        false, false, false, false, compression, true, false,
+        false, false, false, false, false, resourcePacks, true, true);
+  }
+
   public Set<String> named() {
     EnumSet<Flag> flags = EnumSet.noneOf(Flag.class);
     if (configurationPhase) flags.add(Flag.CONFIGURATION);

@@ -133,7 +133,13 @@ public final class ConduitViaSession implements AutoCloseable {
     // real client handshake and writes its own backend handshake separately.
     try {
       byte[] handshake = new Handshake(clientProtocol, host == null ? "conduit" : host, port <= 0 ? 25565 : port, 2).encode();
-      ByteBuf buf = Unpooled.wrappedBuffer(handshake);
+      // Growable, because Via rewrites this packet in place and the rewrite is not always the
+      // same length. The protocol number is a varint, so a 1.8 client's 47 becomes a 1.20.4
+      // backend's 765 and the packet gains a byte it has nowhere to put: a wrapped array's
+      // capacity is its length and cannot grow, and the priming failed with a buffer overflow
+      // for every pair whose two protocol numbers need a different number of varint bytes.
+      ByteBuf buf = Unpooled.buffer(handshake.length + 8);
+      buf.writeBytes(handshake);
       try {
         connection.getProtocolInfo().setClientState(State.HANDSHAKE);
         connection.getProtocolInfo().setServerState(State.HANDSHAKE);

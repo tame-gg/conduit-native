@@ -142,18 +142,25 @@ public final class MinecraftProxy implements AutoCloseable {
       }
       runtime.security().botFilter().recordValidHandshake(remote);
       ProtocolSession session = new ProtocolSession(); session.acceptHandshake(handshake.nextState());
-      ProtocolDefinition protocol;
-      try { protocol = ProtocolDefinition.forVersion(handshake.protocolVersion()); }
-      catch (IllegalArgumentException unsupported) {
-        if (handshake.nextState() == 2) {
-          try { transport.write(LoginDisconnect.encode(ProtocolDefinition.forVersion(765), "Unsupported Minecraft version.")); } catch (IOException ignored) { }
-        }
-        throw new IOException(unsupported.getMessage(), unsupported);
-      }
+      // A protocol Conduit has no table for still gets an answer. Status is negotiated in the
+      // same few packets on every version Conduit could be asked about, and answering it with a
+      // neighbouring table is how a client too old or too new for this proxy sees a server that
+      // says so in its list, rather than a connection that resets with no explanation at all.
+      ProtocolDefinition protocol = ProtocolDefinition.hasCodec(handshake.protocolVersion())
+          ? ProtocolDefinition.forVersion(handshake.protocolVersion())
+          : statusFallbackProtocol();
       if (handshake.nextState() == 1) {
         runtime.security().botFilter().recordStatusPing(remote);
         serveStatus(transport, protocol, handshake.protocolVersion());
         return;
+      }
+      if (!ProtocolDefinition.hasCodec(handshake.protocolVersion())) {
+        // Login needs the client's own table: the proxy reads that client's packets on its own
+        // behalf long before any translator is chosen, and cannot do so from a neighbour's ids.
+        try {
+          transport.write(LoginDisconnect.encode(protocol, "Unsupported Minecraft version."));
+        } catch (IOException ignored) { }
+        throw new IOException("unsupported Minecraft protocol: " + handshake.protocolVersion());
       }
       if (!runtime.versionGate().allows(handshake.protocolVersion())) {
         try { transport.write(LoginDisconnect.encode(protocol, runtime.versionGate().kickMessage())); } catch (IOException ignored) { }
@@ -180,6 +187,14 @@ public final class MinecraftProxy implements AutoCloseable {
         player.play();
       }
     } catch (IOException exception) { ConduitLog.warn("Connection closed: " + exception.getMessage()); }
+    catch (RuntimeException | Error unexpected) {
+      // Only IOException was caught here, so anything else reached the worker pool's default
+      // handler and disappeared: the client saw a socket close with no reason and the proxy
+      // logged nothing at all. A missing packet id on a partially authored table raises an
+      // unchecked exception, which is exactly the class of fault that most needs to be named.
+      ConduitLog.error("Connection closed by an unhandled fault", unexpected);
+      throw unexpected;
+    }
     finally {
       runtime.security().throttle().release(leaseHolder.lease);
       connections.decrementAndGet();
@@ -215,6 +230,19 @@ public final class MinecraftProxy implements AutoCloseable {
       ConduitLog.info(authenticated.summary());
     } finally { authPermits.release(); }
   }
+  /**
+   * A table to answer a status ping with when the client's own protocol has none.
+   *
+   * <p>Any table works for the exchange itself &mdash; handshake, request, ping &mdash; so this
+   * picks the oldest one Conduit has, because the ids it uses are the ones that have changed least
+   * across the range and an old client is the likelier caller.
+   */
+  private static ProtocolDefinition statusFallbackProtocol() {
+    return ProtocolDefinition.all().values().stream()
+        .min(java.util.Comparator.comparingInt(d -> d.version().number()))
+        .orElseThrow(() -> new IllegalStateException("no protocol tables are registered"));
+  }
+
   private void serveStatus(PacketTransport client, ProtocolDefinition protocol, int clientProtocol) throws IOException {
     String description = "Conduit";
     String versionName = "Conduit " + protocol.version().displayName();

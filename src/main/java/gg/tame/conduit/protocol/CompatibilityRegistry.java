@@ -64,8 +64,6 @@ public final class CompatibilityRegistry {
         "control/login/config packets; JoinGame/player-info/registry unsupported");
     register(766, 765, TranslationSupport.TRANSLATED, CompatibilityCompleteness.PARTIAL,
         "control/login/config packets; JoinGame/player-info/registry unsupported");
-    register(765, 776, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE, "no 765↔776 translator");
-    register(776, 765, TranslationSupport.UNSUPPORTED, CompatibilityCompleteness.NONE, "no 776↔765 translator");
     // Both directions were run end to end with official Minecraft clients and
     // servers; see work/real-client-validation/RESULTS-393-765-CROSS.md.
     // PARTIAL is still the honest completeness: inventory, entity metadata,
@@ -98,9 +96,27 @@ public final class CompatibilityRegistry {
   }
 
   public static CompatibilityEntry resolve(int clientProtocol, int backendProtocol) {
+    TranslationSupport support = CompatibilityProbe.probe(clientProtocol, backendProtocol).support();
     CompatibilityEntry explicit = ENTRIES.get(key(clientProtocol, backendProtocol));
-    if (explicit != null) return explicit;
-    TranslationSupport support = ProtocolCompatibility.between(clientProtocol, backendProtocol);
+    // An explicit entry records what a real run proved about a pair -- how much of the protocol
+    // survives it, and how far it was verified. What it must never do is outrank the live answer
+    // about whether the pair is carried at all: an entry written when nothing could translate
+    // 765 to 776 went on asserting that after Via could, and the router believed it. So the
+    // verdict is always the probe's, and the entry supplies only what the probe cannot know.
+    if (explicit != null) {
+      return explicit.support() == support
+          ? explicit
+          : new CompatibilityEntry(clientProtocol, backendProtocol, support,
+              // A completeness of NONE recorded alongside UNSUPPORTED means "nothing carries
+              // this", not "nothing survives it". Carrying it forward onto a pair that now has a
+              // path would keep the router refusing it for the same stale reason.
+              support == TranslationSupport.UNSUPPORTED ? CompatibilityCompleteness.NONE
+                  : explicit.completeness() == CompatibilityCompleteness.NONE
+                      ? CompatibilityCompleteness.PARTIAL
+                      : explicit.completeness(),
+              explicit.validation(),
+              explicit.notes() + " (recorded as " + explicit.support() + "; live path says " + support + ")");
+    }
     CompatibilityCompleteness completeness = switch (support) {
       // Same-version forwarding is only FULL when the protocol's own packet
       // table was authored and validated for it. A DERIVED table inherits a

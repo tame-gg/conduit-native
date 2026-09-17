@@ -13,6 +13,8 @@ Three jobs:
            and must be resolved by hand, not by overwriting.
   deltas   Emit, for a target protocol and a chosen base protocol, only the
            mappings that differ -- the input to a ProtocolRevision.
+  declare  Emit a whole table for one release, for a version too far from any
+           registered base to derive from.
   coverage Report which PacketKinds are unmapped for which versions.
 
 This tool never writes Java. It prints data for a human to review and paste,
@@ -275,6 +277,26 @@ def cmd_deltas(args) -> None:
     print("\n".join(lines) if lines else "      // no differences")
 
 
+def cmd_declare(args) -> None:
+    """Print a full declared table for a release, for a version with no suitable base.
+
+    `deltas` covers the common case: a point release that moves a handful of ids off
+    a neighbour. A version from a different era has no neighbour in the registry to
+    derive from, and deriving one anyway would inherit every id the delta did not
+    happen to override -- which is a silently corrupted stream rather than a missing
+    entry. So this emits the whole table, and only the kinds the published data
+    actually resolves: a kind absent here reads as "this version has no such packet",
+    which is what the lookup returns for it and what the proxy guards on.
+    """
+    table = table_for(args.release)
+    print(f"// {args.release}: {len(table)} mappings resolved from published data, "
+          f"{len(KINDS) - len(table)} kinds absent")
+    for key in sorted(table, key=lambda k: (JAVA_STATE[k[0]], JAVA_DIRECTION[k[1]], k[2])):
+        state, direction, kind = key
+        print(f"      ConnectionState.{JAVA_STATE[state]}, PacketDirection.{JAVA_DIRECTION[direction]}, "
+              f"PacketKind.{kind}, 0x{table[key]:02X},")
+
+
 def cmd_coverage(args) -> None:
     releases = args.releases.split(",") if args.releases else sorted(paths())
     print(f"{'release':<10} {'mapped':>6} {'absent':>7}")
@@ -294,6 +316,9 @@ def main() -> None:
     deltas.add_argument("release")
     deltas.add_argument("base_release")
     deltas.set_defaults(func=cmd_deltas)
+    declare = sub.add_parser("declare")
+    declare.add_argument("release")
+    declare.set_defaults(func=cmd_declare)
     coverage = sub.add_parser("coverage")
     coverage.add_argument("--releases")
     coverage.set_defaults(func=cmd_coverage)

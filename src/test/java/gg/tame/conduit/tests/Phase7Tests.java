@@ -136,8 +136,18 @@ public final class Phase7Tests {
     require(IdentityTranslator.INSTANCE.clientToBackend(ConnectionState.PLAY, packet) == packet, "no copy identity");
     try { Translators.forPair(5, 765); throw new AssertionError("translator claimed"); }
     catch (IllegalArgumentException expected) { }
-    try { gg.tame.conduit.protocol.ProtocolDefinition.forVersion(5); throw new AssertionError("1.7.10 codec claimed"); }
-    catch (IllegalArgumentException expected) { }
+    // 1.7.6-1.7.10 has a table so the client can be admitted at all, and it is deliberately
+    // partial: it carries what Conduit acts on itself and nothing else. Asserting both halves,
+    // because a table that quietly grew into a support claim would be the real regression.
+    var legacy = gg.tame.conduit.protocol.ProtocolDefinition.forVersion(5);
+    require(legacy.defines(ConnectionState.LOGIN, gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER,
+        gg.tame.conduit.protocol.PacketKind.LOGIN_START), "1.7.6 knows Login Start");
+    require(legacy.defines(ConnectionState.PLAY, gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER,
+        gg.tame.conduit.protocol.PacketKind.PLAY_CHAT_COMMAND), "1.7.6 knows the chat line commands arrive on");
+    require(!legacy.hasConfiguration(), "1.7.6 has no configuration phase");
+    require(!legacy.capabilities().compression(), "1.7.6 predates Set Compression");
+    require(!legacy.defines(ConnectionState.PLAY, gg.tame.conduit.protocol.PacketDirection.SERVER_TO_CLIENT,
+        gg.tame.conduit.protocol.PacketKind.PLAY_DECLARE_COMMANDS), "1.7.6 has no command tree");
   }
   private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }
   private static final class FakePlayer implements TrackedPlayer, CommandSource {
