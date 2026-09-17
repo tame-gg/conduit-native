@@ -990,6 +990,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         }
         writeClient(outbound, true);
         flushTranslatorExtras(current);
+        resumeAfterSwitchedJoinGame(current);
         if (clientState.state() == ConnectionState.PLAY && isPlayLogin(translated)) {
           emitSelfPlayerInfoIfNeeded();
         }
@@ -1340,8 +1341,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       commandsDeclared = false;
       // A client with a Configuration phase is held in it until the phase finishes, so its Play
       // packets cannot race the new backend's Join Game. One without a phase has nothing holding
-      // it, and this is what holds it instead.
-      if (viaEngine() && !protocol.hasConfiguration()) awaitingBackendJoinGame.hold();
+      // it, and this is what holds it instead -- whatever carries the pair, not only Via. The new
+      // backend has no Configuration phase either, and it only starts decoding Play when it sends
+      // Join Game: a real 1.8.9 client switched DIRECT between two 1.8.9 servers had the replayed
+      // Client Settings land in that gap, and both servers dropped it with "Bad packet id 21".
+      if (!protocol.hasConfiguration()) awaitingBackendJoinGame.hold();
       else awaitingBackendJoinGame.release();
       synchronized (lock) {
         backend = next;

@@ -43,7 +43,96 @@ public final class Phase6Tests {
     failedSwitchKeepsCurrentBackend();
     commandGraphMergeKeepsIndexesValid();
     legacyTabCompleteKeepsSession();
+    legacySwitchWaitsForJoinGame();
     Phase7Tests.run();
+  }
+  /**
+   * A backend with no Configuration phase decodes Login until it sends Join Game. Switching a real
+   * 1.8.9 client DIRECT between two 1.8.9 servers, Conduit replayed the client's settings as soon as
+   * Login Success arrived, and both servers dropped it with "Bad packet id 21". The survival mock
+   * here leaves a gap between the two packets and fails if anything reaches it inside that gap,
+   * while the client keeps moving the whole time; the settings must still arrive after Join Game.
+   */
+  private static void legacySwitchWaitsForJoinGame() throws Exception {
+    byte[] settings = legacySettings();
+    try (ServerSocket lobby = new ServerSocket(0); ServerSocket survival = new ServerSocket(0)) {
+      Thread lobbyThread = Thread.startVirtualThread(() -> {
+        try (Socket socket = lobby.accept()) {
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
+          MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame(1));
+          socket.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
+        } catch (Exception ignored) { }
+      });
+      AtomicReference<String> early = new AtomicReference<>("");
+      java.util.concurrent.CountDownLatch replayed = new java.util.concurrent.CountDownLatch(1);
+      Thread survivalThread = Thread.startVirtualThread(() -> {
+        try (Socket socket = survival.accept()) {
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
+          socket.setSoTimeout(700);
+          try {
+            byte[] tooSoon = MinecraftFrames.read(socket.getInputStream(), 4096);
+            early.set("packet 0x" + Integer.toHexString(PlayPackets.packetId(tooSoon)) + " before Join Game");
+          } catch (java.net.SocketTimeoutException quiet) { }
+          socket.setSoTimeout(10_000);
+          MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame(2));
+          while (true) {
+            if (java.util.Arrays.equals(MinecraftFrames.read(socket.getInputStream(), 4096), settings)) replayed.countDown();
+          }
+        } catch (Exception ignored) { }
+      });
+      ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 4096,
+          ForwardingMode.NONE, Optional.empty(),
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort())),
+              new BackendServer("survival", new InetSocketAddress("127.0.0.1", survival.getLocalPort()))),
+          List.of("lobby"), List.of("lobby"));
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(10_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(client.getOutputStream(), legacyPacket(0, "playr"));
+          readUntilPacket(client, 0x01);
+          MinecraftFrames.write(client.getOutputStream(), settings);
+          MinecraftFrames.write(client.getOutputStream(), legacyPacket(0x01, "/server survival"));
+          // A client on its way out of one world still sends a movement packet every tick.
+          Thread moving = Thread.startVirtualThread(() -> {
+            try {
+              for (int tick = 0; tick < 40; tick++) {
+                synchronized (client) { MinecraftFrames.write(client.getOutputStream(), new byte[] {0x03, 1}); }
+                Thread.sleep(50);
+              }
+            } catch (Exception ignored) { }
+          });
+          boolean replayedInTime = replayed.await(10, java.util.concurrent.TimeUnit.SECONDS);
+          moving.join();
+          require(early.get().isEmpty(), "nothing may reach a backend before its Join Game: " + early.get());
+          require(replayedInTime, "settings replayed to survival after its Join Game");
+        }
+        serving.interrupt();
+      }
+      lobbyThread.interrupt(); survivalThread.interrupt();
+    }
+  }
+  private static byte[] legacySettings() throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, 0x15); MinecraftOutput.string(output, "en_US");
+      output.writeByte(8); output.writeByte(0); output.writeBoolean(true); output.writeByte(0x7F);
+    }
+    return bytes.toByteArray();
+  }
+  /** 1.8 Join Game: entity id, game mode, dimension, difficulty, max players, level type, reduced debug. */
+  private static byte[] legacyJoinGame(int entityId) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, 0x01); output.writeInt(entityId); output.writeByte(0); output.writeByte(0);
+      output.writeByte(1); output.writeByte(20); MinecraftOutput.string(output, "flat"); output.writeBoolean(false);
+    }
+    return bytes.toByteArray();
   }
   /**
    * A 1.8 client's Tab-Complete request has no transaction id and its reply no range. Read with the
