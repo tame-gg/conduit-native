@@ -415,18 +415,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return toBackend;
   }
 
-  private byte[] towardClient(ConnectionState state, byte[] packet) {
+  private byte[] towardClient(ConnectionState state, byte[] packet) throws IOException {
     return towardClient(translator, state, packet);
   }
 
-  private byte[] towardClient(ProtocolTranslator translator, ConnectionState state, byte[] packet) {
+  private byte[] towardClient(ProtocolTranslator translator, ConnectionState state, byte[] packet) throws IOException {
     if (translator == IdentityTranslator.INSTANCE) return packet;
     synchronized (translatorLock) {
       return towardClientLocked(translator, state, packet);
     }
   }
 
-  private byte[] towardClientLocked(ProtocolTranslator translator, ConnectionState state, byte[] packet) {
+  private byte[] towardClientLocked(ProtocolTranslator translator, ConnectionState state, byte[] packet) throws IOException {
     // Via is told where the *client* is, never where the backend is. Across the 1.20.2 boundary
     // the two genuinely differ — a 1.13 client is in Play while the backend is still in
     // Configuration — and that split is the thing Via's downgrade path is keyed on. The native
@@ -438,7 +438,26 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
               + Integer.toHexString(PlayPackets.packetId(packet)) + " len=" + packet.length);
         } catch (Exception ignored) { }
       }
+      // What Via produced earlier goes out before anything it produces now. The other reader thread
+      // can leave packets queued between its transform and its flush -- a client's Configuration
+      // acknowledgement is what releases a switched Join Game -- and a chunk translated here in that
+      // gap reached a 1.21.8 client ahead of the Join Game it belongs to.
+      for (byte[] earlier : via.drainToClient()) {
+        writeClient(earlier, true);
+      }
       byte[] out = via.backendToClient(clientState.state(), packet);
+      // Via sends some packets while handling another, and in its own pipeline those reach the wire
+      // first. Every caller writes the result and only then the extras, so these go out here. A
+      // 1.21.8 client on a 1.20.4 backend otherwise got its missing registries after Finish
+      // Configuration and disconnected over registries that were never populated.
+      for (byte[] ahead : via.drainAheadOfResult()) {
+        if (ProtocolTrace.enabled()) {
+          try {
+            ProtocolTrace.note("ahead →client id=0x" + Integer.toHexString(PlayPackets.packetId(ahead)) + " len=" + ahead.length);
+          } catch (Exception ignored) { }
+        }
+        writeClient(ahead, true);
+      }
       if (ProtocolTrace.enabled()) {
         try {
           ProtocolTrace.note("via  →client result " + (out == null ? "cancelled"

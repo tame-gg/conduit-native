@@ -72,6 +72,11 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     return session.drainToClient();
   }
 
+  /** Clientbound packets Via sent while handling the last clientbound packet, which go before it. */
+  public List<byte[]> drainAheadOfResult() {
+    return session.drainAheadOfResult();
+  }
+
   @Override
   public List<byte[]> drainToBackend() {
     return session.drainToBackend();

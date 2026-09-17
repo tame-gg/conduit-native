@@ -42,6 +42,14 @@ public final class ConduitViaSession implements AutoCloseable {
   private final EmbeddedChannel channel;
   private final UserConnection connection;
   private final ConcurrentLinkedQueue<byte[]> extrasToClient = new ConcurrentLinkedQueue<>();
+  /**
+   * Clientbound packets Via wrote while a clientbound packet was being transformed. In a real
+   * pipeline those reach the wire before the packet being handled; held with the other extras they
+   * were written after it, and a 1.21.8 client was handed eleven registries after Finish
+   * Configuration and refused them all.
+   */
+  private final ConcurrentLinkedQueue<byte[]> aheadOfResult = new ConcurrentLinkedQueue<>();
+  private volatile boolean transformingClientbound;
   private final ConcurrentLinkedQueue<byte[]> extrasToBackend = new ConcurrentLinkedQueue<>();
   private final int clientProtocol;
   private volatile int backendProtocol;
@@ -109,7 +117,7 @@ public final class ConduitViaSession implements AutoCloseable {
             buf.getBytes(buf.readerIndex(), copy);
             Object session = ctx.channel().attr(ConduitViaSessionHolder.KEY).get();
             if (session instanceof ConduitViaSession via) {
-              via.extrasToClient.offer(copy);
+              (via.transformingClientbound ? via.aheadOfResult : via.extrasToClient).offer(copy);
             }
             promise.setSuccess();
           } finally {
@@ -151,6 +159,7 @@ public final class ConduitViaSession implements AutoCloseable {
       connection.getProtocolInfo().setServerState(State.LOGIN);
       // Discard any extras produced while priming.
       session.extrasToClient.clear();
+      session.aheadOfResult.clear();
       session.extrasToBackend.clear();
       while (channel.readOutbound() != null) {
         // drain
@@ -259,7 +268,13 @@ public final class ConduitViaSession implements AutoCloseable {
       if (serverbound) {
         connection.transformServerbound(buf, CancelDecoderException::generate);
       } else {
-        connection.transformClientbound(buf, CancelEncoderException::generate);
+        transformingClientbound = true;
+        try {
+          connection.transformClientbound(buf, CancelEncoderException::generate);
+        } finally {
+          transformingClientbound = false;
+          captureAheadOfResult();
+        }
       }
       byte[] out = new byte[buf.readableBytes()];
       buf.readBytes(out);
@@ -274,6 +289,27 @@ public final class ConduitViaSession implements AutoCloseable {
       throw new TranslationException("ViaVersion transform failed: " + failure.getMessage(), failure);
     } finally {
       buf.release();
+    }
+  }
+
+  /**
+   * Moves what Via wrote to the channel during a clientbound transform ahead of that packet. Via
+   * writes from the encoder's own context, which skips the capture handler and lands in the outbound
+   * buffer; read before the event loop's queue runs, it is exactly what a real pipeline would already
+   * have put on the wire. Scheduled sends are left for {@link #drainEmbeddedOutbound}.
+   */
+  private void captureAheadOfResult() {
+    Object outbound;
+    while ((outbound = channel.readOutbound()) != null) {
+      if (outbound instanceof ByteBuf out) {
+        try {
+          byte[] copy = new byte[out.readableBytes()];
+          out.getBytes(out.readerIndex(), copy);
+          aheadOfResult.offer(copy);
+        } finally {
+          out.release();
+        }
+      }
     }
   }
 
@@ -302,8 +338,16 @@ public final class ConduitViaSession implements AutoCloseable {
     }
   }
 
+  /** Everything still queued for the client, what Via sent ahead of a result first. */
   public List<byte[]> drainToClient() {
-    return drain(extrasToClient);
+    List<byte[]> packets = drain(aheadOfResult);
+    packets.addAll(drain(extrasToClient));
+    return packets;
+  }
+
+  /** Clientbound packets Via wrote while transforming the last clientbound packet; they precede it. */
+  public List<byte[]> drainAheadOfResult() {
+    return drain(aheadOfResult);
   }
 
   public List<byte[]> drainToBackend() {
