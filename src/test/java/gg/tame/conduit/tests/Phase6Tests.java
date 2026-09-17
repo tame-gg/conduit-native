@@ -42,7 +42,100 @@ public final class Phase6Tests {
     switchBetweenMockBackends();
     failedSwitchKeepsCurrentBackend();
     commandGraphMergeKeepsIndexesValid();
+    legacyTabCompleteKeepsSession();
     Phase7Tests.run();
+  }
+  /**
+   * A 1.8 client's Tab-Complete request has no transaction id and its reply no range. Read with the
+   * 1.13 layout, the text's length prefix was taken for a transaction id and the string read ran off
+   * the end of the packet, which ended a real 1.8.9 session on its first Tab press. Drives that
+   * exchange through a live proxy: the replies must be in the 1.8 layout, a command name must keep
+   * its slash, and a chat line sent afterwards must still reach the backend.
+   */
+  private static void legacyTabCompleteKeepsSession() throws Exception {
+    try (ServerSocket backendListener = new ServerSocket(0)) {
+      AtomicReference<String> chat = new AtomicReference<>();
+      Thread backend = Thread.startVirtualThread(() -> {
+        try (Socket socket = backendListener.accept()) {
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
+          while (chat.get() == null) {
+            byte[] packet = MinecraftFrames.read(socket.getInputStream(), 4096);
+            // A command name reaches the backend, which answers with the commands it knows.
+            if (PlayPackets.packetId(packet) == 0x14) MinecraftFrames.write(socket.getOutputStream(), legacyPacketWithCount(0x3A, "/seed"));
+            if (PlayPackets.packetId(packet) != 0x01) continue;
+            try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(packet))) {
+              MinecraftInput.varInt(input);
+              chat.set(MinecraftInput.string(input, 100));
+            }
+          }
+          socket.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
+        } catch (Exception ignored) { }
+      });
+      ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 4096,
+          ForwardingMode.NONE, Optional.empty(),
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", backendListener.getLocalPort()))),
+          List.of("lobby"), List.of("lobby"));
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(10_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(client.getOutputStream(), legacyPacket(0, "playr"));
+          require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
+          // Tab after "/server ", sent the way a 1.8 client sends it: text, then no looked-at block.
+          MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/server "));
+          require(java.util.Arrays.equals(readUntilPacket(client, 0x3A), legacyPacketWithCount(0x3A, "lobby")), "1.8 reply lists servers");
+          MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/server"));
+          require(java.util.Arrays.equals(readUntilPacket(client, 0x3A), legacyPacketWithCount(0x3A, "/server")), "command name keeps its slash");
+          // A partial name is the backend's to answer; Conduit's own commands are added to its reply.
+          MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/se"));
+          List<String> names = PlayPackets.legacyTabMatches(readUntilPacket(client, 0x3A));
+          require(names.size() == 3 && names.containsAll(List.of("/seed", "/send", "/server")), "backend and Conduit command names: " + names);
+          MinecraftFrames.write(client.getOutputStream(), legacyPacket(0x01, "still here"));
+          backend.join(10_000);
+        }
+        require("still here".equals(chat.get()), "session still carries chat after Tab: " + chat.get());
+        serving.interrupt();
+      }
+    }
+    // 1.12.2 appends a command-block flag and the looked-at block; 1.13+ keeps its transaction id.
+    ByteArrayOutputStream request1122 = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(request1122)) {
+      MinecraftOutput.varInt(output, 0x01); MinecraftOutput.string(output, "/server s"); output.writeBoolean(false); output.writeBoolean(false);
+    }
+    require(PlayPackets.tabRequest(ProtocolDefinition.forVersion(340), request1122.toByteArray()).text().equals("/server s"), "1.12.2 request text");
+    ByteArrayOutputStream request1204 = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(request1204)) {
+      MinecraftOutput.varInt(output, 0x0A); MinecraftOutput.varInt(output, 7); MinecraftOutput.string(output, "/server s");
+    }
+    PlayPackets.TabRequest modern = PlayPackets.tabRequest(ProtocolDefinition.forVersion(765), request1204.toByteArray());
+    require(modern.transactionId() == 7 && modern.text().equals("/server s"), "1.20.4 request keeps its transaction id");
+  }
+  private static byte[] legacyTabRequest(String text) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, 0x14); MinecraftOutput.string(output, text); output.writeBoolean(false);
+    }
+    return bytes.toByteArray();
+  }
+  private static byte[] legacyPacket(int id, String... strings) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, id);
+      for (String value : strings) MinecraftOutput.string(output, value);
+    }
+    return bytes.toByteArray();
+  }
+  private static byte[] legacyPacketWithCount(int id, String... strings) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, id);
+      MinecraftOutput.varInt(output, strings.length);
+      for (String value : strings) MinecraftOutput.string(output, value);
+    }
+    return bytes.toByteArray();
   }
   private static void serverBrandTransformations() {
     require(ServerBrand.display("Paper").equals("Paper (Conduit)"), "Paper brand");

@@ -60,16 +60,34 @@ public final class PlayPackets {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TAB_COMPLETE));
-      MinecraftOutput.varInt(output, transactionId);
-      MinecraftOutput.varInt(output, start);
-      MinecraftOutput.varInt(output, length);
-      MinecraftOutput.varInt(output, matches.size());
-      for (String match : matches) {
-        MinecraftOutput.string(output, match);
-        output.writeBoolean(false);
+      if (!protocol.capabilities().commandTree()) {
+        // Before 1.13's command tree the reply is the matches alone: no transaction to echo and no
+        // range, because the client puts a match in place of the last word it typed.
+        MinecraftOutput.varInt(output, matches.size());
+        for (String match : matches) MinecraftOutput.string(output, match);
+      } else {
+        MinecraftOutput.varInt(output, transactionId);
+        MinecraftOutput.varInt(output, start);
+        MinecraftOutput.varInt(output, length);
+        MinecraftOutput.varInt(output, matches.size());
+        for (String match : matches) {
+          MinecraftOutput.string(output, match);
+          output.writeBoolean(false);
+        }
       }
     }
     return bytes.toByteArray();
+  }
+  /** The matches in a Tab-Complete reply from before 1.13's command tree: a count, then strings. */
+  public static List<String> legacyTabMatches(byte[] packet) throws IOException {
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      MinecraftInput.varInt(input);
+      int count = MinecraftInput.varInt(input);
+      if (count < 0 || count > 4096) throw new IOException("tab-complete reply with " + count + " matches");
+      List<String> matches = new java.util.ArrayList<>(count);
+      for (int index = 0; index < count; index++) matches.add(MinecraftInput.string(input, 32767));
+      return matches;
+    }
   }
   public static String chatCommand(byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
@@ -77,10 +95,14 @@ public final class PlayPackets {
       return MinecraftInput.string(input, 256);
     }
   }
-  public static TabRequest tabRequest(byte[] packet) throws IOException {
+  public static TabRequest tabRequest(ProtocolDefinition protocol, byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
-      int id = MinecraftInput.varInt(input);
+      // The transaction id came with 1.13's command tree. Before it the request opens with the text,
+      // and what 1.8 and 1.12 append after it (a looked-at block, a command-block flag) is not needed.
+      // Read as a transaction id, the text's length prefix sent the string read past the end of the
+      // packet, and the exception ended the session on the client's first Tab press.
+      int id = protocol.capabilities().commandTree() ? MinecraftInput.varInt(input) : -1;
       String text = MinecraftInput.string(input, 32500);
       return new TabRequest(id, text);
     }

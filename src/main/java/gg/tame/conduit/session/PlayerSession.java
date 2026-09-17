@@ -90,6 +90,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private volatile boolean closed;
   private volatile boolean expectClientLoginAck;
   /**
+   * The command name a client with no command tree last sent the backend to complete, until the
+   * backend's reply has had Conduit's matching commands added. That reply is the only place such a
+   * client learns command names from, and the backend knows none of Conduit's.
+   */
+  private volatile String legacyCommandCompletion;
+  /**
    * True while Conduit, rather than the translator, is the one moving the client out of Play for a
    * reconfiguration, so the client's acknowledgement is Conduit's own reply and must not also be
    * handed to a translator that has already put its half of the connection into Configuration.
@@ -762,14 +768,22 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
-      PlayPackets.TabRequest request = PlayPackets.tabRequest(packet);
+      PlayPackets.TabRequest request = PlayPackets.tabRequest(protocol, packet);
       var command = gg.tame.conduit.command.ParsedCommand.parseKeepEmpty(request.text());
       if (request.text().startsWith("/") && commands.get(command.name()).isPresent()) {
         List<String> completions = commands.tabComplete(this, request.text());
+        // A client with no command tree puts each match in place of the last word it typed, so a
+        // command name has to come back with the slash it was typed with.
+        if (!protocol.capabilities().commandTree() && request.text().indexOf(' ') < 0) {
+          completions = completions.stream().map(name -> "/" + name).toList();
+        }
         int start = request.text().lastIndexOf(' ') + 1;
         int length = Math.max(0, request.text().length() - start);
         writeClient(PlayPackets.tabComplete(protocol, request.transactionId(), start, length, completions));
         return true;
+      }
+      if (!protocol.capabilities().commandTree() && request.text().startsWith("/") && request.text().indexOf(' ') < 0) {
+        legacyCommandCompletion = request.text();
       }
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED)) {
@@ -1493,6 +1507,24 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     needSelfPlayerInfo = false;
   }
   private void writeClient(byte[] packet) throws IOException { writeClient(packet, true); }
+  /** Adds Conduit's matching command names to the backend's reply to a pre-1.13 command-name Tab. */
+  private byte[] withProxyCommandNames(byte[] packet) {
+    String typed = legacyCommandCompletion;
+    if (typed == null || clientState.state() != ConnectionState.PLAY) return packet;
+    try {
+      if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.PLAY_TAB_COMPLETE)) {
+        return packet;
+      }
+      legacyCommandCompletion = null;
+      List<String> backendMatches = PlayPackets.legacyTabMatches(packet);
+      java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(backendMatches);
+      for (String name : commands.tabComplete(this, typed)) merged.add("/" + name);
+      return merged.size() == backendMatches.size() ? packet : PlayPackets.tabComplete(protocol, -1, 0, 0, List.copyOf(merged));
+    } catch (IOException unreadable) {
+      // The backend's reply goes through untouched rather than the session over a completion list.
+      return packet;
+    }
+  }
   private void writeClient(byte[] packet, boolean flush) throws IOException {
     // The Play-phase half of this adapter reads Join Game and Player Info against Conduit's own
     // notion of the client's protocol. Via has already rewritten both into the client's dialect,
@@ -1506,6 +1538,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // Last stop before the socket: a recipe list the client cannot parse costs the whole session,
     // and a correct one passes through this untouched.
     outbound = gg.tame.conduit.protocol.RecipeListRepair.apply(protocol, outbound);
+    outbound = withProxyCommandNames(outbound);
     if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
       String where = lifecycle.get() == SessionLifecycle.SWITCHING ? "switch" : "steady";
       gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());
