@@ -163,13 +163,13 @@ final class VelocityEventBridge {
 
   /**
    * The server-list answer as a ServerPing, and whatever the plugins leave in it back. A denied
-   * result sends no answer. Hidden players and mod info have no place in Conduit's answer, so
-   * those parts of a plugin's ServerPing are dropped.
+   * result sends no answer, and a ServerPing with no players hides the counts. Mod info has no place
+   * in Conduit's answer, so that part of a plugin's ServerPing is dropped.
    */
   @Subscribe public void onPing(ServerListPingEvent event) {
     if (event.cancelled() || !listening(ProxyPingEvent.class)) return;
     ServerPing offered = new ServerPing(new ServerPing.Version(event.versionProtocol(), event.versionName()),
-        new ServerPing.Players(event.onlinePlayers(), event.maxPlayers(),
+        event.playersHidden() ? null : new ServerPing.Players(event.onlinePlayers(), event.maxPlayers(),
             event.samplePlayers().stream().map(player -> new ServerPing.SamplePlayer(player.name(), player.uniqueId())).toList()),
         Texts.toAdventure(event.description()), event.favicon().map(Favicon::new).orElse(null));
     ProxyPingEvent ping = environment.fireAndWait(new ProxyPingEvent(new PingConnection(event), offered));
@@ -182,6 +182,7 @@ final class VelocityEventBridge {
     event.setDescription(Texts.toConduit(answer.getDescriptionComponent()));
     event.setVersionName(answer.getVersion().getName());
     event.setVersionProtocol(answer.getVersion().getProtocol());
+    event.setPlayersHidden(answer.getPlayers().isEmpty());
     answer.getPlayers().ifPresent(players -> {
       event.setOnlinePlayers(players.getOnline());
       event.setMaxPlayers(players.getMax());
@@ -198,8 +199,9 @@ final class VelocityEventBridge {
     private final ServerListPingEvent ping;
     PingConnection(ServerListPingEvent ping) { this.ping = ping; }
     @Override public InetSocketAddress getRemoteAddress() { return ping.remoteAddress(); }
-    /** The native event carries the host the client dialled, not the port: the port is 0. */
-    @Override public Optional<InetSocketAddress> getVirtualHost() { return ping.virtualHost().map(host -> InetSocketAddress.createUnresolved(host, 0)); }
+    @Override public Optional<InetSocketAddress> getVirtualHost() {
+      return ping.virtualHost().map(host -> InetSocketAddress.createUnresolved(host, ping.virtualPort()));
+    }
     @Override public Optional<String> getRawVirtualHost() { return ping.virtualHost(); }
     @Override public boolean isActive() { return true; }
     @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.getProtocolVersion(ping.protocolVersion()); }

@@ -460,7 +460,7 @@ public final class VelocityCompatTests {
           @Subscribe public void disconnect(DisconnectEvent event) {
             signal("disconnect:" + event.getPlayer().getUsername() + ":" + event.getLoginStatus());
           }
-          /** The server list: rewritten for localhost, refused for deny.example. */
+          /** The server list: rewritten for localhost, refused for deny.example, counts hidden for hidden.example. */
           @Subscribe public void ping(ProxyPingEvent event) {
             pinged = event.getConnection();
             String host = event.getConnection().getRawVirtualHost().orElse("?");
@@ -468,8 +468,13 @@ public final class VelocityCompatTests {
             signal("ping:" + host + ":" + event.getConnection().getProtocolVersion().getProtocol() + ":"
                 + offered.getPlayers().map(p -> p.getOnline() + "/" + p.getMax()).orElse("-") + ":" + plain(offered.getDescriptionComponent())
                 + ":" + offered.getFavicon().isPresent());
+            signal("ping-port:" + host + ":" + event.getConnection().getVirtualHost().map(InetSocketAddress::getPort).orElse(-1));
             if (host.equals("deny.example")) {
               event.setResult(ResultedEvent.GenericResult.denied());
+              return;
+            }
+            if (host.equals("hidden.example")) {
+              event.setPing(offered.asBuilder().nullPlayers().build());
               return;
             }
             event.setPing(offered.asBuilder().description(Component.text("velocity motd")).maximumPlayers(42)
@@ -562,8 +567,11 @@ public final class VelocityCompatTests {
         awaitSignal("ping:localhost:47:0/77:conduit motd:true");
         require(answer != null && answer.contains("velocity motd") && answer.contains("\"max\":42") && answer.contains("\"name\":\"Sampled\"")
             && answer.contains(FAVICON), "the server list shows the plugin's answer: " + answer);
+        awaitSignal("ping-port:localhost:" + proxy.port());
         require(statusPing(proxy.port(), "deny.example") == null, "a denied ping is not answered");
         awaitSignal("ping:deny.example:47:0/77:conduit motd:true");
+        String hidden = statusPing(proxy.port(), "hidden.example");
+        require(hidden != null && !hidden.contains("\"players\"") && hidden.contains("conduit motd"), "nullPlayers() hides the counts: " + hidden);
         require(logged.stream().anyMatch(line -> line.contains("[/vt] cannot be typed")), "an alias no player could type is skipped: " + logged);
         require(logged.contains("plugin.vtest: vtest initializing") && logged.contains("plugin.vlib: vlib component log"),
             "an injected slf4j Logger and ComponentLogger write to the plugin's Conduit logger: " + logged);

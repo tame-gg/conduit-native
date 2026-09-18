@@ -657,12 +657,17 @@ public final class NativeApiTests {
           + "\"sample\":[{\"name\":\"ghost\",\"id\":\"" + ghost + "\"}]},\"description\":{\"text\":\"Rewritten\",\"color\":\"gold\"},"
           + "\"favicon\":\"data:image/png;base64,BBBB\"}"), "whatever the listener set is what the client gets, got " + json);
       ServerListPingEvent seen = proxy.recorder.of(ServerListPingEvent.class).getLast();
-      require(seen.virtualHost().equals(Optional.of("play.example.net")) && seen.protocolVersion() == 47
-          && seen.remoteAddress().getAddress().isLoopbackAddress(), "who asked, and through which host, Forge marker removed");
+      require(seen.virtualHost().equals(Optional.of("play.example.net")) && seen.virtualPort() == 25565 && seen.protocolVersion() == 47
+          && seen.remoteAddress().getAddress().isLoopbackAddress(), "who asked, and through which host and port, Forge marker removed");
+
+      proxy.recorder.hook = event -> { if (event instanceof ServerListPingEvent ping) ping.setPlayersHidden(true); };
+      String hidden = ping(proxy.port(), "localhost");
+      require(!hidden.contains("\"players\"") && hidden.contains("\"protocol\":47},\"description\":{\"text\":\"Conduit\"}"),
+          "hidden players leave the counts out altogether, got " + hidden);
 
       proxy.recorder.hook = event -> { if (event instanceof ServerListPingEvent ping) ping.setCancelled(true); };
       require(ping(proxy.port(), "localhost") == null, "a cancelled ping is closed with no answer");
-      require(proxy.recorder.of(ServerListPingEvent.class).size() == 3, "one event per ping");
+      require(proxy.recorder.of(ServerListPingEvent.class).size() == 4, "one event per ping");
     }
   }
 

@@ -313,7 +313,7 @@ public final class MinecraftProxy implements AutoCloseable {
         .map(player -> new ServerListPingEvent.SamplePlayer(player.username(), player.uniqueId())).toList();
     String host = gg.tame.conduit.modded.FmlAddressMarkers.parse(handshake.requestedHost()).cleanHost();
     ServerListPingEvent ping = runtime.events().fire(new ServerListPingEvent(remote,
-        host.isEmpty() ? Optional.empty() : Optional.of(host), clientProtocol, description,
+        host.isEmpty() ? Optional.empty() : Optional.of(host), handshake.requestedPort(), clientProtocol, description,
         status.displayMaxPlayers(), online.size(), sample, versionName, advertised, status.favicon()));
     // A client left with no answer at all shows the server as unreachable, which is what a plugin
     // cancelling this asks for.

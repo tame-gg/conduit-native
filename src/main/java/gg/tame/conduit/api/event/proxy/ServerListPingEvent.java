@@ -33,6 +33,7 @@ public final class ServerListPingEvent implements Event, Cancellable {
 
   private final InetSocketAddress remoteAddress;
   private final Optional<String> virtualHost;
+  private final int virtualPort;
   private final int protocolVersion;
   private volatile Text description;
   private volatile int maxPlayers;
@@ -41,12 +42,14 @@ public final class ServerListPingEvent implements Event, Cancellable {
   private volatile String versionName;
   private volatile int versionProtocol;
   private volatile Optional<String> favicon;
+  private volatile boolean playersHidden;
   private volatile boolean cancelled;
 
-  public ServerListPingEvent(InetSocketAddress remoteAddress, Optional<String> virtualHost, int protocolVersion,
+  public ServerListPingEvent(InetSocketAddress remoteAddress, Optional<String> virtualHost, int virtualPort, int protocolVersion,
                              Text description, int maxPlayers, int onlinePlayers, List<SamplePlayer> samplePlayers,
                              String versionName, int versionProtocol, Optional<String> favicon) {
-    this.remoteAddress = remoteAddress; this.virtualHost = virtualHost; this.protocolVersion = protocolVersion;
+    this.remoteAddress = remoteAddress; this.virtualHost = virtualHost; this.virtualPort = virtualPort;
+    this.protocolVersion = protocolVersion;
     setDescription(description); setMaxPlayers(maxPlayers); setOnlinePlayers(onlinePlayers); setSamplePlayers(samplePlayers);
     setVersionName(versionName); setVersionProtocol(versionProtocol); setFavicon(favicon);
   }
@@ -55,6 +58,8 @@ public final class ServerListPingEvent implements Event, Cancellable {
   public InetSocketAddress remoteAddress() { return remoteAddress; }
   /** The host the client says it dialled, from its handshake, with Forge markers removed. */
   public Optional<String> virtualHost() { return virtualHost; }
+  /** The port the client says it dialled, from its handshake. */
+  public int virtualPort() { return virtualPort; }
   /** The client's own protocol number, which may be one the proxy cannot serve. */
   public int protocolVersion() { return protocolVersion; }
 
@@ -78,6 +83,12 @@ public final class ServerListPingEvent implements Event, Cancellable {
   /** A {@code data:image/png;base64,} URI of a 64x64 PNG, or empty for no icon. */
   public Optional<String> favicon() { return favicon; }
   public void setFavicon(Optional<String> favicon) { this.favicon = Objects.requireNonNull(favicon, "favicon"); }
+  /**
+   * Whether the answer leaves out the player counts and sample altogether, which the client shows
+   * as "???". The counts and sample set here are kept, and sent again if this is turned back off.
+   */
+  public boolean playersHidden() { return playersHidden; }
+  public void setPlayersHidden(boolean playersHidden) { this.playersHidden = playersHidden; }
 
   @Override public boolean cancelled() { return cancelled; }
   @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }

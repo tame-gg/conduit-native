@@ -603,7 +603,7 @@ that will not initialize, or an `onEnable` that throws never stops the proxy fro
 plugins from loading, and the rejected jar's classloader is closed so the file is not left locked.
 
 Events include proxy start/shutdown, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
-version and icon are all settable; cancelling leaves the client with no answer), login (deniable), auth,
+version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer), login (deniable), auth,
 initial-server choice, server connect (cancellable and redirectable, for the first server too),
 connected/switch/switch-failed (switch-failed also for each first-server candidate that fails, with no
 source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason and a result of
