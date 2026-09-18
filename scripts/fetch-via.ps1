@@ -1,5 +1,6 @@
 # Fetch ViaVersion ecosystem + runtime libraries into lib/via
-# Artifacts are third-party; Conduit does not redistribute modified Via sources here.
+# Third-party artifacts, downloaded from upstream and never committed (lib/via is gitignored).
+# Licenses: THIRD-PARTY-NOTICES and docs/LICENSING_VIA.md.
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

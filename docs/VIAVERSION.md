@@ -157,10 +157,10 @@ repair should be removed once an upstream release fixes the encoding.
 
 ## Licensing
 
-ViaVersion / ViaBackwards / ViaRewind common artifacts are **GPLv3**.
-ViaLegacy follows its upstream license. Distributing a Conduit build that links
-these artifacts requires complying with those licenses (including source
-availability for GPLv3-covered combined works as applicable).
+The Via artifacts Conduit links and bundles are GPLv3-licensed, and Conduit
+itself is licensed GPL-3.0-or-later. `docs/LICENSING_VIA.md` records exactly
+which artifacts are used, under which license, and how a distribution carries
+their notices and Corresponding Source.
 
 Upstream projects: https://github.com/ViaVersion
 

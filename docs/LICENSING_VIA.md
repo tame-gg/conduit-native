@@ -1,37 +1,131 @@
-# Third-party attribution — ViaVersion ecosystem
+# Third-party licensing: the ViaVersion ecosystem
 
-Conduit (koels) is an independently implemented Minecraft proxy.
+Conduit is an independently implemented Minecraft proxy. It is licensed under
+**GPL-3.0-or-later**; see `LICENSE`. Third-party notices and license texts are in
+`THIRD-PARTY-NOTICES`.
 
-The optional translation integration consumes published artifacts from:
+This file records how Conduit uses the Via projects and what each way of
+distributing Conduit requires. It is not legal advice.
 
-| Project | Version used | License | Upstream |
+## Components and licenses
+
+The licenses below were checked against each project's repository at the
+version Conduit uses.
+
+| Artifact | Version | License | Source |
 |---|---|---|---|
-| ViaVersion | 5.11.0 | GPLv3 | https://github.com/ViaVersion/ViaVersion |
-| ViaBackwards | 5.11.0 | GPLv3 | https://github.com/ViaVersion/ViaBackwards |
-| ViaRewind | 4.1.3 | GPLv3 | https://github.com/ViaVersion/ViaRewind |
-| ViaLegacy | 3.0.16 | see upstream | https://github.com/ViaVersion/ViaLegacy |
+| `viaversion-api` | 5.11.0 | MIT (the `api/` directory only) | https://github.com/ViaVersion/ViaVersion/tree/5.11.0/api |
+| `viaversion-common` | 5.11.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaVersion/tree/5.11.0 |
+| `viabackwards-common` | 5.11.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaBackwards/tree/5.11.0 |
+| `viarewind-common` | 4.1.3 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaRewind/tree/4.1.3 |
+| `net.raphimc:ViaLegacy` | 3.0.16 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaLegacy/tree/v3.0.16 (the file headers still name github.com/RaphiMC/ViaLegacy) |
 
-Netty, Guava, and Fastutil are transitive/runtime libraries required by those
-artifacts.
+- ViaVersion's README says: "The entirety of the API directory is licensed under
+  the MIT License". It says everything else is GPLv3, "including the
+  end-product as a whole". The `viaversion-common` jar also contains copies of
+  the MIT API classes.
+- ViaBackwards, ViaRewind and ViaLegacy have no MIT module. Every source header
+  reads "either version 3 of the License, or (at your option) any later
+  version".
+- Netty, Guava, fastutil and the other runtime libraries are Apache-2.0 or MIT.
+  Both licenses are compatible with GPLv3. `THIRD-PARTY-NOTICES` has the full
+  list.
 
-Conduit does **not** claim ownership of Via* implementations, mappings, or
-protocol tables. Integration code in `gg.tame.conduit.viaversion` was written
-for Conduit against public Via platform APIs.
+## How Conduit consumes them
+
+This section describes what the build scripts and the code do. The
+documentation elsewhere may not match it.
+
+- **Downloaded, not committed.** `scripts/fetch-via.ps1` downloads the jars
+  from `repo.viaversion.com` and Maven Central into `lib/via/`, and `.gitignore`
+  excludes that directory. No Via source, jar or sources jar is tracked, and
+  none ever has been.
+- **Compile-time and runtime dependency, not optional.** `src/main` does not
+  compile without the Via jars. The launcher does not start without them either,
+  even with `[translation] enabled = false`: `ConduitRuntime` always calls
+  `ConduitViaBootstrap`. `scripts/run.ps1` runs Conduit on the full classpath
+  from `scripts/_classpath.ps1`.
+- **Same process, same class loader.** Nothing isolates Via behind a plugin
+  boundary.
+- **More than the MIT API.** `gg.tame.conduit.viaversion` does all of the
+  following:
+  - It extends two GPL classes: `UserConnectionViaVersionPlatform` and
+    `BaseVersionProvider`.
+  - It calls or instantiates GPL classes: `ViaManagerImpl`, `ViaCommandHandler`,
+    `UserConnectionImpl` and `ProtocolPipelineImpl`.
+  - It implements the GPL interfaces `ViaBackwardsPlatform`, `ViaRewindPlatform`
+    and `ViaLegacyPlatform`.
+  - It implements the MIT API interfaces `ViaInjector`, `ViaPlatformLoader` and
+    `StorableObject`.
+
+  Conduit and Via therefore form one combined work. Because Conduit is itself
+  GPL-3.0-or-later, that combination can be conveyed under GPLv3.
 
 No ViaVersion, ViaBackwards, ViaRewind or ViaLegacy source is copied, ported,
 adapted or mechanically translated into Conduit, and none of those projects is
-forked. Where a Via API requires Conduit to implement an interface —
-`ViaPlatform`, `ViaInjector`, `ViaPlatformLoader`, `VersionProvider`,
-`StorableObject` — the implementation is written against the interface's public
-contract. Via's own implementations of those interfaces are not used as a
-reference for Conduit's.
+forked. Conduit's subclasses and interface implementations are written against
+the public contract of those types, not against Via's own implementations.
+The ViaBackwards 5.11.0 defect recorded in `docs/VALIDATION_VIA_393_765.md` is
+documented there and has not been patched in a copy of Via.
 
-One defect in ViaBackwards 5.11.0 is known and documented in
-`docs/VALIDATION_VIA_393_765.md`. It is recorded there
-rather than patched around by reproducing Via's encoding inside Conduit, which
-is why no fork exists and why this file still describes plain third-party
-dependency use.
+## What each distribution channel requires
 
-Source for the Via* projects is available from their upstream repositories.
-When redistributing a Conduit binary that links GPLv3 Via artifacts, provide
-Corresponding Source as required by GPLv3.
+### Running Conduit (building it and operating a server)
+
+GPLv3 section 2 allows running the software and modifying it privately without
+conditions. GPLv3, unlike the AGPL, has no clause that applies to network use,
+so players connecting to a server do not trigger any obligation.
+
+### This git repository
+
+The repository conveys Conduit's source under GPL-3.0-or-later. It contains no
+Via code. The unmodified MIT and Apache-2.0 jars in `lib/velocity-compat/`,
+whether in the working tree or in the history, need their notices and license
+texts. `THIRD-PARTY-NOTICES` provides them. The build does not use those
+copies. They are expected to be untracked; `scripts/fetch-velocity-compat.ps1`
+downloads the ones the build uses.
+
+### A binary distribution
+
+`gradle distZip`, `distTar` and `installDist` (see `build.gradle.kts`) produce
+the only supported binary distribution. It conveys object code for Conduit and
+for the four GPL Via jars, so the distribution itself carries what GPLv3
+requires:
+
+| In the distribution | Meets |
+|---|---|
+| `LICENSE`: Conduit's notice and the GPLv3 text | Sections 4 and 5: the license text, kept intact, accompanies the program |
+| `THIRD-PARTY-NOTICES` | Copyright and license notices for every bundled MIT and Apache-2.0 component |
+| `source/conduit/`: Conduit's source, build files, scripts and generators from the tree that was built | Section 6: Corresponding Source for Conduit, including "the scripts used to control" building it (section 1) |
+| `source/third-party/*.zip`: the upstream release-tag archives of ViaVersion 5.11.0, ViaBackwards 5.11.0, ViaRewind 4.1.3 and ViaLegacy v3.0.16, downloaded by the `fetchViaSource` task | Section 6: Corresponding Source for the GPL jars |
+
+The Corresponding Source travels inside the same archive as the object code.
+That meets section 6 however the archive is published, whether as a
+GitHub release asset, a download page or a copy handed to someone. No written
+offer (section 6(b)) is needed, and there is no separate source server to keep
+online (section 6(d)).
+
+When the Via versions in `build.gradle.kts` change, the source archives follow,
+because the version values are shared. Anyone who conveys a bundle assembled
+some other way, for example `out/` zipped together with `lib/via/`, has to
+include the same items by hand.
+
+## Open points
+
+These questions are not settled by the license texts:
+
+- **Upstream tags as Corresponding Source.** The source archives are taken from
+  the upstream release tags. Conduit assumes those tags built the published
+  Maven jars, and does not verify it by rebuilding them.
+- **Plugins.** Native Conduit plugins and Velocity-API plugins are loaded into
+  the same process as Conduit. The FSF treats a plug-in that shares function
+  calls and data structures with a GPL program as part of a combined work
+  (GPL FAQ `#GPLPlugins`). Whether non-GPL plugins may be distributed for
+  Conduit is therefore open, as it is for other GPL servers. Conduit does not
+  distribute third-party plugins, so this does not affect Conduit's own
+  distribution. If the owner wants to allow non-GPL plugins explicitly, a
+  GPLv3 section 7 additional permission for the plugin API could do so.
+- **Mojang-derived data.** The tables under `src/main/resources` were generated
+  from data that Mojang's server jars emit. The Via licenses do not cover them,
+  and GPL-3.0-or-later can only cover what Conduit owns. Whether ID mappings of
+  that kind are copyrightable at all is outside this file's scope.

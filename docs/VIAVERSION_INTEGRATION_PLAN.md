@@ -135,6 +135,5 @@ run against real endpoints.
 
 ## Licensing
 
-Via* common artifacts are GPLv3. Conduit’s integration module that links
-`viaversion-common` must be distributable under compatible terms; preserve
-upstream notices and document source availability for Via*.
+See `docs/LICENSING_VIA.md`: the Via artifacts Conduit uses, their licenses,
+and how a Conduit distribution meets them. Conduit is GPL-3.0-or-later.

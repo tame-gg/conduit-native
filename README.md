@@ -7,6 +7,14 @@ The legacy `tame-gg/conduit` checkout is intentionally separate and untouched.
 
 Current version: **0.9.0**. Native plugin API version: **1**.
 
+## License
+
+Conduit is free software, licensed under the GNU General Public License version 3 or (at your
+option) any later version (`GPL-3.0-or-later`). See `LICENSE`. Third-party components keep their
+own licenses; they are listed in `THIRD-PARTY-NOTICES`. `docs/LICENSING_VIA.md` explains how Conduit
+uses the GPL ViaVersion projects and what a binary distribution has to carry. `gradle distZip`
+builds one that includes its Corresponding Source.
+
 ## Build and test
 
 Requires a JDK capable of compiling Java 21 source. On Windows:

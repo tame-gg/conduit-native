@@ -1,3 +1,5 @@
+import java.net.URI
+
 plugins {
   application
 }
@@ -30,4 +32,47 @@ dependencies {
   implementation("io.netty:netty-all:4.1.118.Final")
   implementation("com.google.guava:guava:33.0.0-jre")
   implementation("it.unimi.dsi:fastutil:8.5.15")
+}
+
+// A distribution (distZip, distTar, installDist) conveys GPL object code: Conduit itself and the Via
+// jars. It carries its own Corresponding Source inside the same archive, which meets GPLv3 section 6
+// with no written offer to honour afterwards. See docs/LICENSING_VIA.md.
+// ponytail: GitHub tag archives are trusted as-is, with no pinned hash; pin SHA-256s if a release
+// pipeline needs reproducible archives.
+val gplSources = mapOf(
+  "ViaVersion-$viaVersion" to "https://github.com/ViaVersion/ViaVersion/archive/refs/tags/$viaVersion.zip",
+  "ViaBackwards-$viaVersion" to "https://github.com/ViaVersion/ViaBackwards/archive/refs/tags/$viaVersion.zip",
+  "ViaRewind-$viaRewind" to "https://github.com/ViaVersion/ViaRewind/archive/refs/tags/$viaRewind.zip",
+  "ViaLegacy-$viaLegacy" to "https://github.com/ViaVersion/ViaLegacy/archive/refs/tags/v$viaLegacy.zip",
+)
+val fetchViaSource = tasks.register("fetchViaSource") {
+  val target = layout.buildDirectory.dir("corresponding-source")
+  val sources = gplSources // a local copy: the configuration cache cannot serialize the script itself
+  inputs.property("sources", sources)
+  outputs.dir(target)
+  doLast {
+    sources.forEach { (name, url) ->
+      val file = target.get().file("$name.zip").asFile
+      val part = File(file.path + ".part")
+      file.parentFile.mkdirs()
+      URI(url).toURL().openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+      if (!part.renameTo(file) && !(file.delete() && part.renameTo(file))) throw GradleException("cannot write $file")
+    }
+  }
+}
+
+distributions {
+  main {
+    contents {
+      from("LICENSE", "THIRD-PARTY-NOTICES")
+      into("source/conduit") {
+        from(rootDir) {
+          include("src/**", "scripts/**", "tools/**", "config/**", "docs/**", "lib/README.md",
+            "build.gradle.kts", "settings.gradle.kts", "README.md", "LICENSE", "THIRD-PARTY-NOTICES")
+          exclude("**/__pycache__/**")
+        }
+      }
+      into("source/third-party") { from(fetchViaSource) }
+    }
+  }
 }
