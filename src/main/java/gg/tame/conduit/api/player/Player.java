@@ -6,6 +6,7 @@ import gg.tame.conduit.api.server.RegisteredServer;
 import gg.tame.conduit.api.text.Text;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
@@ -66,6 +67,64 @@ public interface Player extends CommandSource {
    * when there is no backend or it is not in a state that takes one.
    */
   boolean sendPluginMessageToServer(String channel, byte[] data);
+
+  // What the proxy itself shows the player. Each is written in the client's own protocol, on top of
+  // whatever the backend shows. Anything sent while the client has no world to show it in (before its
+  // first Join Game, or while a switch has it back in Configuration) is held and sent once it does.
+
+  /**
+   * Shows {@code message} above the hotbar. A 1.8 client gets it as a game-info chat line, with
+   * its formatting as section codes because that is all such a line keeps; a 1.7 client has no
+   * action bar and is sent nothing.
+   */
+  void sendActionBar(Text message);
+  /**
+   * Shows {@code title} now, with the last subtitle and times this client was sent. A 1.7 client has
+   * no titles and is sent nothing by any of the title methods.
+   */
+  void sendTitle(Text title);
+  /** Sets the subtitle shown under the next {@link #sendTitle title}; on its own it shows nothing. */
+  void sendSubtitle(Text subtitle);
+  /** Sets how the next and current titles fade in, stay and fade out. */
+  void sendTitleTimes(TitleTimes times);
+  /**
+   * Shows a title and subtitle together. {@code times} null keeps the client's current times. Sends
+   * the times, then the subtitle, then the title, which is the order the client needs to show all
+   * three at once.
+   */
+  default void showTitle(Text title, Text subtitle, TitleTimes times) {
+    if (times != null) sendTitleTimes(times);
+    sendSubtitle(subtitle);
+    sendTitle(title);
+  }
+  /** Hides the title being shown; the times the client was given stay. */
+  void clearTitle();
+  /** Hides the title and puts the client's subtitle and times back to its defaults. */
+  void resetTitle();
+  /** Shows {@code bar}, across server switches, until {@link #hideBossBar} or the player disconnects. */
+  void showBossBar(BossBar bar);
+  void hideBossBar(BossBar bar);
+  /**
+   * Sets the text above and below the tab list. The proxy's pair is sent again after every server
+   * switch; a backend that sends its own replaces it on the client until then, last writer winning.
+   * Both empty clears it and stops the proxy re-sending one. A 1.7 client has no header or footer.
+   */
+  void sendPlayerListHeaderAndFooter(Text header, Text footer);
+  /** The header the proxy last set with {@link #sendPlayerListHeaderAndFooter}, empty if none. */
+  Text playerListHeader();
+  /** The footer the proxy last set with {@link #sendPlayerListHeaderAndFooter}, empty if none. */
+  Text playerListFooter();
+  /**
+   * Puts {@code entry} on this player's tab list, or updates the proxy's entry with the same id. The
+   * proxy's entries stay across server switches and are sent again where the client dropped them; the
+   * backend's entries are never touched. Sent to 1.8 and newer clients except 1.20.1, which Conduit
+   * has no Player Info table for yet; for 1.7 and 1.20.1 the entry is only remembered.
+   */
+  void addTabListEntry(TabListEntry entry);
+  /** Takes the proxy's entry with this id off the tab list; false when the proxy has none. */
+  boolean removeTabListEntry(UUID id);
+  /** The proxy's own entries on this player's tab list, in the order they were added. */
+  List<TabListEntry> tabListEntries();
 
   interface OptionalServer {
     boolean isPresent();

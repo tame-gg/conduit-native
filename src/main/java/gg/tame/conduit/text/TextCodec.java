@@ -145,6 +145,35 @@ public final class TextCodec {
     return text;
   }
 
+  /**
+   * Text as one string with section-sign formatting codes. A 1.8 client shows a game-info chat line
+   * (its action bar) as the component's unformatted text, so colour and style reach it only as codes
+   * inside that text. Clicks and hovers have nowhere to go there and are dropped.
+   */
+  public static String toLegacy(Text text) {
+    StringBuilder out = new StringBuilder();
+    appendLegacy(out, text, null, false, false);
+    return out.toString();
+  }
+
+  private static void appendLegacy(StringBuilder out, Text text, TextColor inherited, boolean bold, boolean italic) {
+    TextColor color = text.color() != null ? text.color() : inherited;
+    boolean isBold = bold || text.isBold();
+    boolean isItalic = italic || text.isItalic();
+    if (!text.content().isEmpty()) {
+      // A colour code also ends bold and italic, so each run states its whole style again, and a
+      // run with no colour after a styled one has to reset first.
+      if (color != null || isBold || isItalic || out.length() > 0) {
+        // TextColor is declared in legacy code order, 0 (black) to f (white).
+        out.append('§').append(color == null ? 'r' : Character.forDigit(color.ordinal(), 16));
+      }
+      if (isBold) out.append("§l");
+      if (isItalic) out.append("§o");
+      out.append(text.content());
+    }
+    for (Text child : text.children()) appendLegacy(out, child, color, isBold, isItalic);
+  }
+
   public static void writePlainNbt(DataOutput output, String text) throws IOException {
     NetworkNbt.stringComponent(output, text);
   }

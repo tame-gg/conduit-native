@@ -67,6 +67,33 @@ public final class ProtocolEras {
     return protocol >= PLAYER_INFO_HAT_FROM;
   }
 
+  /** First protocol whose Player Info Update has the list-order (priority) action (1.21.2). */
+  public static final int PLAYER_INFO_LIST_ORDER_FROM = 768;
+
+  /** Whether this protocol's Player Info Update carries the list-order action. */
+  public static boolean playerInfoListOrder(int protocol) {
+    return protocol >= PLAYER_INFO_LIST_ORDER_FROM;
+  }
+
+  /**
+   * First protocol whose Player Info names entries by UUID and carries an action (1.8). 1.7's names
+   * an entry by its display string and has only online and ping, so nothing maps onto it.
+   */
+  public static final int PLAYER_INFO_UUID_FROM = 47;
+
+  /** Whether this protocol's Player Info names entries by UUID. */
+  public static boolean playerInfoByUuid(int protocol) {
+    return protocol >= PLAYER_INFO_UUID_FROM;
+  }
+
+  /**
+   * Whether this protocol's Player Info Add ends with an optional profile public key (1.19-1.19.2),
+   * the same window as Login Start's signature. 1.19.3 split the packet and moved keys to chat sessions.
+   */
+  public static boolean playerInfoProfileKey(int protocol) {
+    return loginStartSignature(protocol);
+  }
+
   /** The one protocol whose System Chat names a chat type by registry id instead of an action-bar flag (1.19). */
   public static final int SYSTEM_CHAT_TYPE_ID = 759;
 
@@ -177,6 +204,19 @@ public final class ProtocolEras {
   /** Whether this protocol's clientbound Chat Message carries a sender UUID after the position. */
   public static boolean chatHasSender(int protocol) {
     return protocol >= CHAT_SENDER_FROM;
+  }
+
+  /**
+   * First protocol whose Title packet has an action-bar action (1.11). It was inserted as action 2,
+   * which moved times, hide and reset up by one, so 1.8-1.10 number every later action differently.
+   * Which releases have a Title packet at all, rather than 1.17's one packet per action, is the
+   * packet table's to say.
+   */
+  public static final int TITLE_ACTION_BAR_FROM = 315;
+
+  /** Whether this protocol's Title packet carries the action bar as action 2. */
+  public static boolean titleActionBar(int protocol) {
+    return protocol >= TITLE_ACTION_BAR_FROM;
   }
 
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;

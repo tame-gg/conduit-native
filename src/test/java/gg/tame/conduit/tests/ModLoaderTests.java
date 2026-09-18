@@ -462,7 +462,7 @@ public final class ModLoaderTests {
   }
 
   /** A backend that configures with one modded payload and then plays. */
-  private static final class Mock implements Runnable {
+  static final class Mock implements Runnable {
     final ServerSocket listener;
     final String brand;
     final byte[] payload;
@@ -503,7 +503,7 @@ public final class ModLoaderTests {
   }
 
   /** Collects a whole Configuration phase, ending on the backend's Finish Configuration. */
-  private static List<byte[]> readConfiguration(InputStream in, byte finish) throws Exception {
+  static List<byte[]> readConfiguration(InputStream in, byte finish) throws Exception {
     List<byte[]> packets = new java.util.ArrayList<>();
     while (true) {
       byte[] packet = MinecraftFrames.read(in, 8192);
@@ -530,7 +530,7 @@ public final class ModLoaderTests {
     return null;
   }
 
-  private static byte[] command(int id, String text) throws Exception {
+  static byte[] command(int id, String text) throws Exception {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(out, id);
@@ -739,7 +739,7 @@ public final class ModLoaderTests {
   }
 
   /** 1.20.4 Login Start: name and UUID. */
-  private static byte[] loginStart() throws Exception {
+  static byte[] loginStart() throws Exception {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(out, 0);
@@ -940,7 +940,7 @@ public final class ModLoaderTests {
     return bytes.toByteArray();
   }
 
-  private static int reservePort() throws Exception {
+  static int reservePort() throws Exception {
     try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); }
   }
 

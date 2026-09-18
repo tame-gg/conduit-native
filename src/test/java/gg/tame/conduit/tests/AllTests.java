@@ -101,6 +101,7 @@ public final class AllTests {
     LifecycleRaceTests.run();
     PlayerLatencyTests.run();
     CommandForwardingTests.run();
+    DisplayApiTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityLifecycleTests.run();

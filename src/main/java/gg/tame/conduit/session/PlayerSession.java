@@ -155,6 +155,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * new backend, the way Velocity replays its cached client settings.
    */
   private volatile byte[] clientInformation;
+  /** What the proxy shows this client itself: titles, action bar, boss bars, tab-list header and entries. */
+  private final ClientDisplay display;
   public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
       LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, gg.tame.conduit.runtime.ConduitRuntime runtime,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
@@ -172,6 +174,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         ? runtime.modded().newSwitchQueue()
         : new SwitchPacketQueue(1);
     runtime.modded().remember(address, this.clientProtocol, this.modClassifier);
+    this.display = new ClientDisplay(this, protocol, this::writeClient);
   }
   public ModLoaderFamily modLoaderFamily() { return modClassifier.family(); }
   public HandshakeClassifier modClassifier() { return modClassifier; }
@@ -2147,11 +2150,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     gg.tame.conduit.protocol.ClientboundDump.record(outbound);
     keepAlive.written(clientState.state(), outbound);
+    ConnectionState writtenIn = clientState.state();
+    display.beforeWrite(writtenIn, outbound);
     if (flush) client.write(outbound);
     else {
       client.writeUnflushed(outbound);
     }
     awaitingBackendJoinGame.written(outbound);
+    display.afterWrite(writtenIn, outbound);
   }
   @Override public String username() { return profile().username(); }
   @Override public boolean hasPermission(String permission) {
@@ -2171,6 +2177,20 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (clientState.state() == ConnectionState.PLAY) writeClient(PlayPackets.systemChat(protocol, text));
     } catch (IOException ignored) { }
   }
+  @Override public void sendActionBar(Text message) { display.actionBar(message); }
+  @Override public void sendTitle(Text title) { display.title(title); }
+  @Override public void sendSubtitle(Text subtitle) { display.subtitle(subtitle); }
+  @Override public void sendTitleTimes(gg.tame.conduit.api.player.TitleTimes times) { display.titleTimes(java.util.Objects.requireNonNull(times, "times")); }
+  @Override public void clearTitle() { display.clearTitle(false); }
+  @Override public void resetTitle() { display.clearTitle(true); }
+  @Override public void showBossBar(gg.tame.conduit.api.player.BossBar bar) { display.show(java.util.Objects.requireNonNull(bar, "bar")); }
+  @Override public void hideBossBar(gg.tame.conduit.api.player.BossBar bar) { if (bar != null) display.hide(bar); }
+  @Override public void sendPlayerListHeaderAndFooter(Text header, Text footer) { display.headerAndFooter(header, footer); }
+  @Override public Text playerListHeader() { return display.header(); }
+  @Override public Text playerListFooter() { return display.footer(); }
+  @Override public void addTabListEntry(gg.tame.conduit.api.player.TabListEntry entry) { display.addEntry(java.util.Objects.requireNonNull(entry, "entry")); }
+  @Override public boolean removeTabListEntry(java.util.UUID id) { return id != null && display.removeEntry(id); }
+  @Override public List<gg.tame.conduit.api.player.TabListEntry> tabListEntries() { return display.entries(); }
   @Override public String currentBackend() {
     BackendConnection current = backend;
     return current == null ? "" : current.server().name();
@@ -2183,5 +2203,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (players != null) players.remove(this);
     for (BackendConnection connection : open) discard(connection);
     client.close();
+    // After the socket, which ends any display write still stuck on a client that stopped reading.
+    display.close();
   }
 }
