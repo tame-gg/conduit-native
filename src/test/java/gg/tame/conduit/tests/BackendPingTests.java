@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.tests;
 
+import static gg.tame.conduit.tests.NativeApiTests.reservePort;
 import static gg.tame.conduit.tests.VelocityCompatTests.require;
 
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
@@ -397,9 +398,5 @@ public final class BackendPingTests {
       listener.close();
       for (Socket socket : sockets) socket.close();
     }
-  }
-
-  private static int reservePort() throws IOException {
-    try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); }
   }
 }

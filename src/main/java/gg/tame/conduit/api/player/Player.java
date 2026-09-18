@@ -67,8 +67,10 @@ public interface Player extends CommandSource {
   /**
    * Offers the client {@code pack}, as the proxy's own: its answers arrive as
    * {@code PlayerResourcePackStatusEvent} and never reach the server. It goes once the client stands
-   * in a world, so an offer made while it logs in or switches servers waits for that. The proxy's
-   * packs stay across server switches. False when the client's release has no resource-pack packet.
+   * in a world, so an offer made while it logs in or switches servers waits for that, unless plugins
+   * hold a 1.20.2+ client in its Configuration phase ({@code PlayerConfigurationEvent}), when it goes
+   * at once. The proxy's packs stay across server switches. False when the client's release has no
+   * resource-pack packet.
    */
   default boolean sendResourcePack(ResourcePack pack) { return false; }
   /**

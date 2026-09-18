@@ -202,7 +202,7 @@ public final class MinecraftProxy implements AutoCloseable {
       // Every ping comes through here, so the event is not even built unless someone listens.
       if (runtime.events().listening(gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.class)) {
         runtime.events().fire(new gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent(
-            (java.net.InetSocketAddress) client.getRemoteSocketAddress(), virtualHost(handshake), handshake.protocolVersion(),
+            (java.net.InetSocketAddress) client.getRemoteSocketAddress(), handshake.virtualHost(), handshake.protocolVersion(),
             handshake.nextState() == 1 ? gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.STATUS
                 : handshake.nextState() == Handshake.TRANSFER ? gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.TRANSFER
                 : gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.LOGIN));
@@ -239,7 +239,7 @@ public final class MinecraftProxy implements AutoCloseable {
       // Plugins' first say, on nothing but what the client claims: a refusal here costs no encryption
       // and no session-server round trip, and a login refused here never becomes a Player.
       PlayerPreLoginEvent preLogin = runtime.events().fire(new PlayerPreLoginEvent(pipeline.player().username(),
-          claimedUniqueId(pipeline, protocol), playerAddress, virtualHost(handshake), handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER,
+          claimedUniqueId(pipeline, protocol), playerAddress, handshake.virtualHost(), handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER,
           messages::send));
       if (!preLogin.allowed()) {
         try { transport.write(LoginDisconnect.encode(protocol, preLogin.denyReason().orElseThrow())); } catch (IOException ignored) { }
@@ -399,7 +399,7 @@ public final class MinecraftProxy implements AutoCloseable {
     var settled = pipeline.player();
     GameProfile original = new GameProfile(settled.uniqueId(), settled.username(), settled.properties().stream()
         .map(property -> new GameProfile.Property(property.name(), property.value(), property.signature())).toList());
-    GameProfile chosen = runtime.events().fire(new GameProfileRequestEvent(settled.username(), playerAddress, virtualHost(handshake),
+    GameProfile chosen = runtime.events().fire(new GameProfileRequestEvent(settled.username(), playerAddress, handshake.virtualHost(),
         handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER, settled.authenticated(), original, messages::send)).gameProfile();
     if (chosen.equals(original)) return;
     pipeline.replace(new gg.tame.conduit.login.PlayerProfile(chosen.uniqueId(), chosen.name(), chosen.properties().stream()
@@ -439,12 +439,6 @@ public final class MinecraftProxy implements AutoCloseable {
     boolean sent = protocol.capabilities().loginStartUuid()
         || !profile.uniqueId().equals(gg.tame.conduit.login.LoginStart.offlineUuid(profile.username()));
     return sent ? Optional.of(profile.uniqueId()) : Optional.empty();
-  }
-  /** As Player.virtualHost() reports it: the dialled host without Forge's markers, unresolved. */
-  private static java.net.InetSocketAddress virtualHost(Handshake handshake) {
-    String host = handshake.requestedHost();
-    int marker = host.indexOf('\0');
-    return java.net.InetSocketAddress.createUnresolved(marker < 0 ? host : host.substring(0, marker), handshake.requestedPort());
   }
   private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address,
                                   PlayerAuthenticator authenticator) throws IOException, AuthenticationException {

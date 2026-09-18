@@ -104,7 +104,7 @@ public final class ShutdownTests {
         }
         client.setSoTimeout(15_000);
         MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
-        MinecraftFrames.write(client.getOutputStream(), ObservabilityTests.packet(0, out -> MinecraftOutput.string(out, "Metrics")));
+        MinecraftFrames.write(client.getOutputStream(), NativeApiTests.packet(0,out -> MinecraftOutput.string(out, "Metrics")));
         InputStream in = client.getInputStream();
         boolean play = false;
         boolean stopped = false;

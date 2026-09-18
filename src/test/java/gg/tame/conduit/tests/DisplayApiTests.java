@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.tests;
 
+import static gg.tame.conduit.tests.NativeApiTests.packet;
+
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
 import gg.tame.conduit.api.player.BossBar;
 import gg.tame.conduit.api.player.Player;
@@ -32,7 +34,6 @@ import gg.tame.conduit.protocol.TranslationSupport;
 import gg.tame.conduit.session.ClientDisplay;
 import gg.tame.conduit.session.PlayerSession;
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -667,17 +668,6 @@ public final class DisplayApiTests {
   }
 
   // ---------------------------------------------------------------- packet helpers
-
-  interface Body { void write(DataOutputStream out) throws IOException; }
-
-  static byte[] packet(int id, Body body) throws IOException {
-    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-    try (DataOutputStream out = new DataOutputStream(bytes)) {
-      MinecraftOutput.varInt(out, id);
-      body.write(out);
-    }
-    return bytes.toByteArray();
-  }
 
   private static void json(DataOutputStream out, String text) throws IOException {
     MinecraftOutput.string(out, "{\"text\":\"" + text + "\"}");

@@ -62,7 +62,7 @@ public final class SoundApiTests {
 
   /** What {@code protocol} is sent for {@link #SOUND} at (X, Y, Z), with {@code id} its sound packet. */
   static byte[] at(int protocol, int id, int source) throws IOException {
-    return DisplayApiTests.packet(id, out -> {
+    return NativeApiTests.packet(id, out -> {
       if (protocol >= 761) { MinecraftOutput.varInt(out, 0); MinecraftOutput.string(out, NAME); out.writeBoolean(false); }
       else MinecraftOutput.string(out, NAME);
       if (protocol >= 107) MinecraftOutput.varInt(out, source);
@@ -75,7 +75,7 @@ public final class SoundApiTests {
 
   /** What a 1.19.3+ {@code protocol} is sent for {@link #SOUND} following entity {@code entity}. */
   static byte[] following(int id, int source, int entity) throws IOException {
-    return DisplayApiTests.packet(id, out -> {
+    return NativeApiTests.packet(id, out -> {
       MinecraftOutput.varInt(out, 0); MinecraftOutput.string(out, NAME); out.writeBoolean(false);
       MinecraftOutput.varInt(out, source);
       MinecraftOutput.varInt(out, entity);
@@ -85,7 +85,7 @@ public final class SoundApiTests {
 
   /** Stop Sound from 1.13: flags, then the source and name each flag says is there. */
   static byte[] stop(int id, Integer source, String name) throws IOException {
-    return DisplayApiTests.packet(id, out -> {
+    return NativeApiTests.packet(id, out -> {
       out.writeByte((source != null ? 1 : 0) | (name != null ? 2 : 0));
       if (source != null) MinecraftOutput.varInt(out, source);
       if (name != null) MinecraftOutput.string(out, name);
@@ -179,21 +179,21 @@ public final class SoundApiTests {
     display.playSound(SOUND, X, Y, Z);
     display.stopSound(null, null);
     require(wire.isEmpty(), "no sound before Join Game");
-    enter(display, DisplayApiTests.packet(0x29, out -> out.writeInt(1234)));
+    enter(display, NativeApiTests.packet(0x29, out -> out.writeInt(1234)));
     display.playSound(SOUND);
     require(wire.size() == 1 && Arrays.equals(wire.get(0), following(0x65, 7, 1234)), "the player's own entity id, from Join Game");
     display.beforeWrite(ConnectionState.PLAY, PlayPackets.startConfiguration(p));
     display.playSound(SOUND);
     display.playSound(SOUND, X, Y, Z);
     require(wire.size() == 1, "nothing while the client is reconfigured, and nothing held for later");
-    enter(display, DisplayApiTests.packet(0x29, out -> out.writeInt(99)));
+    enter(display, NativeApiTests.packet(0x29, out -> out.writeInt(99)));
     require(wire.size() == 1, "a dropped sound is not played on return");
     display.playSound(SOUND);
     require(Arrays.equals(wire.getLast(), following(0x65, 7, 99)), "the new world's entity id");
 
     List<byte[]> legacy = new ArrayList<>();
     ClientDisplay old = new ClientDisplay(DisplayApiTests.dummyPlayer(), ProtocolDefinition.forVersion(47), legacy::add);
-    enter(old, DisplayApiTests.packet(0x01, out -> out.writeInt(5)));
+    enter(old, NativeApiTests.packet(0x01, out -> out.writeInt(5)));
     old.playSound(SOUND);
     old.stopSound(null, null);
     require(legacy.isEmpty(), "a 1.8 client is sent no sound at itself and no stop");

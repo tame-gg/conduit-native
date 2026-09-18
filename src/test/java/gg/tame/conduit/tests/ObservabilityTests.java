@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.tests;
 
+import static gg.tame.conduit.tests.NativeApiTests.packet;
+import static gg.tame.conduit.tests.NativeApiTests.reservePort;
+
 import gg.tame.conduit.auth.Authenticators;
 import gg.tame.conduit.config.AuthenticationSettings;
 import gg.tame.conduit.config.BackendServer;
@@ -16,7 +19,6 @@ import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.protocol.MinecraftOutput;
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
@@ -239,25 +241,10 @@ public final class ObservabilityTests {
     } catch (IOException closed) { }
   }
 
-  interface Body { void write(DataOutputStream out) throws IOException; }
-
-  static byte[] packet(int id, Body body) throws IOException {
-    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-    try (DataOutputStream out = new DataOutputStream(bytes)) {
-      MinecraftOutput.varInt(out, id);
-      body.write(out);
-    }
-    return bytes.toByteArray();
-  }
-
   private static double value(String body, String series) {
     Matcher match = Pattern.compile("^" + Pattern.quote(series) + " (\\S+)$", Pattern.MULTILINE).matcher(body);
     if (!match.find()) throw new AssertionError("no series " + series + " in:\n" + body);
     return Double.parseDouble(match.group(1));
-  }
-
-  private static int reservePort() throws IOException {
-    try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); }
   }
 
   private static boolean await(BooleanSupplier condition) throws InterruptedException {

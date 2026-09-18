@@ -499,14 +499,5 @@ public final class ResourcePackTests {
     return bytes.size();
   }
 
-  interface Body { void write(DataOutputStream output) throws IOException; }
-
-  static byte[] bytes(int id, Body body) throws IOException {
-    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-    try (DataOutputStream out = new DataOutputStream(bytes)) {
-      MinecraftOutput.varInt(out, id);
-      body.write(out);
-    }
-    return bytes.toByteArray();
-  }
+  static byte[] bytes(int id, NativeApiTests.Body body) throws IOException { return NativeApiTests.packet(id, body); }
 }

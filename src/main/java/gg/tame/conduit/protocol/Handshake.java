@@ -13,6 +13,11 @@ public record Handshake(int protocolVersion, String requestedHost, int requested
   public static final int TRANSFER = 3;
   /** 1.20.5, the first version with transfers; an older client never sends that intent. */
   public static final int TRANSFERS_FROM = 766;
+  /** The host and port the client says it dialled, unresolved, without the markers Forge appends after a NUL. */
+  public java.net.InetSocketAddress virtualHost() {
+    int marker = requestedHost.indexOf('\0');
+    return java.net.InetSocketAddress.createUnresolved(marker < 0 ? requestedHost : requestedHost.substring(0, marker), requestedPort);
+  }
   public byte[] encode() throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {

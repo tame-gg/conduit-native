@@ -376,11 +376,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public java.net.InetSocketAddress remoteSocketAddress() {
     return new java.net.InetSocketAddress(address, configuration.forwardedPlayerAddress().isPresent() ? 0 : client.remotePort());
   }
-  @Override public java.net.InetSocketAddress virtualHost() {
-    String host = handshake.requestedHost();
-    int marker = host.indexOf('\0');
-    return java.net.InetSocketAddress.createUnresolved(marker < 0 ? host : host.substring(0, marker), handshake.requestedPort());
-  }
+  @Override public java.net.InetSocketAddress virtualHost() { return handshake.virtualHost(); }
   @Override public java.util.concurrent.CompletableFuture<Boolean> connect(gg.tame.conduit.api.server.RegisteredServer server) {
     return connectWithResult(server).thenApply(gg.tame.conduit.api.player.ConnectResult::successful);
   }

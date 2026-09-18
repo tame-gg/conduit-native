@@ -326,7 +326,7 @@ public final class VelocityDisplayTests {
     static Client join(int port, String name) throws IOException {
       Client client = new Client(new Socket("127.0.0.1", port));
       client.send(new Handshake(340, "localhost", port, 2).encode());
-      client.send(DisplayApiTests.packet(0x00, out -> MinecraftOutput.string(out, name)));
+      client.send(NativeApiTests.packet(0x00, out -> MinecraftOutput.string(out, name)));
       DisplayApiTests.platform("velocity-display-client-" + name, () -> {
         try { while (true) client.received.add(MinecraftFrames.read(client.socket.getInputStream(), 1 << 20)); }
         catch (IOException ended) { }
@@ -335,7 +335,7 @@ public final class VelocityDisplayTests {
     }
 
     synchronized void send(byte[] packet) throws IOException { MinecraftFrames.write(socket.getOutputStream(), packet); }
-    void chat(String line) throws IOException { send(DisplayApiTests.packet(0x02, out -> MinecraftOutput.string(out, line))); }
+    void chat(String line) throws IOException { send(NativeApiTests.packet(0x02, out -> MinecraftOutput.string(out, line))); }
     List<byte[]> received(Predicate<byte[]> match) {
       synchronized (received) { return received.stream().filter(match).toList(); }
     }

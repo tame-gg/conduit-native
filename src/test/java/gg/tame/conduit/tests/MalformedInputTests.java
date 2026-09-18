@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.tests;
 
+import static gg.tame.conduit.tests.NativeApiTests.packet;
+
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ForwardingMode;
@@ -251,17 +253,6 @@ public final class MalformedInputTests {
       out.writeByte(1);
       out.write(nbt);
     });
-  }
-
-  private interface Body { void write(DataOutputStream out) throws IOException; }
-
-  private static byte[] packet(int id, Body body) throws IOException {
-    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-    try (DataOutputStream out = new DataOutputStream(bytes)) {
-      MinecraftOutput.varInt(out, id);
-      body.write(out);
-    }
-    return bytes.toByteArray();
   }
 
   /**

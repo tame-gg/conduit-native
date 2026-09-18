@@ -63,7 +63,7 @@ public final class ResourcePackPackets {
     PacketKind send = kind(state, PacketKind.PLAY_RESOURCE_PACK_SEND, PacketKind.CONFIGURATION_RESOURCE_PACK_SEND);
     if (push != null && protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, push)) {
       return Optional.of(packet(protocol, state, push, output -> {
-        uuid(output, pack.id());
+        GameProfiles.writeUuid(output, pack.id());
         MinecraftOutput.string(output, pack.url());
         MinecraftOutput.string(output, pack.hash());
         output.writeBoolean(pack.required());
@@ -91,7 +91,7 @@ public final class ResourcePackPackets {
     if (pop == null || !protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, pop)) return Optional.empty();
     return Optional.of(packet(protocol, state, pop, output -> {
       output.writeBoolean(id != null);
-      if (id != null) uuid(output, id);
+      if (id != null) GameProfiles.writeUuid(output, id);
     }));
   }
 
@@ -110,12 +110,12 @@ public final class ResourcePackPackets {
       boolean nbt = ProtocolEras.textComponentNbt(number);
       if (is(protocol, state, PacketDirection.SERVER_TO_CLIENT, id, pop)) {
         try (DataInputStream input = body(packet)) {
-          return Optional.of(new Removal(input.readBoolean() ? Optional.of(uuid(input)) : Optional.empty()));
+          return Optional.of(new Removal(input.readBoolean() ? Optional.of(GameProfiles.readUuid(input)) : Optional.empty()));
         }
       }
       if (is(protocol, state, PacketDirection.SERVER_TO_CLIENT, id, push)) {
         try (DataInputStream input = body(packet)) {
-          UUID named = uuid(input);
+          UUID named = GameProfiles.readUuid(input);
           String url = MinecraftInput.string(input, ResourcePack.MAX_URL * 3);
           String hash = MinecraftInput.string(input, MAX_HASH * 3);
           boolean required = input.readBoolean();
@@ -149,7 +149,7 @@ public final class ResourcePackPackets {
     try {
       if (!is(protocol, state, PacketDirection.CLIENT_TO_SERVER, PlayPackets.peekId(packet), status)) return Optional.empty();
       try (DataInputStream input = body(packet)) {
-        Optional<UUID> id = named(protocol) ? Optional.of(uuid(input)) : Optional.empty();
+        Optional<UUID> id = named(protocol) ? Optional.of(GameProfiles.readUuid(input)) : Optional.empty();
         Optional<String> hash = ProtocolEras.resourcePackStatusHash(protocol.version().number())
             ? Optional.of(MinecraftInput.string(input, MAX_HASH * 3)) : Optional.empty();
         return Optional.of(new Answer(id, hash, status(MinecraftInput.varInt(input))));
@@ -171,7 +171,7 @@ public final class ResourcePackPackets {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(state, PacketDirection.CLIENT_TO_SERVER, kind));
-      if (named(protocol)) uuid(output, id);
+      if (named(protocol)) GameProfiles.writeUuid(output, id);
       if (ProtocolEras.resourcePackStatusHash(protocol.version().number())) MinecraftOutput.string(output, hash);
       MinecraftOutput.varInt(output, wire(status));
     }
@@ -243,13 +243,6 @@ public final class ResourcePackPackets {
     DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet));
     MinecraftInput.varInt(input);
     return input;
-  }
-
-  private static UUID uuid(DataInputStream input) throws IOException { return new UUID(input.readLong(), input.readLong()); }
-
-  private static void uuid(DataOutputStream output, UUID id) throws IOException {
-    output.writeLong(id.getMostSignificantBits());
-    output.writeLong(id.getLeastSignificantBits());
   }
 
   private interface Body { void write(DataOutputStream output) throws IOException; }

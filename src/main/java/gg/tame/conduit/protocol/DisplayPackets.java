@@ -380,8 +380,7 @@ public final class DisplayPackets {
   private static Optional<byte[]> bossBar(ProtocolDefinition protocol, UUID id, int operation, Body body) throws IOException {
     if (!defines(protocol, PacketKind.PLAY_BOSS_BAR)) return Optional.empty();
     return Optional.of(packet(protocol, PacketKind.PLAY_BOSS_BAR, output -> {
-      output.writeLong(id.getMostSignificantBits());
-      output.writeLong(id.getLeastSignificantBits());
+      GameProfiles.writeUuid(output, id);
       MinecraftOutput.varInt(output, operation);
       body.write(output);
     }));
