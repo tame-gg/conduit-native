@@ -43,6 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class MinecraftProxy implements AutoCloseable {
   private static final int MAX_CONNECTIONS = 2048;
   private static final int MAX_CONCURRENT_AUTH = 32;
+  private static final int ENCRYPTION_RESPONSE_TIMEOUT_MS = 30_000;
   private final ServerSocketChannel listener;
   private final ConduitConfiguration configuration;
   private final PlayerInfoForwarder forwarder;
@@ -61,8 +62,13 @@ public final class MinecraftProxy implements AutoCloseable {
     this(configuration, authenticator, rsaKeys, Path.of("plugins"));
   }
   public MinecraftProxy(ConduitConfiguration configuration, PlayerAuthenticator authenticator, KeyPair rsaKeys, Path pluginsDirectory) throws IOException {
+    this(configuration, authenticator, rsaKeys, pluginsDirectory, ServerSocketChannel.open());
+  }
+  /** Serves on a listener the caller supplies; the proxy binds and owns it from here. */
+  public MinecraftProxy(ConduitConfiguration configuration, PlayerAuthenticator authenticator, KeyPair rsaKeys,
+                        Path pluginsDirectory, ServerSocketChannel listener) throws IOException {
     this.configuration = configuration; this.authenticator = authenticator; this.rsaKeys = rsaKeys;
-    this.forwarder = Forwarders.create(configuration); this.listener = ServerSocketChannel.open(); listener.bind(configuration.listener());
+    this.forwarder = Forwarders.create(configuration); this.listener = listener; listener.bind(configuration.listener());
     Path configDir = pluginsDirectory.getParent() == null ? Path.of(".") : pluginsDirectory.getParent();
     this.runtime = new ConduitRuntime(configuration, pluginsDirectory, configDir);
     CoreCommands.register(runtime);
@@ -76,6 +82,8 @@ public final class MinecraftProxy implements AutoCloseable {
     }
   }
   public ConduitRuntime runtime() { return runtime; }
+  /** Connections whose worker has not returned yet; zero means every socket and thread is back. */
+  public int activeConnections() { return connections.get(); }
   public void probeBackends() { runtime.selector().probeAll(); }
   public int port() throws IOException { return ((java.net.InetSocketAddress) listener.getLocalAddress()).getPort(); }
   public void serve() throws IOException {
@@ -85,7 +93,22 @@ public final class MinecraftProxy implements AutoCloseable {
     runtime.events().fire(new ProxyStartEvent(runtime));
     try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       while (running) {
-        SocketChannel client = listener.accept();
+        SocketChannel client;
+        try {
+          client = listener.accept();
+        } catch (IOException failure) {
+          // One connection failing to arrive is not the listener going away. A peer that resets
+          // between the SYN and the accept, or a momentary descriptor shortage, ended the accept
+          // loop and with it every future join: the process stayed up serving nobody. The loop now
+          // ends only when the socket it is accepting on has actually gone.
+          if (!running || !listener.isOpen()) break;
+          ConduitLog.warn("Accept failed, still listening: " + failure);
+          // Whatever is refusing connections is usually still refusing them a moment later, and a
+          // failure that returns instantly would otherwise spin this thread at full speed.
+          try { Thread.sleep(10); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+          continue;
+        }
+        if (client == null) continue;
         if (!accepting || runtime.gracefulShutdown().isShuttingDown()) {
           try { client.close(); } catch (IOException ignored) { }
           continue;
@@ -129,7 +152,9 @@ public final class MinecraftProxy implements AutoCloseable {
         ConduitMetrics.current().malformedProtocol();
         return;
       }
-      client.setSoTimeout(0);
+      // The timeout stays on for the rest of the handshake-to-play exchange. Cleared here, a
+      // connection that sent a valid handshake and then nothing at all kept its worker thread, its
+      // connection slot and its throttle lease for as long as it cared to hold the socket open.
       Handshake handshake;
       try {
         handshake = Handshake.decode(firstPacket);
@@ -184,6 +209,9 @@ public final class MinecraftProxy implements AutoCloseable {
         }
         runtime.events().fire(new PlayerLoginEvent(player));
         if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
+        // The session clears the timeout itself, once its own login exchange with the client and
+        // the backend is over: everything read from the client before that point is part of a
+        // login, and a login that stops halfway must not park the worker holding it.
         player.play();
       }
     } catch (IOException exception) { ConduitLog.warn("Connection closed: " + exception.getMessage()); }
@@ -214,6 +242,9 @@ public final class MinecraftProxy implements AutoCloseable {
       transport.write(handshake.request(protocol).encode(protocol));
       ConduitLog.info("Encryption request sent.");
       byte[] response;
+      // The client answers this one only after its own round trip to the session service, which is
+      // slower than anything else in a login and has nothing to do with a stalling connection.
+      transport.setReadTimeoutMillis(ENCRYPTION_RESPONSE_TIMEOUT_MS);
       try { response = transport.read(configuration.maxFrameBytes()); }
       catch (IOException exception) { throw new AuthenticationException("missing encryption response", exception); }
       byte[] secret;

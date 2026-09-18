@@ -13,16 +13,20 @@ import javax.crypto.Cipher;
 
 /** Raw socket framing with an optional AES/CFB8 layer applied to the entire byte stream. */
 public final class PacketTransport {
+  private final Socket socket;
   private InputStream input;
   private OutputStream output;
   private EncryptionState state = EncryptionState.PLAINTEXT;
   private final Object writeLock = new Object();
   public PacketTransport(Socket socket) throws IOException {
+    this.socket = socket;
     socket.setTcpNoDelay(true);
     this.input = socket.getInputStream();
     this.output = new BufferedOutputStream(socket.getOutputStream(), 8192);
   }
-  public PacketTransport(InputStream input, OutputStream output) { this.input = input; this.output = output; }
+  public PacketTransport(InputStream input, OutputStream output) { this.socket = null; this.input = input; this.output = output; }
+  /** Bounds a read that would otherwise park forever; 0 waits indefinitely. */
+  public void setReadTimeoutMillis(int millis) throws IOException { if (socket != null) socket.setSoTimeout(millis); }
   public EncryptionState state() { return state; }
   public byte[] read(int maximumFrameBytes) throws IOException {
     byte[] packet = MinecraftFrames.read(input, maximumFrameBytes);
@@ -59,5 +63,17 @@ public final class PacketTransport {
   }
   public InputStream input() { return input; }
   public OutputStream output() { return output; }
-  public void close() { state = EncryptionState.CLOSED; }
+  /**
+   * Ends the connection, not merely the session's view of it.
+   *
+   * <p>A session that closes itself — a backend that dropped with nowhere to fall back to, a
+   * translator that failed, a plugin disconnecting a player — is the only thing that ever calls
+   * this. Marking the state and leaving the socket open left the client reader parked in a read
+   * nothing would complete, so the worker never returned, and its connection slot and its
+   * per-source throttle lease were both held until the client itself hung up.
+   */
+  public void close() {
+    state = EncryptionState.CLOSED;
+    if (socket != null) { try { socket.close(); } catch (IOException ignored) { } }
+  }
 }

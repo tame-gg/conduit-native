@@ -75,6 +75,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final SwitchPacketQueue switchQueue;
   private final Object lock = new Object();
   private final AtomicReference<SessionLifecycle> lifecycle = new AtomicReference<>(SessionLifecycle.CONNECTING);
+  private final java.util.concurrent.atomic.AtomicBoolean switchInFlight = new java.util.concurrent.atomic.AtomicBoolean();
   /**
    * Guards the translator. A translator is one stateful decoder per session, not a pure function:
    * ViaVersion's connection carries entity trackers, world state and a partially written buffer.
@@ -87,6 +88,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final BlockingQueue<Boolean> knownPacksAck = new ArrayBlockingQueue<>(1);
   private volatile BackendConnection backend;
   private volatile BackendConnection switchingTarget;
+  /**
+   * Every backend this session has opened and not yet closed.
+   *
+   * <p>{@link #close()} used to close the two fields above, read one after the other and outside
+   * the lock a switch commits under. A switch that installed its new backend between those two
+   * reads left it open on a session that had already ended: the socket, and the player on the far
+   * side of it, survived the disconnect. Closing what the session actually holds cannot miss it,
+   * because a switch adds its connection before the commit that could hide it.
+   */
+  private final java.util.Set<BackendConnection> open = java.util.concurrent.ConcurrentHashMap.newKeySet();
   private volatile boolean closed;
   private volatile boolean expectClientLoginAck;
   /**
@@ -223,6 +234,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   public BackendConnection backend() { return backend; }
   public void play() throws IOException {
     BackendConnection initial = connectInitial();
+    // Login is over. Both links were read under a deadline until here, because a client or a
+    // backend that stops halfway through a login parks this thread with two sockets, a connection
+    // slot and a throttle lease held; from here on either end may sit quiet as long as it likes.
+    client.setReadTimeoutMillis(0);
+    initial.setReadTimeoutMillis(0);
     synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); lock.notifyAll(); }
     players.add(this);
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
@@ -238,15 +254,33 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       close();
     }
   }
+  private BackendConnection track(BackendConnection connection) {
+    open.add(connection);
+    return connection;
+  }
+
+  /** Closes a backend and forgets it; closing twice is harmless, forgetting to is not. */
+  private void discard(BackendConnection connection) {
+    if (connection == null) return;
+    open.remove(connection);
+    connection.close();
+  }
+
   private BackendConnection connectInitial() throws IOException {
     IOException last = null;
     for (BackendServer server : selector.candidatesFor(protocol.version().number(), modClassifier.family(), false)) {
+      Socket socket = null;
+      BackendConnection connection = null;
       try {
         prepareTranslation(server);
-        Socket socket = BackendConnection.open(server);
+        socket = BackendConnection.open(server);
         writeBackendHandshake(socket, server);
         MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile(), backendDefinition));
-        BackendConnection connection = new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false);
+        connection = track(new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false));
+        // Per read, as the switch path already bounds its own login: a backend that accepts the
+        // connection and then says nothing held the join thread, the client's socket and this one
+        // open for as long as it cared to. A backend that keeps sending never sees this.
+        connection.setReadTimeoutMillis(SWITCH_BUDGET_MS);
         // Every pair and every forwarding mode, as a switch already does. This is where the backend's
         // Set Compression is consumed: the client's link is never compressed. Left to the relay, a
         // DIRECT 1.20.4 session with forwarding "none" handed that packet to the client, and Conduit
@@ -255,6 +289,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         completeBackendLogin(connection, true);
         return connection;
       } catch (IOException exception) {
+        // The candidate that failed takes its socket with it. Left open, every backend that
+        // refused a login mid-exchange cost the proxy a file descriptor and the backend a
+        // half-finished connection, for as long as the process ran.
+        discard(connection);
+        if (connection == null && socket != null) try { socket.close(); } catch (IOException ignored) { }
         last = exception;
         System.err.println("Backend unavailable: " + server.name() + " (" + exception.getMessage() + ")");
       }
@@ -1131,7 +1170,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       lifecycle.set(SessionLifecycle.SWITCHING);
       lock.notifyAll();
     }
-    lost.close();
+    discard(lost);
     Set<String> failed = new HashSet<>();
     failed.add(ServerRegistry.normalize(lost.server().name()));
     sendMessage(Text.of(lost.server().name() + " is unavailable.").color(TextColor.RED));
@@ -1163,13 +1202,29 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     else Messages.unavailable(this, server.name());
     return ok;
   }
+  /**
+   * One client-requested switch at a time.
+   *
+   * <p>The session only becomes SWITCHING at the commit, and everything before it — opening the
+   * target, logging in to it, building its translator — runs while the session is still CONNECTED.
+   * So a client sending {@code /server} as fast as it can type had every one of those requests pass
+   * the busy check and open a backend socket of its own, holding one connection at the target per
+   * packet until each found out at the commit that another had won. Two that did reach the commit
+   * were worse: the second installed its backend over the first's without closing it.
+   *
+   * <p>The fallback path takes no part in this. It is entered from the backend reader with the
+   * session already SWITCHING and is the only thing that can save a player whose server just died.
+   */
   private boolean runSwitch(BackendServer server) {
+    if (!switchInFlight.compareAndSet(false, true)) return false;
     try {
       switchTo(server, false);
       return true;
     } catch (Exception exception) {
       ConduitMetrics.current().failedSwitch();
       return false;
+    } finally {
+      switchInFlight.set(false);
     }
   }
   private static final int SWITCH_BUDGET_MS = 4_000;
@@ -1214,7 +1269,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           ? new Handshake(pending.backendProtocol(), handshake.requestedHost(), handshake.requestedPort(), 2)
           : handshake;
       BackendConnection.handshake(socket, switchHandshake, server, profile(), modClassifier.marker(), modClassifier.family());
-      next = new BackendConnection(server, socket, pending.definition(), forwarder, profile(), address, configuration, true);
+      next = track(new BackendConnection(server, socket, pending.definition(), forwarder, profile(), address, configuration, true));
       next.setReadTimeoutMillis(remainingMillis(deadline));
       completeBackendLogin(next, false, pending);
       enforceDeadline(deadline, "login");
@@ -1376,7 +1431,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // Not replayed yet when the translator is still waiting for the new backend's Join Game; the
       // read loop does it as soon as that arrives.
       if (!awaitingBackendJoinGame.holding()) replayClientInformation(backend, ConnectionState.PLAY);
-      if (previous != null) previous.close();
+      discard(previous);
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {
         runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, sourceView, targetView));
@@ -1389,8 +1444,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       switchQueue.clear();
       // Only release the prepared translation if it never became the session's.
       if (pending != null && pending.translator() != translator) pending.close();
-      if (next != null) next.close();
-      else if (socket != null) try { socket.close(); } catch (IOException ignored) { }
+      discard(next);
+      if (next == null && socket != null) try { socket.close(); } catch (IOException ignored) { }
       gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception.getMessage());
       if (targetView != null) {
         runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent(this, sourceView, targetView,
@@ -1600,10 +1655,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     new Translation(translationSupport, backendProtocol, backendDefinition, translator).close();
     synchronized (lock) { lock.notifyAll(); }
     if (players != null) players.remove(this);
-    BackendConnection current = backend;
-    if (current != null) current.close();
-    BackendConnection switching = switchingTarget;
-    if (switching != null) switching.close();
+    for (BackendConnection connection : open) discard(connection);
     client.close();
   }
 }

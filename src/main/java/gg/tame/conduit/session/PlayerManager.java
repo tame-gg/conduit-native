@@ -17,10 +17,15 @@ public final class PlayerManager {
     byId.put(id, session);
     byName.put(session.username().toLowerCase(Locale.ROOT), id);
   }
+  /**
+   * A player who reconnects before the old session notices is indexed twice under one UUID. The
+   * name index is keyed by UUID, so removing the dead session matched it and took the live
+   * session's name with it: {@code /find} and every lookup by name reported a player offline while
+   * they were standing in a world. Only the session that still owns the UUID owns the name.
+   */
   public void remove(TrackedPlayer session) {
     UUID id = session.uniqueId();
-    byId.remove(id, session);
-    byName.remove(session.username().toLowerCase(Locale.ROOT), id);
+    if (byId.remove(id, session)) byName.remove(session.username().toLowerCase(Locale.ROOT), id);
   }
   public Optional<TrackedPlayer> get(UUID uniqueId) { return Optional.ofNullable(byId.get(uniqueId)); }
   public Optional<TrackedPlayer> getByUsername(String username) {

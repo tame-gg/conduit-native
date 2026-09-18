@@ -15,7 +15,7 @@ public final class BotFilter {
   private volatile int effectiveThreshold;
   private volatile int ipv4Prefix = 32;
   private volatile int ipv6Prefix = 64;
-  private final BoundedSourceMap<SourceState> states = new BoundedSourceMap<>(MAX_SOURCES);
+  private final BoundedSourceMap<SourceState> states = new BoundedSourceMap<>(MAX_SOURCES, ignored -> false);
 
   public BotFilter(SecuritySettings.BotFilterSettings settings) {
     applySettings(settings);

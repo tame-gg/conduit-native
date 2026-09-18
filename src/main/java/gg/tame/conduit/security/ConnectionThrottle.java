@@ -14,7 +14,7 @@ public final class ConnectionThrottle {
   private static final int MAX_SOURCES = 8192;
   private volatile SecuritySettings.ThrottleSettings settings;
   private volatile int effectiveMaxAttempts;
-  private final BoundedSourceMap<Window> windows = new BoundedSourceMap<>(MAX_SOURCES);
+  private final BoundedSourceMap<Window> windows = new BoundedSourceMap<>(MAX_SOURCES, window -> window.concurrent.get() > 0);
 
   public ConnectionThrottle(SecuritySettings.ThrottleSettings settings) {
     applySettings(settings);
@@ -38,8 +38,9 @@ public final class ConnectionThrottle {
 
   public enum Decision { ALLOW, THROTTLED, DISABLED }
 
-  public record Lease(SourceKey key, boolean held) {
-    static Lease none() { return new Lease(null, false); }
+  /** Carries the counter it was granted from, so releasing never depends on a second lookup. */
+  public record Lease(SourceKey key, boolean held, AtomicInteger concurrent) {
+    static Lease none() { return new Lease(null, false, null); }
   }
 
   public Decision tryAdmit(InetAddress address, LeaseHolder holder) {
@@ -64,17 +65,22 @@ public final class ConnectionThrottle {
       }
       window.attempts++;
       window.concurrent.incrementAndGet();
-      holder.lease = new Lease(key, true);
+      holder.lease = new Lease(key, true, window.concurrent);
       ConduitMetrics.current().connectionAccepted();
       return Decision.ALLOW;
     }
   }
 
   public void release(Lease lease) {
-    if (lease == null || !lease.held() || lease.key() == null) return;
-    Window window = windows.get(lease.key());
-    if (window == null) return;
-    window.concurrent.updateAndGet(value -> Math.max(0, value - 1));
+    if (lease == null || !lease.held() || lease.concurrent() == null) return;
+    lease.concurrent().updateAndGet(value -> Math.max(0, value - 1));
+  }
+
+  /** Connections admitted and not yet released, across every source still being tracked. */
+  public int inFlight() {
+    int[] total = {0};
+    windows.forEachValue(window -> total[0] += window.concurrent.get());
+    return total[0];
   }
 
   private void reject(Window window, long now) {

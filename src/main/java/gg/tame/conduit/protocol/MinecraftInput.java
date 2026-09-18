@@ -11,6 +11,9 @@ public final class MinecraftInput {
     int value = 0;
     for (int index = 0; index < 5; index++) {
       int current = input.readUnsignedByte();
+      // Only the low four bits of a fifth byte survive the shift; -1 is FF FF FF FF 0F and stays
+      // legal. Anything above them silently produced a different number than was written.
+      if (index == 4 && (current & 0x70) != 0) throw new IOException("VarInt overflows an int");
       value |= (current & 0x7f) << (index * 7);
       if ((current & 0x80) == 0) return value;
     }

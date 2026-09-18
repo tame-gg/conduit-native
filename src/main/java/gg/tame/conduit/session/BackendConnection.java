@@ -30,6 +30,7 @@ public final class BackendConnection implements AutoCloseable {
   private final int maxFrameBytes;
   private final Object writeLock = new Object();
   private final OutputStream output;
+  private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
   private int queuedWrites;
   private boolean brandSeen;
   public BackendConnection(BackendServer server, Socket socket, ProtocolDefinition protocol, PlayerInfoForwarder forwarder,
@@ -124,7 +125,14 @@ public final class BackendConnection implements AutoCloseable {
   public void setReadTimeoutMillis(int millis) throws IOException { socket.setSoTimeout(millis); }
   public boolean brandSeen() { return brandSeen; }
   public void markBrandSeen() { brandSeen = true; }
+  /**
+   * Idempotent. A lost backend is closed where it is lost and again when the session closes, and a
+   * switch closes the one it replaced; counting each of those as a separate close walked the live
+   * backend gauge down past the connections that were still open, and it reported none while other
+   * players were still on theirs.
+   */
   @Override public void close() {
+    if (!closed.compareAndSet(false, true)) return;
     try { socket.close(); } catch (IOException ignored) { }
     ConduitMetrics.current().backendClosed();
   }

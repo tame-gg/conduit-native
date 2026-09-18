@@ -11,11 +11,18 @@ final class BoundedSourceMap<V> {
   private final ReentrantLock lock = new ReentrantLock();
   private final LinkedHashMap<SourceKey, V> map;
 
-  BoundedSourceMap(int capacity) {
+  /**
+   * @param retain entries this says yes to are never evicted, however old they are. State that is
+   *     still in use cannot be dropped and recreated empty: a flood from fresh addresses would
+   *     otherwise evict the record of the connections a source already has open, and the next one
+   *     it opened started counting from zero — which is the source that most needs the limit. Only
+   *     something with live connections behind it can be retained, so this stays bounded.
+   */
+  BoundedSourceMap(int capacity, java.util.function.Predicate<V> retain) {
     this.capacity = Math.max(16, capacity);
     this.map = new LinkedHashMap<>(64, 0.75f, true) {
       @Override protected boolean removeEldestEntry(Map.Entry<SourceKey, V> eldest) {
-        return size() > BoundedSourceMap.this.capacity;
+        return size() > BoundedSourceMap.this.capacity && !retain.test(eldest.getValue());
       }
     };
   }
