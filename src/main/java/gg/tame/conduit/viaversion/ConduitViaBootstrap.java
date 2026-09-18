@@ -40,6 +40,9 @@ public final class ConduitViaBootstrap {
       return;
     }
     if (!STARTED.compareAndSet(false, true)) {
+      // Already loaded in this JVM. A runtime in between that had translation off marked it
+      // unavailable, and returning here left this one, which turned it on, without it.
+      available = Via.isLoaded();
       return;
     }
     try {
