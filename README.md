@@ -639,7 +639,9 @@ plugins from loading, and the rejected jar's classloader is closed so the file i
 plugin whose `depend` cannot be met is named in the log with the reason: a dependency that is not
 installed, a dependency cycle (`ping -> pong -> ping`), or a dependency that failed for one of those.
 
-Events include proxy start/shutdown, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
+Events include proxy start/pre-shutdown/shutdown (`ProxyPreShutdownEvent`: new players are refused and
+everyone online is still connected; the shutdown waits for its listeners), reload (after `/conduit reload`
+applied), a plugin registering or unregistering a server, the client's settings and brand, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
 version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer),
 player setup (`PlayerSetupEvent`: after authentication and before anything is decided about the player, so
 a permission plugin loads them here), login (deniable; maintenance refuses before it), auth,

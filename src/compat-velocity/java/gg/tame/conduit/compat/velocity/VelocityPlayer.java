@@ -111,7 +111,8 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public PlayerSettings getPlayerSettings() { return new Settings(player.locale().orElse(Locale.US)); }
   @Override public boolean hasSentPlayerSettings() { return player.locale().isPresent(); }
   @Override public Optional<ModInfo> getModInfo() { throw Unsupported.api("Player.getModInfo"); }
-  @Override public String getClientBrand() { throw Unsupported.api("Player.getClientBrand"); }
+  /** What the client last sent on the brand channel; null until it has. */
+  @Override public String getClientBrand() { return player.clientBrand().orElse(null); }
   @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
   @Override public List<GameProfile.Property> getGameProfileProperties() { throw Unsupported.api("Player.getGameProfileProperties"); }
   @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { throw Unsupported.api("Player.setGameProfileProperties"); }

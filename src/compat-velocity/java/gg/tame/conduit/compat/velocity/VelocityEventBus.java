@@ -50,7 +50,12 @@ final class VelocityEventBus implements EventManager {
   static final Set<Class<?>> FIRED = Set.of(ProxyInitializeEvent.class, ProxyShutdownEvent.class, LoginEvent.class,
       PostLoginEvent.class, DisconnectEvent.class, PlayerChooseInitialServerEvent.class, ServerPreConnectEvent.class,
       ServerConnectedEvent.class, ServerPostConnectEvent.class, CommandExecuteEvent.class, PluginMessageEvent.class,
-      PlayerChatEvent.class, PermissionsSetupEvent.class, ProxyPingEvent.class, KickedFromServerEvent.class);
+      PlayerChatEvent.class, PermissionsSetupEvent.class, ProxyPingEvent.class, KickedFromServerEvent.class,
+      com.velocitypowered.api.event.proxy.server.ServerRegisteredEvent.class,
+      com.velocitypowered.api.event.proxy.server.ServerUnregisteredEvent.class,
+      com.velocitypowered.api.event.proxy.ProxyPreShutdownEvent.class, com.velocitypowered.api.event.proxy.ProxyReloadEvent.class,
+      com.velocitypowered.api.event.proxy.ListenerBoundEvent.class, com.velocitypowered.api.event.proxy.ListenerCloseEvent.class,
+      com.velocitypowered.api.event.player.PlayerSettingsChangedEvent.class, com.velocitypowered.api.event.player.PlayerClientBrandEvent.class);
 
   private final VelocityEnvironment environment;
   private final CopyOnWriteArrayList<Handler> handlers = new CopyOnWriteArrayList<>();

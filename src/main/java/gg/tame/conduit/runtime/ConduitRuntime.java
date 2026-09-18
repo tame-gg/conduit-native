@@ -202,7 +202,14 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     }
   }
 
-  public synchronized ReloadResult reload() {
+  /** Fires ProxyReloadEvent after one that applied, outside the lock, so a listener can read the result. */
+  public ReloadResult reload() {
+    ReloadResult result = reloadConfiguration();
+    if (result.applied()) events.fire(new gg.tame.conduit.api.event.proxy.ProxyReloadEvent(this));
+    return result;
+  }
+
+  private synchronized ReloadResult reloadConfiguration() {
     if (configPath == null) return new ReloadResult(false, List.of(), List.of(), "No config path bound.");
     try {
       ConfigMigrator.migrate(configPath);
@@ -255,8 +262,12 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     return true;
   }
 
+  /** ProxyPreShutdownEvent goes between the last accept and the first player moved or kicked. */
   public void shutdownGracefully(Runnable stopAccepting) {
-    gracefulShutdown.run(stopAccepting, players, selector);
+    gracefulShutdown.run(() -> {
+      stopAccepting.run();
+      if (started.get()) events.fire(new gg.tame.conduit.api.event.proxy.ProxyPreShutdownEvent(this));
+    }, players, selector);
   }
 
   /**
@@ -313,11 +324,14 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       BackendServer server = registry.register(new BackendServer(name, address));
       ApiServer view = new ApiServer(server, selector, runtime);
       views.put(ServerRegistry.normalize(name), view);
+      runtime.events().fire(new gg.tame.conduit.api.event.proxy.ServerRegisteredEvent(view));
       return view;
     }
     @Override public boolean unregister(String name) {
-      views.remove(ServerRegistry.normalize(name));
-      return selector.unregister(name);
+      ApiServer removed = views.remove(ServerRegistry.normalize(name));
+      boolean unregistered = selector.unregister(name);
+      if (removed != null) runtime.events().fire(new gg.tame.conduit.api.event.proxy.ServerUnregisteredEvent(removed));
+      return unregistered;
     }
   }
   static final class ApiServer implements RegisteredServer {

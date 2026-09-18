@@ -9,13 +9,20 @@ import com.velocitypowered.api.event.connection.PostLoginEvent;
 import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.PlayerChatEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
+import com.velocitypowered.api.event.player.PlayerClientBrandEvent;
+import com.velocitypowered.api.event.player.PlayerSettingsChangedEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
+import com.velocitypowered.api.event.proxy.ListenerBoundEvent;
+import com.velocitypowered.api.event.proxy.ListenerCloseEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyPingEvent;
+import com.velocitypowered.api.event.proxy.ProxyPreShutdownEvent;
+import com.velocitypowered.api.event.proxy.ProxyReloadEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.network.HandshakeIntent;
+import com.velocitypowered.api.network.ListenerType;
 import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.InboundConnection;
@@ -36,6 +43,8 @@ import gg.tame.conduit.api.event.player.PlayerServerSwitchEvent;
 import gg.tame.conduit.api.event.player.PlayerSetupEvent;
 import gg.tame.conduit.api.event.proxy.ProxyStartEvent;
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
+import gg.tame.conduit.api.event.proxy.ServerRegisteredEvent;
+import gg.tame.conduit.api.event.proxy.ServerUnregisteredEvent;
 import gg.tame.conduit.api.text.Text;
 import java.net.InetSocketAddress;
 import java.util.Optional;
@@ -56,6 +65,8 @@ final class VelocityEventBridge {
 
   @Subscribe public void onStart(ProxyStartEvent event) {
     if (listening(ProxyInitializeEvent.class)) environment.fireAndWait(new ProxyInitializeEvent());
+    // After initialization, where plugins register their listeners; the accept loop starts next.
+    if (listening(ListenerBoundEvent.class)) environment.events.fire(new ListenerBoundEvent(environment.conduit.boundAddress(), ListenerType.MINECRAFT));
   }
   @Subscribe public void onShutdown(gg.tame.conduit.api.event.proxy.ProxyShutdownEvent event) {
     for (var plugin : environment.plugins.getPlugins()) ((VelocityPluginHost.Container) plugin).shutdownDelivered = true;
@@ -245,5 +256,38 @@ final class VelocityEventBridge {
         ? new PluginMessageEvent(player, connection, channel, event.data())
         : new PluginMessageEvent(connection, player, channel, event.data()));
     if (!message.getResult().isAllowed()) event.setCancelled(true);
+  }
+
+  // Told, not asked: Velocity does not wait for these either, so neither does the thread that raised them.
+  @Subscribe public void onServerRegistered(ServerRegisteredEvent event) {
+    if (listening(com.velocitypowered.api.event.proxy.server.ServerRegisteredEvent.class)) {
+      environment.events.fire(new com.velocitypowered.api.event.proxy.server.ServerRegisteredEvent(environment.server(event.server())));
+    }
+  }
+  @Subscribe public void onServerUnregistered(ServerUnregisteredEvent event) {
+    if (listening(com.velocitypowered.api.event.proxy.server.ServerUnregisteredEvent.class)) {
+      environment.events.fire(new com.velocitypowered.api.event.proxy.server.ServerUnregisteredEvent(environment.server(event.server())));
+    }
+  }
+  @Subscribe public void onReload(gg.tame.conduit.api.event.proxy.ProxyReloadEvent event) {
+    if (listening(ProxyReloadEvent.class)) environment.events.fire(new ProxyReloadEvent());
+  }
+  /** The settings as {@code getPlayerSettings} has them: the client's language, and defaults for the rest. */
+  @Subscribe public void onSettings(gg.tame.conduit.api.event.player.PlayerSettingsChangedEvent event) {
+    if (!listening(PlayerSettingsChangedEvent.class)) return;
+    VelocityPlayer player = environment.player(event.player());
+    environment.events.fire(new PlayerSettingsChangedEvent(player, player.getPlayerSettings()));
+  }
+  @Subscribe public void onBrand(gg.tame.conduit.api.event.player.PlayerClientBrandEvent event) {
+    if (listening(PlayerClientBrandEvent.class)) environment.events.fire(new PlayerClientBrandEvent(environment.player(event.player()), event.brand()));
+  }
+  /**
+   * Waited for, as Velocity waits, but for at most {@link VelocityEnvironment#WAIT_MS}: the shutdown
+   * thread goes on without a handler that never finishes. The listener has already stopped accepting
+   * players, so ListenerCloseEvent comes just after that rather than just before it.
+   */
+  @Subscribe public void onPreShutdown(gg.tame.conduit.api.event.proxy.ProxyPreShutdownEvent event) {
+    if (listening(ListenerCloseEvent.class)) environment.events.fire(new ListenerCloseEvent(environment.conduit.boundAddress(), ListenerType.MINECRAFT));
+    if (listening(ProxyPreShutdownEvent.class)) environment.fireAndWait(new ProxyPreShutdownEvent());
   }
 }

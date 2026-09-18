@@ -157,6 +157,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private volatile byte[] clientInformation;
   /** What the proxy shows this client itself: titles, action bar, boss bars, tab-list header and entries. */
   private final ClientDisplay display;
+  /** What the client last sent on the brand channel. */
+  private volatile String clientBrand;
   public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
       LoginPipeline loginPipeline, PlayerInfoForwarder forwarder, gg.tame.conduit.runtime.ConduitRuntime runtime,
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
@@ -349,7 +351,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           return false;
         }
         if ("minecraft:brand".equalsIgnoreCase(decoded.channel()) || "MC|Brand".equals(decoded.channel())) {
-          try { modClassifier.observeBrand(decoded.brandText()); } catch (IOException ignored) { }
+          try {
+            String brand = decoded.brandText();
+            modClassifier.observeBrand(brand);
+            clientBrand = brand;
+            runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerClientBrandEvent(this, brand));
+          } catch (IOException ignored) { }
         }
       }
       var event = new gg.tame.conduit.api.event.messaging.PluginMessageEvent(this, decoded.channel(), decoded.data(), direction);
@@ -1236,6 +1243,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return java.util.Optional.empty();
     }
   }
+  @Override public java.util.Optional<String> clientBrand() { return java.util.Optional.ofNullable(clientBrand); }
   /** Caches Client Information from either state; the packet is still forwarded normally. */
   private void rememberClientInformation(byte[] packet, int id) throws IOException {
     ConnectionState state = clientState.state();
@@ -1247,6 +1255,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
       System.out.println("TRACE cached client information from " + state + " (" + clientInformation.length + " body bytes)");
     }
+    runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerSettingsChangedEvent(this));
   }
   /** Tells a backend the channels the client announced; registration is per connection, not per player. */
   private void replayRegisteredChannels(BackendConnection target, ConnectionState state, ProtocolDefinition definition) {

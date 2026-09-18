@@ -40,6 +40,8 @@ public interface Player extends CommandSource {
    * up to a keep-alive interval (about 15 seconds on a vanilla backend) after it joins.
    */
   default long ping() { return -1; }
+  /** What the client last called itself on the brand channel ("vanilla", "fabric", ...). Empty until it has. */
+  default java.util.Optional<String> clientBrand() { return java.util.Optional.empty(); }
   void sendMessage(String message);
   default void sendMessage(Text text) {
     sendMessage(text == null ? "" : text.plain());

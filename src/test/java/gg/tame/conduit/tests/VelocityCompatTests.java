@@ -128,7 +128,7 @@ public final class VelocityCompatTests {
       import com.velocitypowered.api.event.player.ServerPreConnectEvent;
       import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
       import com.velocitypowered.api.event.proxy.ProxyPingEvent;
-      import com.velocitypowered.api.event.proxy.ProxyReloadEvent;
+      import com.velocitypowered.api.event.query.ProxyQueryEvent;
       import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
       import com.velocitypowered.api.plugin.Dependency;
       import com.velocitypowered.api.plugin.Plugin;
@@ -491,7 +491,7 @@ public final class VelocityCompatTests {
                 Component.text("redirected by vtest")));
           }
           /** Conduit never fires this; registering it must say so. */
-          @Subscribe public void reload(ProxyReloadEvent event) { signal("reload"); }
+          @Subscribe public void query(ProxyQueryEvent event) { signal("query"); }
         }
       }
       """;
@@ -559,7 +559,7 @@ public final class VelocityCompatTests {
         
         var vtest = proxy.runtime().plugins().plugin("vtest").orElseThrow(() -> new AssertionError("vtest is a Conduit plugin"));
         require(proxy.runtime().plugins().plugin("nside").isPresent(), "a native plugin loads beside Velocity plugins");
-        require(logged.stream().anyMatch(line -> line.startsWith("velocity: ") && line.contains("ProxyReloadEvent") && line.contains("never fires")),
+        require(logged.stream().anyMatch(line -> line.startsWith("velocity: ") && line.contains("ProxyQueryEvent") && line.contains("never fires")),
             "a listener for an event Conduit never fires is reported: " + logged);
         require(logged.stream().noneMatch(line -> line.contains("ProxyPingEvent") && line.contains("never fires")), "ProxyPingEvent is fired: " + logged);
 
