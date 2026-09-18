@@ -16,6 +16,14 @@ public enum PacketKind {
   CONFIGURATION_RESOURCE_PACK_STATUS,
   /** Sends the client to another host (1.20.5+): host string, then port VarInt, in both states. */
   CONFIGURATION_TRANSFER, PLAY_TRANSFER,
+  /** 1.20.5+: a cookie for the client to keep, a key and at most 5 KiB, in both states. */
+  CONFIGURATION_STORE_COOKIE, PLAY_STORE_COOKIE,
+  /** 1.20.5+: asks the client for the cookie under a key. */
+  CONFIGURATION_COOKIE_REQUEST, PLAY_COOKIE_REQUEST,
+  /** 1.20.5+: the client's answer to a Cookie Request: the key, then the cookie if it has one. */
+  CONFIGURATION_COOKIE_RESPONSE, PLAY_COOKIE_RESPONSE,
+  /** 1.21+: the links in the client's pause menu, each a known type or a text label, and a URL. */
+  CONFIGURATION_SERVER_LINKS, PLAY_SERVER_LINKS,
   PLAY_LOGIN, PLAY_PLUGIN_MESSAGE, PLAY_START_CONFIGURATION, PLAY_SYSTEM_CHAT,
   PLAY_TAB_COMPLETE, PLAY_DISCONNECT, PLAY_CHAT_COMMAND, PLAY_TAB_COMPLETE_REQUEST,
   PLAY_CONFIGURATION_ACKNOWLEDGED, PLAY_DECLARE_COMMANDS, PLAY_PLAYER_INFO_UPDATE, PLAY_PLAYER_INFO_REMOVE,

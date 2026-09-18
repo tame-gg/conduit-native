@@ -293,6 +293,20 @@ public final class ProtocolEras {
   public static boolean soundInlineEvent(int protocol) { return protocol >= SOUND_INLINE_EVENT_FROM; }
   public static boolean soundUiSource(int protocol) { return protocol >= SOUND_UI_SOURCE_FROM; }
 
+  // What a client sends when a plugin speaks for it (Player.spoofChatInput).
+
+  /** First protocol whose chat box takes 256 characters (1.11); before it, 100. */
+  public static final int CHAT_256_FROM = 315;
+  /**
+   * First protocol with an unsigned Chat Command packet, the command alone (1.20.5). From 1.19 to 1.20.4
+   * every command carried a timestamp, a salt and the client's acknowledgement of recent chat.
+   */
+  public static final int UNSIGNED_CHAT_COMMAND_FROM = 766;
+
+  /** The most characters this protocol's chat box, and so its chat packet, takes. */
+  public static int chatLimit(int protocol) { return protocol >= CHAT_256_FROM ? 256 : 100; }
+  public static boolean unsignedChatCommand(int protocol) { return protocol >= UNSIGNED_CHAT_COMMAND_FROM; }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */

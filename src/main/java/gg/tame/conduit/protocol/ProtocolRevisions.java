@@ -552,6 +552,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.19.2; capabilities inherited from 1.19",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x15),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x31),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x21),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x6A),
@@ -616,6 +617,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.19.3; capabilities inherited from 1.19.2",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x14),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x30),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x20),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CLEAR_TITLES, 0x0C),
@@ -682,6 +684,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.19.4; capabilities inherited from 1.19.3",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x16),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x34),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BLOCK_UPDATE, 0x0A),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BOSS_BAR, 0x0B),
@@ -803,6 +806,15 @@ public final class ProtocolRevisions {
       List.of(
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_TRANSFER, 0x0B),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x73),
+          PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_COOKIE_REQUEST, 0x00),
+          PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_SERVER_LINKS, 0x10),
+          PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_STORE_COOKIE, 0x0A),
+          PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_COOKIE_RESPONSE, 0x01),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x18),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COOKIE_REQUEST, 0x16),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_LINKS, 0x7B),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x6B),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_COOKIE_RESPONSE, 0x11),
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT, 0x02),
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH, 0x03),
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KEEP_ALIVE, 0x04),
@@ -885,6 +897,9 @@ public final class ProtocolRevisions {
       "published packet ids for 1.21.3; capabilities inherited from 1.21",
       List.of(
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x7A),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_LINKS, 0x82),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x72),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_COOKIE_RESPONSE, 0x13),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x3A),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x28),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x7E),
@@ -962,6 +977,9 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.21.5; capabilities inherited from 1.21.4",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x17),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COOKIE_REQUEST, 0x15),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x71),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x39),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BLOCK_UPDATE, 0x08),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_BOSS_BAR, 0x09),
@@ -1020,6 +1038,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.21.6; capabilities inherited from 1.21.5",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_COOKIE_RESPONSE, 0x14),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x08),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x06),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x0D),
@@ -1054,6 +1073,8 @@ public final class ProtocolRevisions {
       "published packet ids for 1.21.10; capabilities inherited from 1.21.8",
       List.of(
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x7F),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_LINKS, 0x87),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x76),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x3E),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x2C),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x83),
@@ -1117,6 +1138,9 @@ public final class ProtocolRevisions {
       "published packet ids for 26.1; capabilities inherited from 1.21.11",
       List.of(
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x81),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_LINKS, 0x89),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x78),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_COOKIE_RESPONSE, 0x15),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x40),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x2D),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x85),

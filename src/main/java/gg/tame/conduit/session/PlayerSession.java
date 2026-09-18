@@ -117,6 +117,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * backend knows none of Conduit's. Every such reply then goes past PlayerTabCompleteEvent.
    */
   private volatile String legacyTabRequest;
+  /** Keys of the cookies plugins asked the client for that it has not answered yet, once per request. */
+  private final List<String> cookieRequests = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
   /**
    * True while Conduit, rather than the translator, is the one moving the client out of Play for a
    * reconfiguration, so the client's acknowledgement is Conduit's own reply and must not also be
@@ -252,6 +254,87 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     transfer(host, port, packet);
     return true;
+  }
+  @Override public boolean spoofChatInput(String input) {
+    if (input == null) throw new IllegalArgumentException("chat input is required");
+    int limit = gg.tame.conduit.protocol.ProtocolEras.chatLimit(protocol.version().number());
+    if (input.length() > limit) throw new IllegalArgumentException("chat input is longer than the " + limit + " characters this client's chat box takes");
+    if (protocol.capabilities().legacyPlayChat()) return sendChatLineToServer(input);
+    // Before 1.20.5 the command packet carries the client's acknowledgement of the chat it has seen,
+    // which a backend checks against what it sent; a made-up one gets the player disconnected.
+    if (!input.startsWith("/") || !gg.tame.conduit.protocol.ProtocolEras.unsignedChatCommand(protocol.version().number())) {
+      throw new UnsupportedOperationException("a " + protocol.version().displayName() + " client signs its "
+          + (input.startsWith("/") ? "commands" : "chat") + ", and the proxy cannot sign for it");
+    }
+    // The unsigned Chat Command is the command alone, which is all sendChatLineToServer writes.
+    return sendChatLineToServer(input.substring(1));
+  }
+  @Override public boolean updateCustomChatCompletions(ChatCompletions action, java.util.Collection<String> completions) {
+    java.util.Objects.requireNonNull(action, "action");
+    List<String> entries = List.copyOf(completions);
+    int id = pluginPacketId(PacketKind.PLAY_CHAT_SUGGESTIONS, null);
+    return id >= 0 && writeForPlugin(() -> gg.tame.conduit.protocol.PlayerApiPackets.chatSuggestions(id, action.ordinal(), entries));
+  }
+  @Override public boolean setServerLinks(List<gg.tame.conduit.api.player.ServerLink> links) {
+    List<gg.tame.conduit.api.player.ServerLink> copy = List.copyOf(links);
+    int id = pluginPacketId(PacketKind.PLAY_SERVER_LINKS, PacketKind.CONFIGURATION_SERVER_LINKS);
+    return id >= 0 && writeForPlugin(() -> gg.tame.conduit.protocol.PlayerApiPackets.serverLinks(id, protocol.version().number(), copy));
+  }
+  @Override public boolean storeCookie(String key, byte[] data) {
+    String cookie = gg.tame.conduit.protocol.PlayerApiPackets.cookieKey(key);
+    java.util.Objects.requireNonNull(data, "data");
+    if (data.length > gg.tame.conduit.protocol.PlayerApiPackets.COOKIE_MAX_BYTES) {
+      throw new IllegalArgumentException("a cookie holds at most " + gg.tame.conduit.protocol.PlayerApiPackets.COOKIE_MAX_BYTES + " bytes, not " + data.length);
+    }
+    byte[] copy = data.clone();
+    int id = pluginPacketId(PacketKind.PLAY_STORE_COOKIE, PacketKind.CONFIGURATION_STORE_COOKIE);
+    return id >= 0 && writeForPlugin(() -> gg.tame.conduit.protocol.PlayerApiPackets.storeCookie(id, cookie, copy));
+  }
+  @Override public boolean requestCookie(String key) {
+    String cookie = gg.tame.conduit.protocol.PlayerApiPackets.cookieKey(key);
+    int id = pluginPacketId(PacketKind.PLAY_COOKIE_REQUEST, PacketKind.CONFIGURATION_COOKIE_REQUEST);
+    if (id < 0) return false;
+    // Noted first: the answer can be back before the write returns.
+    cookieRequests.add(cookie);
+    if (writeForPlugin(() -> gg.tame.conduit.protocol.PlayerApiPackets.cookieRequest(id, cookie))) return true;
+    cookieRequests.remove(cookie);
+    return false;
+  }
+  /**
+   * The client's answer to a cookie the proxy asked for, which goes to the plugins: the backend never
+   * asked and must not hear it. Any other answer is the backend's and goes on untouched.
+   */
+  private boolean cookieForProxy(byte[] packet) {
+    if (cookieRequests.isEmpty()) return false;
+    var answer = gg.tame.conduit.protocol.PlayerApiPackets.cookieResponse(protocol, clientState.state(), packet);
+    // ponytail: matched by key alone. When the backend and a plugin both ask for the same key at once,
+    // the answers can go to each other, but they carry the same cookie.
+    if (answer.isEmpty() || !cookieRequests.remove(answer.get().key())) return false;
+    runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerCookieReceiveEvent(this, answer.get().key(), answer.get().data()));
+    return true;
+  }
+  /**
+   * The id of {@code play} or {@code configuration}, whichever state the client is in, for a packet a
+   * plugin has the proxy write; -1 when the player has not joined, or the client has no such packet in
+   * that state. Nothing is written during the login, whose configuration the client's answers would
+   * not come back through.
+   */
+  private int pluginPacketId(PacketKind play, PacketKind configuration) {
+    SessionLifecycle now = lifecycle.get();
+    if (closed || (now != SessionLifecycle.CONNECTED && now != SessionLifecycle.SWITCHING)) return -1;
+    ConnectionState state = clientState.state();
+    PacketKind kind = state == ConnectionState.PLAY ? play : state == ConnectionState.CONFIGURATION ? configuration : null;
+    return kind != null && protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, kind)
+        ? protocol.id(state, PacketDirection.SERVER_TO_CLIENT, kind) : -1;
+  }
+  private interface PluginPacket { byte[] build() throws IOException; }
+  private boolean writeForPlugin(PluginPacket packet) {
+    try {
+      writeClient(packet.build());
+      return true;
+    } catch (IOException failed) {
+      return false;
+    }
   }
   @Override public java.util.UUID uniqueId() { return profile().uniqueId(); }
   @Override public boolean authenticated() { return profile().authenticated(); }
@@ -1206,6 +1289,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     rememberClientInformation(packet, id);
     // An answer about one of the proxy's own packs: the server never offered it and must not hear of it.
     if (resourcePacks.fromClient(clientState.state(), packet)) return true;
+    if (cookieForProxy(packet)) return true;
     boolean loginAck = expectClientLoginAck
         && protocol.is(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.LOGIN_ACKNOWLEDGED)
         && packet.length <= 2;

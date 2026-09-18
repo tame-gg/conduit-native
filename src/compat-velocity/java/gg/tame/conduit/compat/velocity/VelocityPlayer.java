@@ -167,7 +167,8 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public Component getPlayerListHeader() { return Texts.toAdventure(player.playerListHeader()); }
   @Override public Component getPlayerListFooter() { return Texts.toAdventure(player.playerListFooter()); }
   @Override public TabList getTabList() { return new VelocityTabList(this); }
-  @Override public void spoofChatInput(String input) { throw Unsupported.api("Player.spoofChatInput"); }
+  /** To the backend alone; what a 1.19+ client would have to sign throws (see Conduit's Player.spoofChatInput). */
+  @Override public void spoofChatInput(String input) { player.spoofChatInput(input); }
   // Resource packs. A client whose release cannot take one, or drop one (before 1.20.3), is simply
   // not sent anything: the API is honoured, the client is what cannot.
   @Override public void sendResourcePack(String url) { sendResourcePackOffer(new VelocityResourcePackInfo.Builder(url).build()); }
@@ -216,9 +217,16 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
       catch (RuntimeException failed) { environment.log.log(java.util.logging.Level.WARNING, "A resource pack callback failed", failed); }
     });
   }
-  @Override public void addCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.addCustomChatCompletions"); }
-  @Override public void removeCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.removeCustomChatCompletions"); }
-  @Override public void setCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.setCustomChatCompletions"); }
+  // A client before 1.19.1 has no custom chat completions and is sent nothing.
+  @Override public void addCustomChatCompletions(Collection<String> completions) {
+    player.updateCustomChatCompletions(gg.tame.conduit.api.player.Player.ChatCompletions.ADD, completions);
+  }
+  @Override public void removeCustomChatCompletions(Collection<String> completions) {
+    player.updateCustomChatCompletions(gg.tame.conduit.api.player.Player.ChatCompletions.REMOVE, completions);
+  }
+  @Override public void setCustomChatCompletions(Collection<String> completions) {
+    player.updateCustomChatCompletions(gg.tame.conduit.api.player.Player.ChatCompletions.SET, completions);
+  }
   /** Through PreTransferEvent, as Velocity sends one; a client before 1.20.5 has no Transfer packet, and Velocity throws for it. */
   @Override public void transferToHost(InetSocketAddress address) {
     if (player.protocolVersion() < ProtocolVersion.MINECRAFT_1_20_5.getProtocol()) {
@@ -226,9 +234,28 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
     }
     player.transferToHost(address.getHostString(), address.getPort());
   }
-  @Override public void storeCookie(Key key, byte[] data) { throw Unsupported.api("Player.storeCookie"); }
-  @Override public void requestCookie(Key key) { throw Unsupported.api("Player.requestCookie"); }
-  @Override public void setServerLinks(List<ServerLink> links) { throw Unsupported.api("Player.setServerLinks"); }
+  // Cookies and server links: a client whose release has none gets an IllegalArgumentException, as Velocity throws.
+  @Override public void storeCookie(Key key, byte[] data) {
+    requireRelease(ProtocolVersion.MINECRAFT_1_20_5, "cookies");
+    player.storeCookie(key.asString(), data);
+  }
+  /** The answer arrives as CookieReceiveEvent, and never reaches the backend. */
+  @Override public void requestCookie(Key key) {
+    requireRelease(ProtocolVersion.MINECRAFT_1_20_5, "cookies");
+    player.requestCookie(key.asString());
+  }
+  @Override public void setServerLinks(List<ServerLink> links) {
+    requireRelease(ProtocolVersion.MINECRAFT_1_21, "server links");
+    player.setServerLinks(links.stream().map(link -> link.getBuiltInType()
+        .map(type -> gg.tame.conduit.api.player.ServerLink.of(gg.tame.conduit.api.player.ServerLink.Type.valueOf(type.name()), link.getUrl()))
+        .orElseGet(() -> gg.tame.conduit.api.player.ServerLink.of(Texts.toConduit(link.getCustomLabel().orElseThrow()), link.getUrl())))
+        .toList());
+  }
+  private void requireRelease(ProtocolVersion first, String what) {
+    if (player.protocolVersion() < first.getProtocol()) {
+      throw new IllegalArgumentException(getUsername() + " is on " + getProtocolVersion() + "; " + what + " need " + first.getVersionIntroducedIn() + " or later");
+    }
+  }
   // Player and Unsupported.ChatOnly both default these; the class has to pick.
   /** At the player, following them; only 1.19.3+ clients can be sent that (see Player.playSound). */
   @Override public void playSound(Sound sound) { player.playSound(sound(sound)); }

@@ -145,6 +145,19 @@ KINDS: dict[tuple[str, str, str], list[str]] = {
     (STATE_PLAY, TO_CLIENT, "PLAY_SOUND_EFFECT"): ["sound_effect"],
     (STATE_PLAY, TO_CLIENT, "PLAY_ENTITY_SOUND_EFFECT"): ["entity_sound_effect"],
     (STATE_PLAY, TO_CLIENT, "PLAY_STOP_SOUND"): ["stop_sound"],
+    # Also written for a plugin: custom chat completions (1.19.1+), server links (1.21+), transfers
+    # and cookies (1.20.5+), and the client's answers to a cookie request, which the proxy reads.
+    (STATE_PLAY, TO_CLIENT, "PLAY_CHAT_SUGGESTIONS"): ["chat_suggestions"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_SERVER_LINKS"): ["server_links"],
+    (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_SERVER_LINKS"): ["server_links"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_TRANSFER"): ["transfer"],
+    (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_TRANSFER"): ["transfer"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_STORE_COOKIE"): ["store_cookie"],
+    (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_STORE_COOKIE"): ["store_cookie"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_COOKIE_REQUEST"): ["cookie_request"],
+    (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_COOKIE_REQUEST"): ["cookie_request"],
+    (STATE_PLAY, TO_SERVER, "PLAY_COOKIE_RESPONSE"): ["cookie_response"],
+    (STATE_CONFIG, TO_SERVER, "CONFIGURATION_COOKIE_RESPONSE"): ["cookie_response"],
 
     (STATE_PLAY, TO_SERVER, "PLAY_CLIENT_INFORMATION"): ["settings"],
     (STATE_PLAY, TO_SERVER, "PLAY_CHAT_COMMAND"): ["chat_command", "chat"],

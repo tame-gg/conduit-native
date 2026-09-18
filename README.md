@@ -742,6 +742,13 @@ about the proxy's packs never reach the server, and a server's packs pass throug
 `resourcePacks()` lists what the client was offered and still has or is deciding on; a loaded pack
 offered again unchanged counts as loaded while the client answers again.
 
+`Player.spoofChatInput(input)` sends the backend a chat line or command as if the player had typed it
+(for a 1.19+ client, which signs what it says, only a command, and only from 1.20.5).
+`updateCustomChatCompletions` changes the words a 1.19.1+ client offers on Tab in chat,
+`setServerLinks` the `ServerLink`s in a 1.21+ client's pause menu, and `storeCookie`/`requestCookie`
+keep up to 5 KiB on a 1.20.5+ client under a key; the answer to a request arrives as
+`PlayerCookieReceiveEvent` and never reaches the backend, whose own cookies pass through untouched.
+
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins
 then go through the same lifecycle as native ones; a loader's `close()` is called once at shutdown,

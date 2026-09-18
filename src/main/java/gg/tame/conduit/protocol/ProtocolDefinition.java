@@ -377,7 +377,15 @@ public final class ProtocolDefinition {
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_RESOURCE_PACK_STATUS, 0x06,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_SOUND_EFFECT, 0x67,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x68,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x6A
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x6A,
+      // Custom chat completions and cookies (PlayerApiPackets); the proxy reads the cookie answers.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x18,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x6B,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COOKIE_REQUEST, 0x16,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_COOKIE_RESPONSE, 0x11,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_STORE_COOKIE, 0x0A,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_COOKIE_REQUEST, 0x00,
+      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_COOKIE_RESPONSE, 0x01
   );
   /**
    * Protocol 393 = Minecraft 1.13. Packet IDs from PrismarineJS minecraft-data {@code 1.13/protocol.json}.
@@ -751,7 +759,8 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x24,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_SOUND_EFFECT, 0x61,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x62,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x63
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x63,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x16
   );
   private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2,
       new ProtocolCapabilities(true, true, true, true, true, true, true, true),
@@ -818,7 +827,18 @@ public final class ProtocolDefinition {
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_RESOURCE_PACK_STATUS, 0x06,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_SOUND_EFFECT, 0x74,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x75,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x77
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x77,
+      // Custom chat completions, server links and cookies (PlayerApiPackets): 26.1's published ids,
+      // as for the transfer above, not checked against a 26.2 list of their own.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x17,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_LINKS, 0x89,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x78,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_COOKIE_REQUEST, 0x15,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_COOKIE_RESPONSE, 0x15,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_SERVER_LINKS, 0x10,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_STORE_COOKIE, 0x0A,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_COOKIE_REQUEST, 0x00,
+      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_COOKIE_RESPONSE, 0x01
   );
   /**
    * Registered packet tables, keyed by protocol number.

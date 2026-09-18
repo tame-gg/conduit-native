@@ -182,6 +182,58 @@ public interface Player extends CommandSource {
    */
   void stopSound(String name, Sound.Source source);
 
+  // Speaking for the player, and what the proxy keeps on their client. Each is sent at once, in the
+  // client's own protocol, and only once the player has joined; nothing is held back or sent again
+  // after a server switch.
+
+  /**
+   * Sends {@code input} to the player's backend as though they had typed it into chat: a line starting
+   * with {@code /} as a command, anything else as a chat message. Only the backend hears it; the proxy's
+   * own commands and its chat and command events do not.
+   *
+   * <p>A 1.19+ client signs what it says, and the proxy cannot sign for it, so for such a client only a
+   * command can be sent, as the unsigned command a 1.20.5+ client sends itself. A 1.20.5+ backend
+   * refuses a command whose arguments it expects signed, such as {@code /msg}, and may disconnect the
+   * player over it.
+   *
+   * @return false, with nothing sent, when the player is not in Play on a backend
+   * @throws IllegalArgumentException for input longer than the client's chat box takes: 256 characters, 100 before 1.11
+   * @throws UnsupportedOperationException for a chat message from a 1.19+ client, or a command from a 1.19 to 1.20.4 one
+   */
+  default boolean spoofChatInput(String input) { return false; }
+  /** What {@link #updateCustomChatCompletions} does with the strings it is given. */
+  enum ChatCompletions { ADD, REMOVE, SET }
+  /**
+   * Adds, removes or replaces the extra words a 1.19.1+ client offers when the player presses Tab while
+   * typing chat. The proxy does not keep them.
+   *
+   * @return false, with nothing sent, for an older client or one not in Play
+   */
+  default boolean updateCustomChatCompletions(ChatCompletions action, java.util.Collection<String> completions) { return false; }
+  /**
+   * Replaces the links in a 1.21+ client's pause menu. A backend that sends its own replaces these.
+   *
+   * @return false, with nothing sent, for an older client or one neither configuring nor in Play
+   */
+  default boolean setServerLinks(List<ServerLink> links) { return false; }
+  /**
+   * Stores {@code data} on a 1.20.5+ client under {@code key}, a namespaced key such as
+   * {@code myplugin:token} ({@code minecraft:} when it has no namespace). The client keeps it when it is
+   * transferred to another server and forgets it when it disconnects.
+   *
+   * @return false, with nothing sent, for an older client or one neither configuring nor in Play
+   * @throws IllegalArgumentException for a key that is not a namespaced key, or more than 5 KiB (5120 bytes) of data
+   */
+  default boolean storeCookie(String key, byte[] data) { return false; }
+  /**
+   * Asks a 1.20.5+ client for its cookie under {@code key}. The answer arrives as
+   * {@code PlayerCookieReceiveEvent} and never reaches the backend.
+   *
+   * @return false, with nothing sent, for an older client or one neither configuring nor in Play
+   * @throws IllegalArgumentException for a key that is not a namespaced key
+   */
+  default boolean requestCookie(String key) { return false; }
+
   interface OptionalServer {
     boolean isPresent();
     RegisteredServer orElse(RegisteredServer fallback);

@@ -286,6 +286,15 @@ final class VelocityEventBridge {
     if (listening(PlayerClientBrandEvent.class)) environment.events.fire(new PlayerClientBrandEvent(environment.player(event.player()), event.brand()));
   }
   /**
+   * Told, not asked: the answer is to a plugin's own requestCookie, which the backend never made, so it
+   * ends at the proxy whatever the result says. A backend's cookie traffic does not raise it.
+   */
+  @Subscribe public void onCookie(gg.tame.conduit.api.event.player.PlayerCookieReceiveEvent event) {
+    if (!listening(com.velocitypowered.api.event.player.CookieReceiveEvent.class)) return;
+    environment.events.fire(new com.velocitypowered.api.event.player.CookieReceiveEvent(environment.player(event.player()),
+        net.kyori.adventure.key.Key.key(event.key()), event.data()));
+  }
+  /**
    * The plugins get a copy and their list is read back once they are done. One still running when the
    * wait runs out could be changing it as it is read, so the client then gets the suggestions as they
    * were.
