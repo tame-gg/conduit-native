@@ -80,7 +80,8 @@ public final class Phase13ModdedTests {
     var fml2 = FmlAddressMarkers.parse("host" + FmlAddressMarkers.FML2);
     require(fml2.marker() == FmlAddressMarkers.MarkerKind.FML2, "fml2");
     var fml3 = FmlAddressMarkers.parse("host" + FmlAddressMarkers.FML3);
-    require(fml3.marker() == FmlAddressMarkers.MarkerKind.FML3 && fml3.family() == ModLoaderFamily.NEOFORGE, "fml3");
+    // FML2 and FML3 are both Forge 1.13-1.20.1; only the brand separates Forge from NeoForge.
+    require(fml3.marker() == FmlAddressMarkers.MarkerKind.FML3 && fml3.family() == ModLoaderFamily.FORGE, "fml3");
     try {
       FmlAddressMarkers.parse("bad\0DATA\0");
       throw new AssertionError("malformed");
@@ -107,7 +108,7 @@ public final class Phase13ModdedTests {
 
     HandshakeClassifier neo = new HandshakeClassifier();
     neo.observeHandshakeHost("x" + FmlAddressMarkers.FML3);
-    require(neo.family() == ModLoaderFamily.NEOFORGE, "neoforge");
+    require(neo.family() == ModLoaderFamily.FORGE, "an FML3 token alone is Forge");
     neo.observeChannel("neoforge:handshake");
     require(neo.family() == ModLoaderFamily.NEOFORGE, "neoforge channel");
 

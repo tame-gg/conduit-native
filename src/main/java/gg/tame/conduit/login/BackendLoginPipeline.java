@@ -25,6 +25,20 @@ public final class BackendLoginPipeline {
   private final boolean hideLoginSuccess;
   private boolean forwardToClient = true;
   private ConnectionState state = ConnectionState.LOGIN;
+  /**
+   * Message ids of login queries handed to the client and not yet answered.
+   *
+   * <p>A set, not one id, because the exchange is pipelined. A real NeoForge 20.2.93 server sent
+   * 21 {@code fml:loginwrapper} requests back to back in under a second without reading a single
+   * reply, and FML's client handler answers the batch rather than each one in turn.
+   *
+   * <p>Guarded by this pipeline's monitor: the queries are added by whoever reads the backend and
+   * settled by whoever reads the client, and those cannot be the same thread without deadlocking.
+   */
+  private final java.util.LinkedHashSet<Integer> pendingQueries = new java.util.LinkedHashSet<>();
+  /** A backend cannot ask without bound: each outstanding query costs the client an answer. */
+  public static final int MAX_PENDING_QUERIES = 256;
+  private boolean clientCanAnswerQueries;
   public BackendLoginPipeline(ProtocolDefinition protocol, PlayerInfoForwarder forwarder, PlayerProfile player, InetAddress clientAddress, int maximumPacketBytes) {
     this(protocol, forwarder, player, clientAddress, maximumPacketBytes, false);
   }
@@ -33,6 +47,37 @@ public final class BackendLoginPipeline {
     this.compression = new PacketCompression(maximumPacketBytes); this.hideLoginSuccess = hideLoginSuccess;
   }
   public boolean shouldForward() { return forwardToClient; }
+  /**
+   * Lets login queries Conduit has no answer for pass to the client. Only a connection whose client
+   * is still in LOGIN may enable it: nobody else can produce a Login Plugin Response.
+   */
+  public void allowClientLoginQueries() { clientCanAnswerQueries = true; }
+  /** True while any login query handed to the client is still owed an answer to the backend. */
+  public synchronized boolean awaitingLoginQuery() { return !pendingQueries.isEmpty(); }
+  /** How many queries the client has been given and not yet answered. */
+  public synchronized int outstandingLoginQueries() { return pendingQueries.size(); }
+  /**
+   * Checks the client's answer to the outstanding query and returns it for the backend.
+   *
+   * <p>The bytes are the client's own. Conduit never rewrites a mod list it did not author, and
+   * the id check is against the backend's table so a mismatched pair fails here rather than
+   * putting a packet the backend cannot read on the wire.
+   */
+  public synchronized byte[] clientLoginQueryResponse(byte[] packet) throws IOException {
+    if (pendingQueries.isEmpty()) throw new IOException("no login plugin query is outstanding");
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      int id = MinecraftInput.varInt(input);
+      if (!protocol.is(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.LOGIN_PLUGIN_RESPONSE)) {
+        throw new IOException("client answered a login query with packet id " + id);
+      }
+      int messageId = MinecraftInput.varInt(input);
+      // Answers may come back in any order; only one that answers nothing is a fault.
+      if (!pendingQueries.remove(messageId)) {
+        throw new IOException("login plugin response answers no outstanding query (" + messageId + ")");
+      }
+    }
+    return packet;
+  }
   public ConnectionState state() { return state; }
   public PacketCompression compression() { return compression; }
   /** Returns a response packet only when a forwarding request was consumed. */
@@ -67,7 +112,7 @@ public final class BackendLoginPipeline {
       throw new IOException("unexpected backend login packet id " + id);
     }
     LoginPluginRequest request = LoginPluginRequest.decode(body, maximumPacketBytes);
-    if (!MODERN_CHANNEL.equals(request.channel())) throw new IOException("unknown login plugin channel");
+    if (!MODERN_CHANNEL.equals(request.channel())) return relayToClient(request);
     if (forwarder.mode() != ForwardingMode.MODERN) throw new IOException("backend requested modern forwarding but Conduit is not configured for it");
     // The request names the highest forwarding version the backend reads. A backend from before that
     // byte existed sends no data and reads only the first version: Paper 1.13.1 does.
@@ -88,6 +133,24 @@ public final class BackendLoginPipeline {
     catch (IllegalArgumentException exception) { throw new IOException("unsupported modern forwarding version", exception); }
     if (data.length < 32) throw new IOException("invalid authentication material");
     return new LoginPluginResponse(request.messageId(), true, data).encode(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE));
+  }
+  /**
+   * A login query Conduit has no answer for — Forge's {@code fml:loginwrapper} above all — belongs
+   * to the client. Answering it would be inventing a mod list; dropping it leaves the backend
+   * waiting for a reply that never comes. It is forwarded, and the client's response goes back.
+   */
+  private synchronized byte[] relayToClient(LoginPluginRequest request) throws IOException {
+    if (!clientCanAnswerQueries) {
+      // A switch, or any caller with no client left in LOGIN: the player is already in Play on
+      // another backend. Faking a mod list breaks a modded switch silently; failing does not.
+      throw new IOException("backend asked login plugin channel " + request.channel()
+          + " with no client login phase to answer it");
+    }
+    if (pendingQueries.size() >= MAX_PENDING_QUERIES) {
+      throw new IOException("backend has " + pendingQueries.size() + " unanswered login queries outstanding");
+    }
+    pendingQueries.add(request.messageId());
+    return null;
   }
   private byte[] handleConfiguration(int id, byte[] body) {
     if (protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_FINISH) && body.length == 0) {

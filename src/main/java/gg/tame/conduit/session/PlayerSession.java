@@ -73,6 +73,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final InetAddress address;
   private final HandshakeClassifier modClassifier;
   private final SwitchPacketQueue switchQueue;
+  /** Channels the client announced. Registration is per connection, so a new backend needs telling. */
+  private final gg.tame.conduit.modded.RegisteredChannels registeredChannels = new gg.tame.conduit.modded.RegisteredChannels();
   private final Object lock = new Object();
   private final AtomicReference<SessionLifecycle> lifecycle = new AtomicReference<>(SessionLifecycle.CONNECTING);
   private final java.util.concurrent.atomic.AtomicBoolean switchInFlight = new java.util.concurrent.atomic.AtomicBoolean();
@@ -206,6 +208,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       PluginPayloadValidator.validatePayload(decoded.data(), configuration.maxFrameBytes());
       if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY) {
         modClassifier.observeChannel(decoded.channel());
+        registeredChannels.observe(decoded.channel(), decoded.data());
         var outcome = runtime.security().channelGuard().inspect(decoded.channel(), username());
         if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.DROP) return false;
         if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.KICK) {
@@ -281,6 +284,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // connection and then says nothing held the join thread, the client's socket and this one
         // open for as long as it cared to. A backend that keeps sending never sees this.
         connection.setReadTimeoutMillis(SWITCH_BUDGET_MS);
+        // The client is still in LOGIN, so it -- and only it -- can answer a login query Conduit
+        // has no answer for. Forge 1.13-1.20.1 asks for its mod list on fml:loginwrapper.
+        connection.login().allowClientLoginQueries();
         // Every pair and every forwarding mode, as a switch already does. This is where the backend's
         // Set Compression is consumed: the client's link is never compressed. Left to the relay, a
         // DIRECT 1.20.4 session with forwarding "none" handed that packet to the client, and Conduit
@@ -519,6 +525,49 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     return translator.backendToClient(state, packet);
   }
+  /** Client poll while a login-query pump runs. Short, so closing it joins promptly. */
+  private static final int LOGIN_QUERY_POLL_MS = 100;
+
+  /**
+   * Answers the backend's login queries from the client while the backend keeps asking.
+   *
+   * <p>A thread, because the exchange is not a conversation. A real NeoForge 20.2.93 server sent
+   * Login Plugin Requests 0x00 through 0x14 in under a second without reading one reply, and FML's
+   * client handler answers the batch rather than each request in turn. Reading the client between
+   * requests, on the thread that reads the backend, deadlocks both ends: it did, and the login died
+   * on a read deadline with query 0x00 delivered and twenty more unsent.
+   */
+  private final class LoginQueryPump {
+    private final Thread thread;
+    private volatile boolean running = true;
+    private volatile IOException failure;
+
+    LoginQueryPump(BackendConnection connection) throws IOException {
+      client.setReadTimeoutMillis(LOGIN_QUERY_POLL_MS);
+      this.thread = gg.tame.conduit.network.SocketThreads.start(() -> {
+        while (running) {
+          try {
+            connection.writeUncompressed(
+                connection.login().clientLoginQueryResponse(client.read(configuration.maxFrameBytes())));
+          } catch (java.net.SocketTimeoutException poll) {
+            // Nothing from the client yet. The backend's own deadline ends a login that stalls.
+          } catch (IOException exception) {
+            failure = exception;
+            return;
+          }
+        }
+      });
+    }
+
+    void close() throws IOException {
+      running = false;
+      try { thread.join(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+      client.setReadTimeoutMillis(runtime.security().botFilter().settings().handshakeTimeoutMs());
+    }
+
+    void rethrow() throws IOException { if (failure != null) throw failure; }
+  }
+
   private void completeBackendLogin(BackendConnection connection, boolean forwardLoginSuccess) throws IOException {
     completeBackendLogin(connection, forwardLoginSuccess,
         new Translation(translationSupport, backendProtocol, backendDefinition, translator));
@@ -534,28 +583,40 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     ProtocolDefinition backendDefinition = target.definition();
     ProtocolTranslator translator = target.translator();
     int viaLoginPacketsToBackend = 0;
-    while (connection.state() == ConnectionState.LOGIN) {
-      byte[] packet = connection.readUncompressed();
-      PacketTrace.packet("backend-login", connection.state(), PacketDirection.SERVER_TO_CLIENT, backendDefinition, packet);
-      byte[] response = connection.login().onBackendPacket(packet, configuration.maxFrameBytes());
-      if (response != null) { connection.writeUncompressed(response); continue; }
-      if (!connection.login().shouldForward()) {
-        armViaConfigurationBridge(translator, backendDefinition, packet);
-        continue;
+    LoginQueryPump pump = null;
+    try {
+      while (connection.state() == ConnectionState.LOGIN) {
+        byte[] packet = connection.readUncompressed();
+        PacketTrace.packet("backend-login", connection.state(), PacketDirection.SERVER_TO_CLIENT, backendDefinition, packet);
+        byte[] response = connection.login().onBackendPacket(packet, configuration.maxFrameBytes());
+        // The backend has left LOGIN. What the client sends next is its Login Acknowledged, and
+        // that is this loop's -- so the pump stops before Login Success ever reaches the client.
+        if (connection.state() != ConnectionState.LOGIN && pump != null) {
+          pump.close(); pump.rethrow(); pump = null;
+        }
+        if (response != null) { connection.writeUncompressed(response); continue; }
+        if (!connection.login().shouldForward()) {
+          armViaConfigurationBridge(translator, backendDefinition, packet);
+          continue;
+        }
+        if (!forwardLoginSuccess) throw new IOException("backend login failed");
+        byte[] toClient = towardClient(translator, ConnectionState.LOGIN, packet);
+        if (toClient == null) continue;
+        writeClient(toClient);
+        loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, toClient);
+        if (pump == null && connection.login().awaitingLoginQuery()) pump = new LoginQueryPump(connection);
+        if (pump != null) pump.rethrow();
+        // Via answers Login Success on the old client's behalf, and it has to be sent while the
+        // backend is still reading Login. Leaving it queued until the next flush delivers a
+        // one-byte Login Acknowledged after the backend reached Play, where that same id is a
+        // packet with a body — which is how a real 1.20.4 server ends up reporting a decoder
+        // underflow a whole join later.
+        if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator) {
+          viaLoginPacketsToBackend += flushTranslatorExtras(translator, connection);
+        }
       }
-      if (!forwardLoginSuccess) throw new IOException("backend login failed");
-      byte[] toClient = towardClient(translator, ConnectionState.LOGIN, packet);
-      if (toClient == null) continue;
-      writeClient(toClient);
-      loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, toClient);
-      // Via answers Login Success on the old client's behalf, and it has to be sent while the
-      // backend is still reading Login. Leaving it queued until the next flush delivers a
-      // one-byte Login Acknowledged after the backend reached Play, where that same id is a
-      // packet with a body — which is how a real 1.20.4 server ends up reporting a decoder
-      // underflow a whole join later.
-      if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator) {
-        viaLoginPacketsToBackend += flushTranslatorExtras(translator, connection);
-      }
+    } finally {
+      if (pump != null) try { pump.close(); } catch (IOException ignored) { }
     }
     // Always ack configuration using the BACKEND protocol when the backend has that phase.
     if (backendDefinition.hasConfiguration()
@@ -909,6 +970,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       System.out.println("TRACE cached client information from " + state + " (" + clientInformation.length + " body bytes)");
     }
   }
+  /** Tells a backend the channels the client announced; registration is per connection, not per player. */
+  private void replayRegisteredChannels(BackendConnection target, ConnectionState state, ProtocolDefinition definition) {
+    if (target == null || (state == ConnectionState.CONFIGURATION && !definition.hasConfiguration())) return;
+    try {
+      var packet = registeredChannels.replay(definition, state);
+      if (packet.isPresent()) target.writeUncompressed(packet.get());
+    } catch (IOException exception) {
+      System.err.println("Could not replay registered channels to " + target.server().name() + ": " + exception.getMessage());
+    }
+  }
+
   /**
    * Replays the cached Client Information to a backend.
    *
@@ -1274,6 +1346,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       completeBackendLogin(next, false, pending);
       enforceDeadline(deadline, "login");
       replayClientInformation(next, ConnectionState.CONFIGURATION, pending);
+      replayRegisteredChannels(next, ConnectionState.CONFIGURATION, pending.definition());
 
       // COMMIT: only now pause the old backend reader and involve the client.
       synchronized (lock) {
@@ -1415,6 +1488,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         lifecycle.set(SessionLifecycle.CONNECTED);
         lock.notifyAll();
       }
+      // An FML1 client does not run its handshake twice. Forge's HandshakeReset puts it back to
+      // the start so the new server's FML|HS exchange can happen at all.
+      var reset = gg.tame.conduit.modded.FmlHandshakeReset.forSwitch(protocol, modClassifier.marker());
+      if (reset.isPresent()) writeClient(reset.get());
       flushSwitchQueue(backend);
       if (finishAfterCommit) {
         // The client is already in Configuration; the phase itself is built by the translator out
@@ -1431,6 +1508,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // Not replayed yet when the translator is still waiting for the new backend's Join Game; the
       // read loop does it as soon as that arrives.
       if (!awaitingBackendJoinGame.holding()) replayClientInformation(backend, ConnectionState.PLAY);
+      // A backend with a Configuration phase was already told above; one without has no phase to
+      // be told in, and its Play state only exists after the commit.
+      if (!backendDefinition.hasConfiguration()) replayRegisteredChannels(backend, ConnectionState.PLAY, backendDefinition);
       discard(previous);
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {

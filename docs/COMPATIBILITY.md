@@ -645,3 +645,213 @@ which the derived tables inherit wrongly from 1.20.4 (`0x45`). Nothing reads the
 `LegacyWorldReload` runs only for clients up to protocol 763, and no other path
 encodes Respawn for a modern client. Left as is rather than changed without a real
 client that can show the difference.
+
+## Forge and NeoForge
+
+Most rows below are `OFFLINE/SCRIPTED`: `ModLoaderTests` drives Conduit's own
+code — a socket client and socket backends through a real `MinecraftProxy`, and
+the real `BackendLoginPipeline` on packets built from the 1.20.4 table.
+
+One run is not. A **real NeoForge 20.2.93 client and a real NeoForge 20.2.93
+server** (Minecraft 1.20.2, protocol 764, offline mode) were provisioned from
+NeoForge's own headless installer and driven through Conduit, with a logging TCP
+relay on both sides capturing the wire. Rows sourced from it are marked
+`REAL-CLIENT`. That player now joins and plays: on the final build, 12 of 12
+joins through Conduit reached the world and stayed connected. It took three
+fixes, each recorded below: the handshake token, the login-query pump, and taking
+Conduit's socket threads off a Windows JDK poller that loses wakeups.
+
+Where the capture and the public documentation disagree, the capture wins, and
+it disagrees twice.
+
+### Handshake address tokens
+
+A modded client appends a NUL-delimited token to the Server Address field of the
+Handshake packet.
+
+**The trailing NUL is not there.** Captured from the real client:
+
+```
+C>S 15 00 fc05 0e "127.0.0.1\0FML3" 63eb 02
+```
+
+Protocol 764, host length 14 = `127.0.0.1` + `\0` + `FML3`. One leading NUL, the
+token, and the end of the string. The minecraft.wiki page documents the token as
+`"\0FML2\0"`, and Conduit matched that doubly-delimited form, so a real NeoForge
+handshake fell through to `IllegalArgumentException: malformed FML address marker
+in handshake host`, `MinecraftProxy` counted it a malformed handshake, and the
+socket closed **with nothing written back**. That was the whole failure: the
+client sat on "Connecting to…" until it gave up, with no message anywhere.
+
+`FmlAddressMarkers.parse` now splits the host on NUL and accepts the token with
+or without a trailing delimiter. An unrecognised token is still refused, and
+`ModLoaderTests` drives that too.
+
+| Token | Status | Conduit |
+|---|---|---|
+| `\0FML` / `\0FML\0` | documented, Forge 1.7.2 - 1.12.2 | parsed, classified Forge, carried to the backend unchanged |
+| `\0FML2` / `\0FML2\0` | documented, Forge 1.13 - 1.20.1 | same |
+| `\0FML3` / `\0FML3\0` | **observed** from NeoForge 20.2.93 (MC 1.20.2) | same |
+| `\0FORGE` / `\0FORGE\0` | documented only — **never seen on any wire here** | accepted; no client has been shown to send it |
+
+Sources for the documented rows: minecraft.wiki's Forge Handshake page for FML
+and FML2, Gate's `modernforge` package for FML3 and FORGE. Gate's note that FORGE
+replaced FML2/FML3 for 1.20.2+ does not describe NeoForge 20.2.93, which sends
+FML3 at Minecraft 1.20.2.
+
+No token identifies NeoForge — 20.2.93 sends the FML3 a Forge client of that era
+sends. Conduit classifies every token as Forge and lets the client's
+`minecraft:brand` promote it to NeoForge, never the other way round.
+
+Conduit never invents a token. `FmlAddressMarkers.markerFor` returns whatever the
+client sent and nothing else: which token a loader uses is a property of the
+client's version, not of its family, and a client that sent none is telling the
+backend it speaks no FML handshake at all.
+
+### Login plugin queries
+
+A backend's login-phase query on a channel Conduit has no answer for is the
+client's to answer. `BackendLoginPipeline` forwards it and carries the client's
+`Login Plugin Response` back to the backend byte for byte, matched on the query's
+message id. This is off unless the caller enables it, because only a connection
+whose client is still in LOGIN can produce a response.
+
+**NeoForge 1.20.2 still uses login queries, and pipelines them.** The claim that
+1.20.2+ negotiates entirely in the Configuration phase does not hold for NeoForge
+20.2.93. The backend-side capture, from Conduit's Login Start onwards:
+
+```
+30.592 C>S    47  handshake "127.0.0.1\0FML3" + Login Start
+30.635 S>C   108  Login Plugin Request 0x00  fml:loginwrapper -> fml:handshake  (mod list)
+30.686 S>C   651  Login Plugin Request 0x01  ... neoforge:split
+30.736 S>C  1218  Login Plugin Request 0x02  ... minecraft:command_argument_type
+30.785 S>C 53044  Login Plugin Request 0x03  ... minecraft:sound_event
+  ...          (0x04 .. 0x13: particle_type, item, block, entity_type, menu, ...)
+31.635 S>C  1312  Login Plugin Request 0x14  ... neoforge-server.toml
+```
+
+Twenty-one requests, about 130 KB, inside one second, **none of them waiting for
+a reply**. The client's FML handler answers the batch, not each request in turn:
+its log shows `Recieved login wrapper packet event for channel fml:handshake with
+index 0` and then silence.
+
+Conduit's login loop was strict request-then-response. It forwarded query
+`0x00`, blocked reading the client for an answer that FML will not send on its
+own, and the read deadline ended the session. That was a shape problem, not a
+parsing one: while the client is in LOGIN, both directions have to be pumped
+concurrently. `BackendLoginPipeline` holds the outstanding message ids (bounded
+at 256) and settles them in any order. While a query is owed, a pump thread in
+`PlayerSession` carries each client response to the backend as it arrives, and
+the login loop keeps forwarding the backend's queries as they arrive. The pump
+stops the moment the backend leaves LOGIN, before Login Success reaches the
+client, so the client's Login Acknowledged is read by the login loop and nobody
+else.
+
+- **Initial join**: works, `REAL-CLIENT`, on NeoForge 20.2.93.
+- **`/server` switch**: not possible, and it fails loudly rather than quietly.
+  The player is already in Play on another backend and has no login phase left.
+  Answering on their behalf means Conduit authoring a Forge mod-list reply, which
+  it will not do. Forge 1.13 - 1.20.1 asks on `fml:loginwrapper` during login, so
+  a switch onto such a backend aborts with `backend asked login plugin channel
+  fml:loginwrapper with no client login phase to answer it` and the session falls
+  back.
+
+### The join that stalled one time in two (Windows)
+
+With the pump in place, the real NeoForge client joined, and then about half its
+joins froze on "Loading terrain" until the server timed the player out: 6 of 17
+through Conduit, 0 of 16 straight to the server. The client's last log line was
+always NeoForge's `Injected NeoForgeConnectionNetworkFilter`, which turned out to
+be a coincidence of timing, not a cause.
+
+The client was not at fault. A debugger attached to the stalled client showed its
+read state healthy (autoRead on, read interest registered, no packet held in any
+decoder or in the flow-control queue) and **0 bytes waiting** in its socket's
+receive buffer, twice, four seconds apart. It was starving. At the same moment
+Conduit's backend reader was parked in a write to that client, in the JDK's
+virtual-thread write poller, while the session's client reader was parked in the
+read poller on the same socket. `jcmd <pid> Thread.vthread_pollers` showed the
+socket registered once in each.
+
+That is [JDK-8334574](https://bugs.openjdk.org/browse/JDK-8334574), open in
+JDK 25 and 26 and not fixed in Corretto 25.0.4. On Windows the JDK parks a
+virtual thread's socket read and its socket write through two separate wepoll
+handles, and a readiness event can surface on the wrong handle, where it is
+dropped. The write never learns that the socket drained. A standalone reproducer
+with no Minecraft and no Conduit in it (one socket, a virtual-thread writer, a
+virtual-thread reader, a slow peer) hung 13 of 17 runs on JDK 25.0.4. It hung 0
+of 6 on JDK 21, which registers through a helper thread by default, and 3 of 5
+on JDK 21 with `-Djdk.useDirectRegister=true`. No `jdk.pollerMode` avoids it on
+Windows.
+
+Nothing about it is modded-specific. Any session is exposed once a write has to
+wait. NeoForge's uncompressed join burst simply made that happen on nearly
+every join.
+
+`network/SocketThreads` is the fix: on Windows, every thread Conduit starts that
+may block on a socket is a platform thread (`conduit-io-N`), which blocks in the
+operating system and never reaches that poller. Elsewhere they stay virtual. On
+the fixed build: 0 of 12 stalls, and 0 of 2 behind a deliberately slow relay that
+stalled the old build 3 of 3. `ConcurrencyTests` checks that a Windows session
+runs on those threads. When a JDK with the fix ships, `SocketThreads` can go back
+to virtual threads everywhere.
+
+### Configuration-phase payloads
+
+`OFFLINE/SCRIPTED`, and note the order of events: this was written expecting
+1.20.2+ to negotiate here. The real NeoForge 20.2.93 run then showed it
+negotiating in the login phase instead, so what follows says the relay is sound,
+not that any loader uses it. `ModLoaderTests` drives a socket client with
+`\0FORGE\0`, two socket backends, a real `MinecraftProxy`, one `/server` between
+them. What holds:
+
+- a backend's `neoforge:register` Configuration custom payload reaches the client
+  byte for byte;
+- the client's own `minecraft:register` Configuration payload reaches the backend
+  byte for byte;
+- `minecraft:brand` reaches the client (rewritten by `BrandRewriter`, as it is for
+  every session — that one is not passthrough and is not meant to be);
+- after `/server`, the new backend's payload reaches the reconfiguring client and
+  the old backend's does not leak into the new Configuration phase;
+- the switch handshake carries the client's `\0FORGE\0` to the new backend too.
+
+Nothing about this is loader-specific: the relay is the ordinary plugin-message
+path, which is why it needed no loader-specific work, unlike the login-query
+range above.
+
+One gap in the same path: while a session is SWITCHING, a client Configuration
+packet is written straight to the new backend and skips `forwardPluginMessage`,
+so its channel is not classified and no `PluginMessageEvent` fires for it. The
+bytes are unaffected.
+
+### Channel registration is carried across a switch
+
+A client announces its plugin channels once, with `minecraft:register`, while it
+first configures. Conduit did not remember them, so a backend reached by
+`/server` was never told. In the switch above the new backend received no
+`minecraft:register` at all. That was not modded-specific: it was every mod
+channel and every plugin channel, on the second and every later backend a
+player reached.
+
+`modded/RegisteredChannels` now records register/unregister announcements,
+bounded at 256 channels. The session replays them to every backend it switches
+to, on the channel name the client itself used (`minecraft:register`, or
+`REGISTER` before 1.13). A backend with a Configuration phase gets them there,
+before the commit. One without gets them in Play, after it. `ModLoaderTests`
+asserts that the new backend in the switch above receives exactly the channels
+the client announced to the first.
+
+### What is and is not covered
+
+| Loader | Where it negotiates | Conduit |
+|---|---|---|
+| Forge 1.7.2 - 1.12.2 (FML1) | Play phase, `FML\|HS` plugin messages | token and channels classified; the messages relay as ordinary custom payloads. A switch needs a `HandshakeReset` (discriminator -2) on `FML\|HS` before the new server's handshake. `modded/FmlHandshakeReset` authors that packet (1.7's short-lengthed payload and 1.8+'s alike). Conduit sends it to an FML1 client on every switch, after the commit and before the queued packets. The packet is unit-tested; **the exchange that follows it has not been driven against a real Forge 1.7 - 1.12 client** |
+| Forge 1.13 - 1.20.1 (FML2/FML3) | Login phase, `fml:loginwrapper` queries | initial join: queries relayed and pumped as above, `OFFLINE/SCRIPTED`. A switch onto such a backend is refused, since there is no login phase left to answer in |
+| NeoForge 20.2.93 (MC 1.20.2) | **observed**: login phase, 21 pipelined `fml:loginwrapper` queries | joins and plays, `REAL-CLIENT`: 12 of 12 joins on the final build reached the world and stayed connected |
+| Forge / NeoForge later than 1.20.2 | documentation says Configuration phase, ordinary custom payloads | untested against any real build. The configuration-phase relay below is scripted-only and loader-agnostic |
+| Fabric | Configuration/Play custom payloads | channel classification only; nothing loader-specific is needed |
+
+Mod-list synchronisation is not implemented for any loader. Conduit observes and
+classifies; it does not parse, cache or replay a mod list, and it does not
+negotiate registries. A backend switch between two modded servers therefore
+carries no loader state across.

@@ -25,8 +25,9 @@ public final class ChannelDetector {
       return ChannelClass.NEOFORGE;
     }
     if (normalized.startsWith("fml:") || normalized.startsWith("forge:")
-        || normalized.equals("fml:handshake") || normalized.equals("fml:loginwrapper")
-        || normalized.equals("forge:handshake")) {
+        // 1.7-1.12 predates namespaced channels: FML1 talks on FML|HS, FML|MP and FORGE.
+        || normalized.startsWith("fml|") || normalized.startsWith("forge|")
+        || normalized.equals("fml") || normalized.equals("forge")) {
       return ChannelClass.FORGE;
     }
     if (normalized.startsWith("fabric:") || normalized.startsWith("quilt:")

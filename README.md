@@ -216,7 +216,7 @@ Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.playe
 | Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
 | Metrics HTTP endpoint | UNSUPPORTED (command diagnostics only) |
 | Security (throttle / bot filter / channel guard / attack mode) | IMPLEMENTED (application-level; not DDoS protection) |
-| Modded (known-packs / detection / Forge / NeoForge / Fabric routing / packet queue) | IMPLEMENTED (protocol-level; **NOT REAL-CLIENT VERIFIED** for Forge/NeoForge) |
+| Modded (known-packs / detection / Forge / NeoForge / Fabric routing / packet queue) | IMPLEMENTED (protocol-level; real-client verified for NeoForge 20.2.93 only) |
 
 ### Security (Phase 2)
 
@@ -267,7 +267,7 @@ Protocol-level mod compatibility — not a claim of “all Forge versions”.
 | Handshake classification cache (bounded + TTL) | IMPLEMENTED |
 | Per-server `mod-loaders` routing | IMPLEMENTED |
 | Switch packet queue (bounded) | IMPLEMENTED |
-| Forge / NeoForge real-client join | **NOT REAL-CLIENT VERIFIED** |
+| Forge / NeoForge real-client join | REAL-CLIENT VERIFIED for NeoForge 20.2.93 (MC 1.20.2) only; every other Forge/NeoForge version **NOT REAL-CLIENT VERIFIED** (see `docs/COMPATIBILITY.md`) |
 | Full Forge handshake proxying for every FML version | PARTIAL (markers + channels + routing; not every handshake payload rewritten) |
 
 * Unknown clients default to **allow** (`modded.unknown-policy = "allow"`).

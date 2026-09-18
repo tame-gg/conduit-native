@@ -15,8 +15,8 @@ public enum ModLoaderFamily {
     return switch (raw.strip().toLowerCase(Locale.ROOT)) {
       case "vanilla" -> VANILLA;
       case "fabric", "quilt" -> FABRIC;
-      case "forge", "legacy_forge", "legacy-forge", "fml", "fml1", "fml2" -> FORGE;
-      case "neoforge", "fml3" -> NEOFORGE;
+      case "forge", "legacy_forge", "legacy-forge", "fml", "fml1", "fml2", "fml3" -> FORGE;
+      case "neoforge" -> NEOFORGE;
       case "unknown", "unknown_modded", "other" -> UNKNOWN;
       default -> throw new IllegalArgumentException("unknown mod loader: " + raw);
     };
