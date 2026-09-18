@@ -243,8 +243,16 @@ public final class ComponentCodec {
 
   /** Just enough JSON for text components: total, allocation-light, never throws. */
   static final class Json {
+    /**
+     * How deep objects and arrays may nest, as deep as the client's own NBT reader goes. The parser
+     * and everything that walks its tree recurse once per level, so a backend's kick reason or status
+     * answer nested a few thousand levels deep overflowed the stack of the connection thread reading
+     * it; the error escaped as a fault instead of a text that could not be read.
+     */
+    private static final int MAX_DEPTH = 512;
     private final String text;
     private int cursor;
+    private int depth;
 
     private Json(String text) { this.text = text; }
 
@@ -258,6 +266,10 @@ public final class ComponentCodec {
       } catch (RuntimeException exception) {
         return null;
       }
+    }
+
+    private void descend() {
+      if (++depth > MAX_DEPTH) throw new IllegalStateException("json nests too deeply");
     }
 
     private void whitespace() {
@@ -298,9 +310,10 @@ public final class ComponentCodec {
 
     private Map<String, Object> object() {
       Map<String, Object> map = new LinkedHashMap<>();
+      descend();
       cursor++;                                   // '{'
       whitespace();
-      if (cursor < text.length() && text.charAt(cursor) == '}') { cursor++; return map; }
+      if (cursor < text.length() && text.charAt(cursor) == '}') { cursor++; depth--; return map; }
       while (true) {
         whitespace();
         String key = string();
@@ -310,21 +323,22 @@ public final class ComponentCodec {
         map.put(key, value());
         whitespace();
         char next = text.charAt(cursor++);
-        if (next == '}') return map;
+        if (next == '}') { depth--; return map; }
         if (next != ',') throw new IllegalStateException("expected ',' or '}'");
       }
     }
 
     private List<Object> array() {
       List<Object> list = new ArrayList<>();
+      descend();
       cursor++;                                   // '['
       whitespace();
-      if (cursor < text.length() && text.charAt(cursor) == ']') { cursor++; return list; }
+      if (cursor < text.length() && text.charAt(cursor) == ']') { cursor++; depth--; return list; }
       while (true) {
         list.add(value());
         whitespace();
         char next = text.charAt(cursor++);
-        if (next == ']') return list;
+        if (next == ']') { depth--; return list; }
         if (next != ',') throw new IllegalStateException("expected ',' or ']'");
       }
     }

@@ -48,6 +48,7 @@ public final class MalformedInputTests {
     decodersRefuseRandomBytesWithIoErrorsOnly();
     malformedVarIntsAndLengthsAreRefused();
     loginStartRefusesNamesNoPlayerCouldHave();
+    deeplyNestedTextIsRefusedNotRecursedInto();
     theProxySurvivesHostileConnections();
     System.out.println("MalformedInputTests OK");
   }
@@ -121,6 +122,22 @@ public final class MalformedInputTests {
     for (String name : List.of("Steve", "a", "_under_score_16_", ".bedrock", "x-y~z!")) {
       require(LoginStart.decode(loginStartBody(name), v47).username().equals(name), name + " is still a name");
     }
+  }
+
+  /**
+   * The component parser and everything that walks its tree recurse once per level, so a kick reason
+   * or status answer nested a few thousand levels deep overflowed the stack of the connection thread
+   * reading it. Past the client's own limit of 512 levels the text is unreadable, as any other
+   * malformed text is: carried as the literal string, never an error.
+   */
+  private static void deeplyNestedTextIsRefusedNotRecursedInto() throws Exception {
+    String deep = "[".repeat(20_000) + "\"x\"" + "]".repeat(20_000);
+    require(gg.tame.conduit.protocol.text.ComponentCodec.parseJson(deep) == null, "20,000 levels are not parsed");
+    require(gg.tame.conduit.text.TextCodec.fromJson(deep).plain().equals(deep), "the text is kept as the literal string");
+    gg.tame.conduit.protocol.text.ComponentCodec.jsonToNbtBytes(deep);
+    String deepest = "{\"extra\":[".repeat(255) + "\"x\"" + "]}".repeat(255);
+    require(gg.tame.conduit.protocol.text.ComponentCodec.parseJson(deepest) != null, "510 levels still parse");
+    require(gg.tame.conduit.text.TextCodec.fromJson(deepest).plain().equals("x"), "and read as the text they hold");
   }
 
   /**
