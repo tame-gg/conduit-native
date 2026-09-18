@@ -33,6 +33,7 @@ public final class ShutdownTests {
   public static void run() throws Exception {
     aNativeShutdownReasonReachesPlayers();
     aVelocityShutdownReasonReachesPlayers();
+    theConsoleStopsTheProxyAndAPlayerCannot();
     System.out.println("ShutdownTests OK");
   }
 
@@ -40,6 +41,27 @@ public final class ShutdownTests {
     String reason = joinThenShutDown(TempFiles.dir("conduit-shutdown-native").resolve("plugins"),
         proxy -> proxy.runtime().shutdown(Text.of("Back in five minutes")));
     require(reason.contains("Back in five minutes"), "the plugin's reason is the kick screen, got " + reason);
+  }
+
+  /**
+   * The operator had no way to stop the proxy gracefully: only a plugin could. The console can now,
+   * with a reason; a player cannot, since the default permission provider grants every node.
+   */
+  private static void theConsoleStopsTheProxyAndAPlayerCannot() throws Exception {
+    java.util.List<String> told = new java.util.concurrent.CopyOnWriteArrayList<>();
+    gg.tame.conduit.command.CommandSource player = new gg.tame.conduit.command.CommandSource() {
+      @Override public String username() { return "Mallory"; }
+      @Override public boolean hasPermission(String permission) { return true; }
+      @Override public void sendMessage(String message) { told.add(message); }
+      @Override public String currentBackend() { return "lobby"; }
+    };
+    String reason = joinThenShutDown(TempFiles.dir("conduit-shutdown-console").resolve("plugins"), proxy -> {
+      proxy.runtime().commandManager().dispatch(player, "conduit shutdown now");
+      require(told.stream().anyMatch(line -> line.contains("Only the proxy's console")), "a player is refused, told " + told);
+      require(!proxy.runtime().shuttingDown(), "and the proxy keeps running");
+      proxy.runtime().commandManager().dispatch(new gg.tame.conduit.command.ConsoleCommandSource(), "conduit shutdown Back after the upgrade");
+    });
+    require(reason.contains("Back after the upgrade"), "the console's reason is the kick screen, got " + reason);
   }
 
   private static final String STOPPER = """

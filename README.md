@@ -243,6 +243,8 @@ Both write to `dumps/` beside `conduit.toml` — never the shell's working direc
 name no command argument can influence. `dumps/` is in the shipped `.gitignore`; on POSIX the directory
 is created `rwx------`.
 * `/conduit reload` — live-safe reload; lists exact restart-required keys
+* `/conduit shutdown [reason]` — console only: the graceful shutdown, every player shown the reason
+  (or the configured shutdown message). Ctrl+C, or a service manager's stop, runs the same shutdown.
 * `/conduit plugins` — proxy plugins only (does not shadow Paper `/plugins`)
 * `/conduit info` (default) and `/conduit help` — permission-filtered list
 

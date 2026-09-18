@@ -42,6 +42,12 @@ public final class Main {
       System.exit(1);
       return;
     }
+    // Ctrl+C or a service manager's stop: the same graceful shutdown as /conduit shutdown, so players
+    // are told and plugins disabled instead of every connection being cut. close() is synchronized
+    // and runs once, so a shutdown already under way is waited for rather than repeated.
+    Runtime.getRuntime().addShutdownHook(Thread.ofPlatform().name("conduit-stop").unstarted(() -> {
+      try { proxy.close(); } catch (java.io.IOException | RuntimeException ignored) { }
+    }));
     try (MinecraftProxy listener = proxy) {
       listener.runtime().bindConfigPath(configPath);
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
@@ -57,6 +63,8 @@ public final class Main {
       var console = new gg.tame.conduit.command.ConsoleCommandSource();
       try (var input = new java.io.BufferedReader(new java.io.InputStreamReader(System.in))) {
         for (String line = input.readLine(); line != null; line = input.readLine()) {
+          // A shell piping UTF-8 in may begin with a byte-order mark, which made the first command unknown.
+          if (line.startsWith("﻿")) line = line.substring(1);
           if (line.isBlank()) continue;
           try {
             if (!runtime.commandManager().dispatch(console, line)) console.sendMessage("Unknown command. Try /conduit help");

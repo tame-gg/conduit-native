@@ -274,8 +274,28 @@ public final class CoreCommands {
       case "attack", "attackmode" -> attack(source, runtime, arguments.subList(1, arguments.size()));
       case "cache" -> cache(source, runtime, arguments.subList(1, arguments.size()));
       case "help" -> help(source);
+      case "shutdown" -> shutdown(source, runtime, arguments.subList(1, arguments.size()));
       default -> Messages.info(source, "Unknown /conduit subcommand. Try /conduit help");
     }
+  }
+
+  /**
+   * Stops the proxy gracefully, with every player shown {@code reason} when one is given. The console
+   * only: the default permission provider grants every node, so a permission alone would have let
+   * any player stop the proxy until a permissions plugin was installed.
+   */
+  private static void shutdown(CommandSource source, ConduitRuntime runtime, List<String> reason) {
+    if (!(source instanceof ConsoleCommandSource)) {
+      Messages.failure(source, "Only the proxy's console can stop it.");
+      return;
+    }
+    if (runtime == null) {
+      Messages.failure(source, "Unable to shut down.");
+      return;
+    }
+    Messages.info(source, "Shutting down.");
+    if (reason.isEmpty()) runtime.shutdown();
+    else runtime.shutdown(Text.of(String.join(" ", reason)));
   }
 
   private static void info(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
@@ -383,6 +403,7 @@ public final class CoreCommands {
     if (source.hasPermission(Permissions.HUB) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       source.sendMessage(Text.of("/hub").color(Messages.BODY));
     }
+    if (source instanceof ConsoleCommandSource) source.sendMessage(Text.of("/conduit shutdown [reason]").color(Messages.BODY));
   }
 
   private static void helpLine(CommandSource source, String permission, String usage) {
