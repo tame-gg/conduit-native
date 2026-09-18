@@ -144,15 +144,14 @@ public final class BackendHealthService implements AutoCloseable {
   private void probe(BackendServer server) {
     Optional<BackendStatusProbe.Advertisement> advertisement =
         BackendStatusProbe.probe(server.address(), settings.timeoutMs());
-    // Unregistered while it was being probed, perhaps with another server already under its name; or
-    // checks were turned off meanwhile, and their verdicts cleared.
-    if (registry.get(server.name()).orElse(null) != server || !settings.enabled()) return;
-    if (advertisement.isPresent()) {
-      advertisements.put(ServerRegistry.normalize(server.name()), advertisement.get());
-      applyProbeResult(server.name(), true);
-    } else {
-      applyProbeResult(server.name(), false);
-    }
+    // Unregistered while it was being probed, perhaps with another server already under its name.
+    if (registry.get(server.name()).orElse(null) != server) return;
+    // What the backend speaks is worth knowing either way: an explicit probe with checks off used to
+    // learn nothing, and translation was chosen without knowing the backend's version.
+    advertisement.ifPresent(ad -> advertisements.put(ServerRegistry.normalize(server.name()), ad));
+    // A verdict only while checks run: with them off, or turned off meanwhile and their verdicts
+    // cleared, no later probe would ever overturn it.
+    if (settings.enabled()) applyProbeResult(server.name(), advertisement.isPresent());
   }
 
   public BackendHealthSnapshot snapshot(String name) {
