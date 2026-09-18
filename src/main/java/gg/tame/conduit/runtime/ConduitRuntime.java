@@ -168,6 +168,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       }
     });
   }
+  @Override public void shutdown(gg.tame.conduit.api.text.Text reason) {
+    if (reason != null) gracefulShutdown.kickWith(reason);
+    shutdown();
+  }
   @Override public boolean shuttingDown() { return closed.get() || gracefulShutdown.isShuttingDown(); }
   /** Read per call, so a reload is seen at once. */
   @Override public gg.tame.conduit.api.server.ServerListDefaults serverListDefaults() {

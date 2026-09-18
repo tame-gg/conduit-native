@@ -108,7 +108,7 @@ logger named after the class it is injected into, not the plugin's Conduit logge
 | `getCommandManager`, `getEventManager`, `getScheduler`, `getChannelRegistrar`, `getPluginManager`, `getConsoleCommandSource` | Supported | VCT |
 | `getVersion` (name `Conduit`), `getBoundAddress` | Supported | VCT |
 | `shutdown()` stops the real proxy. `isShuttingDown()` | Supported | VCT (`/vlibstop`) |
-| `shutdown(Component)`: Conduit kicks players with its configured message | Unsupported (throws) | |
+| `shutdown(Component)`: every player is kicked with that reason instead of Conduit's configured shutdown message | Supported | `ShutdownTests` |
 | `getConfiguration()`: `getServers`, `isOnlineMode`, `getAttemptConnectionOrder` (routing's initial servers) | Partial | VCT |
 | `getConfiguration()`: `getMotd`, `getShowMaxPlayers`, `getFavicon`, from Conduit's `[status]` settings as configured (what a client is sent can differ, after maintenance or a ping listener) | Supported | VCT (`serverlist:`), Maintenance |
 | `getConfiguration()`: `getForcedHosts` is empty, because Conduit has no forced hosts | Supported | Maintenance |

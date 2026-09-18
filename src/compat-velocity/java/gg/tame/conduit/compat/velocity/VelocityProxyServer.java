@@ -92,8 +92,7 @@ final class VelocityProxyServer implements ProxyServer, Unsupported.ChatOnly {
   @Override public ProxyConfig getConfiguration() { return config; }
   @Override public ProxyVersion getVersion() { return new ProxyVersion("Conduit", "tame.gg", environment.conduit.version()); }
 
-  /** Conduit kicks players with the configured shutdown message; a plugin cannot supply its own. */
-  @Override public void shutdown(Component reason) { throw Unsupported.api("ProxyServer.shutdown(Component) (use shutdown())"); }
+  @Override public void shutdown(Component reason) { environment.conduit.shutdown(reason == null ? null : Texts.toConduit(reason)); }
   @Override public void shutdown() { environment.conduit.shutdown(); }
   @Override public boolean isShuttingDown() { return environment.conduit.shuttingDown(); }
   @Override public void closeListeners() { throw Unsupported.api("ProxyServer.closeListeners"); }

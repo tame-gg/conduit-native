@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class GracefulShutdown {
   private final AtomicBoolean shuttingDown = new AtomicBoolean();
   private volatile ShutdownSettings settings;
+  /** What a plugin that stopped the proxy asked players to be told, instead of the configured message. */
+  private volatile gg.tame.conduit.api.text.Text reason;
 
   public GracefulShutdown(ShutdownSettings settings) {
     this.settings = settings;
@@ -25,13 +27,21 @@ public final class GracefulShutdown {
 
   public void applySettings(ShutdownSettings replacement) { this.settings = replacement; }
   public boolean isShuttingDown() { return shuttingDown.get(); }
+  /** Players are kicked with {@code reason} rather than the configured message, if the shutdown has not begun. */
+  public void kickWith(gg.tame.conduit.api.text.Text reason) { this.reason = reason; }
+  /** What a player turned away by this shutdown is told. */
+  public gg.tame.conduit.api.text.Text message() {
+    gg.tame.conduit.api.text.Text asked = reason;
+    return asked != null ? asked : gg.tame.conduit.api.text.Text.of(settings.message());
+  }
 
   public void run(Runnable stopAccepting, PlayerManager players, BackendSelector selector) {
     if (!shuttingDown.compareAndSet(false, true)) return;
     stopAccepting.run();
     ShutdownSettings local = settings;
+    gg.tame.conduit.api.text.Text message = message();
     if (!local.gracefulEnabled()) {
-      disconnectAll(players, local.message());
+      disconnectAll(players, message);
       return;
     }
     long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(local.timeoutMs());
@@ -43,7 +53,7 @@ public final class GracefulShutdown {
         try {
           permits.acquire();
           if (System.nanoTime() > deadline) {
-            disconnect(player, local.message());
+            disconnect(player, message);
             return;
           }
           Set<String> failed = new HashSet<>();
@@ -60,10 +70,10 @@ public final class GracefulShutdown {
             } catch (RuntimeException ignored) { }
             failed.add(server.name().toLowerCase());
           }
-          if (!moved) disconnect(player, local.message());
+          if (!moved) disconnect(player, message);
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
-          disconnect(player, local.message());
+          disconnect(player, message);
         } finally {
           permits.release();
         }
@@ -75,15 +85,15 @@ public final class GracefulShutdown {
       try { worker.join(TimeUnit.NANOSECONDS.toMillis(remaining) + 1); }
       catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
     }
-    disconnectAll(players, local.message());
+    disconnectAll(players, message);
     ConduitLog.info("Graceful shutdown completed.");
   }
 
-  private static void disconnectAll(PlayerManager players, String message) {
+  private static void disconnectAll(PlayerManager players, gg.tame.conduit.api.text.Text message) {
     for (TrackedPlayer player : new ArrayList<>(players.all())) disconnect(player, message);
   }
 
-  private static void disconnect(TrackedPlayer player, String message) {
+  private static void disconnect(TrackedPlayer player, gg.tame.conduit.api.text.Text message) {
     if (player instanceof gg.tame.conduit.api.player.Player api) {
       try { api.disconnect(message); } catch (RuntimeException ignored) { }
     }

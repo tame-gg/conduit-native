@@ -272,7 +272,7 @@ public final class MinecraftProxy implements AutoCloseable {
     if (over(player, transport)) return;
     // The shutdown's sweep of online players cannot see a login still being decided.
     if (runtime.shuttingDown()) {
-      player.disconnect(runtime.configuration().shutdown().message());
+      player.disconnect(runtime.gracefulShutdown().message());
       player.leave(LoginStatus.CANCELLED_BY_PROXY);
       return;
     }

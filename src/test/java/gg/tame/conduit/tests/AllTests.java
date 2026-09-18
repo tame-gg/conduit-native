@@ -96,6 +96,7 @@ public final class AllTests {
     MalformedInputTests.run();
     BackendPingTests.run();
     ObservabilityTests.run();
+    ShutdownTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityLifecycleTests.run();

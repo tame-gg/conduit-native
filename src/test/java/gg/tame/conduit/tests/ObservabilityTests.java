@@ -175,7 +175,7 @@ public final class ObservabilityTests {
   }
 
   /** A 1.8 backend: takes the login, sends Join Game, then reads until the proxy goes. */
-  private static void serveBackend(ServerSocket listener) {
+  static void serveBackend(ServerSocket listener) {
     try {
       while (true) {
         Socket socket = listener.accept();
@@ -199,9 +199,9 @@ public final class ObservabilityTests {
     } catch (IOException closed) { }
   }
 
-  private interface Body { void write(DataOutputStream out) throws IOException; }
+  interface Body { void write(DataOutputStream out) throws IOException; }
 
-  private static byte[] packet(int id, Body body) throws IOException {
+  static byte[] packet(int id, Body body) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(out, id);

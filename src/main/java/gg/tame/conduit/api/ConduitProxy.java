@@ -55,6 +55,11 @@ public interface ConduitProxy {
    * runs on its own thread, so a plugin may call this from anywhere, including its own listener.
    */
   void shutdown();
+  /**
+   * {@link #shutdown()}, with every player kicked with {@code reason} instead of the configured
+   * shutdown message. This default ignores the reason.
+   */
+  default void shutdown(Text reason) { shutdown(); }
   boolean shuttingDown();
   /**
    * The server-list answer as the operator configured it ({@code [status]} in conduit.toml), for a
