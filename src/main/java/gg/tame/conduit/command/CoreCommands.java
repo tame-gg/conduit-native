@@ -15,6 +15,7 @@ import java.lang.management.ManagementFactory;
 import java.net.InetAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -24,6 +25,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Built-in Conduit commands. Clean, polished proxy UX — not a dashboard. */
 public final class CoreCommands {
@@ -674,7 +676,7 @@ public final class CoreCommands {
       body.append("uptimeMs=").append(runtime == null ? 0 : runtime.uptimeMillis()).append('\n');
       body.append("metrics=").append(ConduitMetrics.current().snapshot()).append('\n');
       for (String name : registry.names()) body.append("server=").append(name).append('\n');
-      Files.writeString(file, body.toString());
+      Files.writeString(file, body.toString(), StandardOpenOption.CREATE_NEW);
       Messages.success(source, "Wrote dump to " + file.toAbsolutePath());
       Messages.info(source, "Counters and server names only - no addresses, secrets, or player data.");
     } catch (IOException exception) {
@@ -724,7 +726,13 @@ public final class CoreCommands {
     }
     return dir;
   }
-  private static String stamp() { return Instant.now().toString().replace(':', '-'); }
+  private static final AtomicReference<Instant> LAST_STAMP = new AtomicReference<>(Instant.EPOCH);
+  /** A timestamp that never repeats: Windows' clock can stand still for a millisecond, and a repeated name overwrote the dump before it. */
+  private static String stamp() {
+    Instant now = Instant.now();
+    return LAST_STAMP.accumulateAndGet(now, (last, current) -> current.isAfter(last) ? current : last.plusNanos(1))
+        .toString().replace(':', '-');
+  }
 
   private static void send(CommandSource source, ServerRegistry registry, PlayerManager players, ConduitRuntime runtime, List<String> arguments) {
     if (arguments.size() != 2) {

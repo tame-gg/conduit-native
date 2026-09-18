@@ -411,6 +411,9 @@ public final class CommandApiTests {
       for (String argument : List.of("", " ../../escaped", " /etc/passwd", " ..\\..\\escaped.txt")) {
         runtime.commandManager().dispatch(admin, "/conduit dump" + argument);
       }
+      // Dumps taken within one clock tick each keep their own file. Windows' clock moves every
+      // half millisecond or more, and a repeated name overwrote the dump before it.
+      for (int i = 0; i < 100; i++) runtime.commandManager().dispatch(admin, "/conduit dump");
     } finally {
       runtime.close();
     }
@@ -418,7 +421,7 @@ public final class CommandApiTests {
     require(Files.isDirectory(dumps), "dumps directory sits beside the config");
     try (var written = Files.list(dumps)) {
       List<Path> files = written.toList();
-      require(files.size() == 4, "one file per run, got " + files);
+      require(files.size() == 104, "one file per run, got " + files.size());
       for (Path file : files) {
         require(file.getParent().equals(dumps), "no argument escaped the dumps directory: " + file);
         require(file.getFileName().toString().startsWith("conduit-")
