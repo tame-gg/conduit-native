@@ -700,6 +700,13 @@ gets) or `forwardToServer()` (the backend gets it even when the proxy has a comm
 answered one; `Player.clientBrand()` is what the client last sent on the brand channel.
 `proxy().shutdown(Text reason)` stops the proxy with every player shown that reason.
 
+A `Player` can be offered resource packs of the proxy's own (`sendResourcePack`, and from 1.20.3
+`removeResourcePack` and `clearResourcePacks`), in the client's protocol: Resource Pack Send through
+1.20.2, Push and Pop by UUID from 1.20.3. The client's answers arrive as
+`PlayerResourcePackStatusEvent`, for the proxy's packs and for the ones its server offers; answers
+about the proxy's packs never reach the server, and a server's packs pass through untouched.
+`resourcePacks()` lists what the client was offered and still has or is deciding on.
+
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins
 then go through the same lifecycle as native ones; a loader's `close()` is called once at shutdown,
@@ -714,9 +721,10 @@ one's result and its remaining gaps are in `docs/VELOCITY_COMPATIBILITY.md`.
 
 This is not full Velocity compatibility. Titles, the action bar, boss bars, the player-list header and
 footer and a player's tab-list entries work through the adapter (only the proxy's own entries: the
-backend's are not tracked). Plugins built around the backend's tab list or scoreboard teams, resource
-packs, voice chat, Bedrock players, packet injection or Velocity's own network pipeline (ViaVersion
-and its relatives) are not expected to work.
+backend's are not tracked), and so do resource packs a plugin offers. Plugins built around the
+backend's tab list or scoreboard teams, rewriting a backend's resource packs, voice chat, Bedrock
+players, packet injection or Velocity's own network pipeline (ViaVersion and its relatives) are not
+expected to work.
 
 Architecture:
 

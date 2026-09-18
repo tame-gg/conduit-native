@@ -159,6 +159,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private volatile byte[] clientInformation;
   /** What the proxy shows this client itself: titles, action bar, boss bars, tab-list header and entries. */
   private final ClientDisplay display;
+  /** The resource packs the client is offered through the proxy, the proxy's own and its server's. */
+  private final ClientResourcePacks resourcePacks;
   /** What the client last sent on the brand channel. */
   private volatile String clientBrand;
   public PlayerSession(ConduitConfiguration configuration, PacketTransport client, ProtocolDefinition protocol, ProtocolSession clientState,
@@ -179,6 +181,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         : new SwitchPacketQueue(1);
     runtime.modded().remember(address, this.clientProtocol, this.modClassifier);
     this.display = new ClientDisplay(this, protocol, this::writeClient);
+    this.resourcePacks = new ClientResourcePacks(this, protocol, this::writeClient, event -> runtime.events().fire(event));
   }
   public ModLoaderFamily modLoaderFamily() { return modClassifier.family(); }
   public HandshakeClassifier modClassifier() { return modClassifier; }
@@ -1131,6 +1134,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private boolean handleClientPacket(byte[] packet) throws IOException {
     int id = PlayPackets.packetId(packet);
     rememberClientInformation(packet, id);
+    // An answer about one of the proxy's own packs: the server never offered it and must not hear of it.
+    if (resourcePacks.fromClient(clientState.state(), packet)) return true;
     boolean loginAck = expectClientLoginAck
         && protocol.is(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.LOGIN_ACKNOWLEDGED)
         && packet.length <= 2;
@@ -2247,12 +2252,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     keepAlive.written(clientState.state(), outbound);
     ConnectionState writtenIn = clientState.state();
     display.beforeWrite(writtenIn, outbound);
+    resourcePacks.beforeWrite(writtenIn, outbound);
     if (flush) client.write(outbound);
     else {
       client.writeUnflushed(outbound);
     }
     awaitingBackendJoinGame.written(outbound);
     display.afterWrite(writtenIn, outbound);
+    resourcePacks.afterWrite(writtenIn, outbound);
   }
   @Override public String username() { return profile().username(); }
   @Override public boolean hasPermission(String permission) {
@@ -2286,6 +2293,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public void addTabListEntry(gg.tame.conduit.api.player.TabListEntry entry) { display.addEntry(java.util.Objects.requireNonNull(entry, "entry")); }
   @Override public boolean removeTabListEntry(java.util.UUID id) { return id != null && display.removeEntry(id); }
   @Override public List<gg.tame.conduit.api.player.TabListEntry> tabListEntries() { return display.entries(); }
+  @Override public boolean sendResourcePack(gg.tame.conduit.api.player.ResourcePack pack) { return resourcePacks.offer(java.util.Objects.requireNonNull(pack, "pack")); }
+  @Override public boolean removeResourcePack(java.util.UUID id) { return id != null && resourcePacks.remove(id); }
+  @Override public boolean clearResourcePacks() { return resourcePacks.clear(); }
+  @Override public List<gg.tame.conduit.api.player.ResourcePack.Offered> resourcePacks() { return resourcePacks.offered(); }
   @Override public String currentBackend() {
     BackendConnection current = backend;
     return current == null ? "" : current.server().name();
@@ -2300,5 +2311,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     client.close();
     // After the socket, which ends any display write still stuck on a client that stopped reading.
     display.close();
+    resourcePacks.close();
   }
 }

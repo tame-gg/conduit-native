@@ -83,14 +83,13 @@ public final class ClientDisplay {
 
   /** Before {@code packet} is written in {@code state}: closes the gate if it takes the world away. */
   public void beforeWrite(ConnectionState state, byte[] packet) {
-    if (state != ConnectionState.PLAY) return;
-    if (!rebuildsWorld(packet) && !is(packet, PacketKind.PLAY_START_CONFIGURATION)) return;
+    if (!takesWorld(protocol, state, packet)) return;
     synchronized (lock) { inWorld = false; }
   }
 
   /** After {@code packet} was written in {@code state}: reopens the gate and sends everything again. */
   public void afterWrite(ConnectionState state, byte[] packet) {
-    if (state != ConnectionState.PLAY || !rebuildsWorld(packet)) return;
+    if (state != ConnectionState.PLAY || !rebuildsWorld(protocol, packet)) return;
     synchronized (lock) {
       if (closed) return;
       inWorld = true;
@@ -111,11 +110,17 @@ public final class ClientDisplay {
     }
   }
 
-  private boolean rebuildsWorld(byte[] packet) {
-    return is(packet, PacketKind.PLAY_LOGIN) || (!protocol.hasConfiguration() && is(packet, PacketKind.PLAY_RESPAWN));
+  /** Whether {@code packet}, about to be written in {@code state}, takes the client's world away. Shared with the resource packs. */
+  static boolean takesWorld(ProtocolDefinition protocol, ConnectionState state, byte[] packet) {
+    return state == ConnectionState.PLAY && (rebuildsWorld(protocol, packet) || is(protocol, packet, PacketKind.PLAY_START_CONFIGURATION));
   }
 
-  private boolean is(byte[] packet, PacketKind kind) {
+  /** Whether {@code packet}, written in Play, gives the client a world again. */
+  static boolean rebuildsWorld(ProtocolDefinition protocol, byte[] packet) {
+    return is(protocol, packet, PacketKind.PLAY_LOGIN) || (!protocol.hasConfiguration() && is(protocol, packet, PacketKind.PLAY_RESPAWN));
+  }
+
+  private static boolean is(ProtocolDefinition protocol, byte[] packet, PacketKind kind) {
     try {
       return protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, kind)
           && protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.peekId(packet), kind);

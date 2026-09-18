@@ -42,6 +42,22 @@ public interface Player extends CommandSource {
   default long ping() { return -1; }
   /** What the client last called itself on the brand channel ("vanilla", "fabric", ...). Empty until it has. */
   default java.util.Optional<String> clientBrand() { return java.util.Optional.empty(); }
+  /**
+   * Offers the client {@code pack}, as the proxy's own: its answers arrive as
+   * {@code PlayerResourcePackStatusEvent} and never reach the server. It goes once the client stands
+   * in a world, so an offer made while it logs in or switches servers waits for that. The proxy's
+   * packs stay across server switches. False when the client's release has no resource-pack packet.
+   */
+  default boolean sendResourcePack(ResourcePack pack) { return false; }
+  /**
+   * Tells a 1.20.3+ client to drop the pack with this id, the proxy's or a server's. False for an older
+   * client, which has no way to drop one.
+   */
+  default boolean removeResourcePack(UUID id) { return false; }
+  /** Tells a 1.20.3+ client to drop every pack it has from the server side, the proxy's and the server's. False before 1.20.3. */
+  default boolean clearResourcePacks() { return false; }
+  /** The packs this client was offered through the proxy and still has or is still deciding on, in the order offered. */
+  default java.util.List<ResourcePack.Offered> resourcePacks() { return java.util.List.of(); }
   void sendMessage(String message);
   default void sendMessage(Text text) {
     sendMessage(text == null ? "" : text.plain());

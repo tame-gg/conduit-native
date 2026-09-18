@@ -32,6 +32,9 @@ import net.kyori.adventure.dialog.DialogLike;
 import net.kyori.adventure.identity.Identity;
 import net.kyori.adventure.inventory.Book;
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.resource.ResourcePackCallback;
+import net.kyori.adventure.resource.ResourcePackRequest;
+import net.kyori.adventure.resource.ResourcePackStatus;
 import net.kyori.adventure.sound.Sound;
 import net.kyori.adventure.sound.SoundStop;
 import net.kyori.adventure.text.Component;
@@ -46,6 +49,8 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   volatile VelocityRegisteredServer previousServer;
   /** A plugin's setEffectiveLocale; null leaves the client's own. */
   private volatile Locale effectiveLocale;
+  /** Adventure callbacks for packs sent with one, until the client's last answer about each. */
+  private final java.util.Map<UUID, ResourcePackCallback> packCallbacks = new java.util.concurrent.ConcurrentHashMap<>();
 
   VelocityPlayer(VelocityEnvironment environment, gg.tame.conduit.api.player.Player player) {
     this.environment = environment;
@@ -153,13 +158,54 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public Component getPlayerListFooter() { return Texts.toAdventure(player.playerListFooter()); }
   @Override public TabList getTabList() { return new VelocityTabList(this); }
   @Override public void spoofChatInput(String input) { throw Unsupported.api("Player.spoofChatInput"); }
-  @Override public void sendResourcePack(String url) { throw Unsupported.api("Player.sendResourcePack"); }
-  @Override public void sendResourcePack(String url, byte[] hash) { throw Unsupported.api("Player.sendResourcePack"); }
-  @Override public void sendResourcePackOffer(ResourcePackInfo pack) { throw Unsupported.api("Player.sendResourcePackOffer"); }
-  @Override public ResourcePackInfo getAppliedResourcePack() { throw Unsupported.api("Player.getAppliedResourcePack"); }
-  @Override public ResourcePackInfo getPendingResourcePack() { throw Unsupported.api("Player.getPendingResourcePack"); }
-  @Override public Collection<ResourcePackInfo> getAppliedResourcePacks() { throw Unsupported.api("Player.getAppliedResourcePacks"); }
-  @Override public Collection<ResourcePackInfo> getPendingResourcePacks() { throw Unsupported.api("Player.getPendingResourcePacks"); }
+  // Resource packs. A client whose release cannot take one, or drop one (before 1.20.3), is simply
+  // not sent anything: the API is honoured, the client is what cannot.
+  @Override public void sendResourcePack(String url) { sendResourcePackOffer(new VelocityResourcePackInfo.Builder(url).build()); }
+  @Override public void sendResourcePack(String url, byte[] hash) {
+    sendResourcePackOffer(new VelocityResourcePackInfo.Builder(url).setHash(hash).build());
+  }
+  @Override public void sendResourcePackOffer(ResourcePackInfo pack) { player.sendResourcePack(VelocityResourcePackInfo.toConduit(pack)); }
+  /** Packs offered through the proxy, the proxy's and the server's, that the client said it loaded. */
+  @Override public Collection<ResourcePackInfo> getAppliedResourcePacks() { return packs(true); }
+  /** Packs offered through the proxy that the client has not yet loaded, declined or dropped. */
+  @Override public Collection<ResourcePackInfo> getPendingResourcePacks() { return packs(false); }
+  @Override public ResourcePackInfo getAppliedResourcePack() { return last(packs(true)); }
+  @Override public ResourcePackInfo getPendingResourcePack() { return last(packs(false)); }
+  private List<ResourcePackInfo> packs(boolean loaded) {
+    return player.resourcePacks().stream().filter(offered -> offered.loaded() == loaded)
+        .map(offered -> (ResourcePackInfo) VelocityResourcePackInfo.of(offered.pack(), offered.fromServer())).toList();
+  }
+  private static ResourcePackInfo last(List<ResourcePackInfo> packs) { return packs.isEmpty() ? null : packs.getLast(); }
+  /** Adventure's request: every pack in it, with its prompt and required flag, and its callback told each answer. */
+  @Override public void sendResourcePacks(ResourcePackRequest request) {
+    if (request.replace()) clearResourcePacks();
+    gg.tame.conduit.api.text.Text prompt = request.prompt() == null ? gg.tame.conduit.api.text.Text.empty() : Texts.toConduit(request.prompt());
+    for (net.kyori.adventure.resource.ResourcePackInfo info : request.packs()) {
+      if (request.callback() != ResourcePackCallback.noOp()) packCallbacks.put(info.id(), request.callback());
+      player.sendResourcePack(new gg.tame.conduit.api.player.ResourcePack(info.id(), info.uri().toString(), info.hash(), request.required(), prompt));
+    }
+  }
+  @Override public void removeResourcePacks(Iterable<UUID> ids) {
+    for (UUID id : ids) if (player.removeResourcePack(id)) packCallbacks.remove(id);
+  }
+  @Override public void removeResourcePacks(UUID id, UUID... others) {
+    removeResourcePacks(List.of(id));
+    removeResourcePacks(List.of(others));
+  }
+  @Override public void clearResourcePacks() {
+    if (player.clearResourcePacks()) packCallbacks.clear();
+  }
+  /** The client answered about a pack; an Adventure callback that asked for it is told, on the adapter's threads. */
+  void resourcePackAnswered(UUID id, gg.tame.conduit.api.player.ResourcePack.Status status) {
+    ResourcePackCallback callback = status.intermediate() ? packCallbacks.get(id) : packCallbacks.remove(id);
+    if (callback == null) return;
+    ResourcePackStatus adventure = status == gg.tame.conduit.api.player.ResourcePack.Status.LOADED
+        ? ResourcePackStatus.SUCCESSFULLY_LOADED : ResourcePackStatus.valueOf(status.name());
+    environment.work.execute(() -> {
+      try { callback.packEventReceived(id, adventure, this); }
+      catch (RuntimeException failed) { environment.log.log(java.util.logging.Level.WARNING, "A resource pack callback failed", failed); }
+    });
+  }
   @Override public void addCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.addCustomChatCompletions"); }
   @Override public void removeCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.removeCustomChatCompletions"); }
   @Override public void setCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.setCustomChatCompletions"); }

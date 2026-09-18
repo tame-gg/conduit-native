@@ -97,6 +97,6 @@ final class VelocityProxyServer implements ProxyServer, Unsupported.ChatOnly {
   @Override public boolean isShuttingDown() { return environment.conduit.shuttingDown(); }
   @Override public void closeListeners() { throw Unsupported.api("ProxyServer.closeListeners"); }
   @Override public InetSocketAddress getBoundAddress() { return environment.conduit.boundAddress(); }
-  @Override public ResourcePackInfo.Builder createResourcePackBuilder(String url) { throw Unsupported.api("ProxyServer.createResourcePackBuilder"); }
+  @Override public ResourcePackInfo.Builder createResourcePackBuilder(String url) { return new VelocityResourcePackInfo.Builder(url); }
   @Override public String toString() { return "Conduit " + environment.conduit.version(); }
 }

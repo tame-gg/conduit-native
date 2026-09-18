@@ -247,6 +247,27 @@ public final class ProtocolEras {
     return protocol >= TITLE_ACTION_BAR_FROM;
   }
 
+  /**
+   * Last protocol Conduit has a codec for whose Resource Pack Status carries the pack's hash before
+   * the result (1.8). 1.12.2's carries the result alone; the release between them that dropped the
+   * hash has no codec here. Whether a release names packs by UUID instead (1.20.3's Push and Pop) is
+   * the packet table's to say.
+   */
+  public static final int RESOURCE_PACK_STATUS_HASH_MAX = 47;
+
+  /** Whether this protocol's Resource Pack Status starts with the pack's hash. */
+  public static boolean resourcePackStatusHash(int protocol) {
+    return protocol <= RESOURCE_PACK_STATUS_HASH_MAX;
+  }
+
+  /** First protocol whose Resource Pack Send ends with a required flag and an optional prompt (1.17). */
+  public static final int RESOURCE_PACK_PROMPT_FROM = 755;
+
+  /** Whether this protocol's Resource Pack Send carries a required flag and a prompt. */
+  public static boolean resourcePackPrompt(int protocol) {
+    return protocol >= RESOURCE_PACK_PROMPT_FROM;
+  }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */

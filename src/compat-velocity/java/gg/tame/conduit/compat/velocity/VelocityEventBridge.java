@@ -292,4 +292,18 @@ final class VelocityEventBridge {
     if (listening(ListenerCloseEvent.class)) environment.events.fire(new ListenerCloseEvent(environment.conduit.boundAddress(), ListenerType.MINECRAFT));
     if (listening(ProxyPreShutdownEvent.class)) environment.fireAndWait(new ProxyPreShutdownEvent());
   }
+  /**
+   * Told, not asked: Conduit never kicks over a declined pack, so there is no kick for
+   * {@code setOverwriteKick} to overrule. An Adventure callback the pack was sent with hears it too.
+   */
+  @Subscribe public void onResourcePack(gg.tame.conduit.api.event.player.PlayerResourcePackStatusEvent event) {
+    VelocityPlayer player = environment.player(event.player());
+    player.resourcePackAnswered(event.pack().id(), event.status());
+    if (!listening(com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent.class)) return;
+    var status = event.status() == gg.tame.conduit.api.player.ResourcePack.Status.LOADED
+        ? com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent.Status.SUCCESSFUL
+        : com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent.Status.valueOf(event.status().name());
+    environment.events.fire(new com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent(player, event.pack().id(), status,
+        VelocityResourcePackInfo.of(event.pack(), event.fromServer())));
+  }
 }
