@@ -24,7 +24,7 @@ import java.util.UUID;
 import net.kyori.adventure.text.Component;
 
 /** The ProxyServer handed to Velocity plugins. Its public surface is the Velocity API and nothing else. */
-final class VelocityProxyServer implements ProxyServer, Unsupported.ChatOnly {
+final class VelocityProxyServer implements ProxyServer, Unsupported.ToPlayers {
   private final VelocityEnvironment environment;
   private final VelocityProxyConfig config;
   VelocityProxyServer(VelocityEnvironment environment) {
@@ -77,6 +77,8 @@ final class VelocityProxyServer implements ProxyServer, Unsupported.ChatOnly {
   }
   @Override public RegisteredServer createRawRegisteredServer(ServerInfo server) { throw Unsupported.api("ProxyServer.createRawRegisteredServer"); }
 
+  /** Titles, boss bars and the rest go to every player; the console has none of them. */
+  @Override public java.util.Collection<Player> players() { return getAllPlayers(); }
   /** A broadcast: every player, and the console. */
   @Override public void deliver(Component message) {
     for (Player player : getAllPlayers()) player.sendMessage(message);

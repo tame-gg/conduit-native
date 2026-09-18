@@ -19,7 +19,7 @@ import java.util.concurrent.CompletionException;
 import net.kyori.adventure.text.Component;
 
 /** A backend registered with Conduit. Equal to another wrapper of the same name and address. */
-final class VelocityRegisteredServer implements RegisteredServer, Unsupported.ChatOnly {
+final class VelocityRegisteredServer implements RegisteredServer, Unsupported.ToPlayers {
   private final VelocityEnvironment environment;
   private final gg.tame.conduit.api.server.RegisteredServer server;
   private final ServerInfo info;
@@ -66,6 +66,7 @@ final class VelocityRegisteredServer implements RegisteredServer, Unsupported.Ch
   @Override public void deliver(Component message) {
     for (Player player : getPlayersConnected()) player.sendMessage(message);
   }
+  @Override public java.util.Collection<Player> players() { return getPlayersConnected(); }
   @Override public boolean equals(Object other) { return other instanceof VelocityRegisteredServer that && that.info.equals(info); }
   @Override public int hashCode() { return info.hashCode(); }
   @Override public String toString() { return "VelocityRegisteredServer[" + info.getName() + "]"; }

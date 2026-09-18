@@ -114,6 +114,12 @@ public final class VelocityDisplayTests {
                 signal("hidden");
               }
               case "listeners" -> signal("listeners:" + listeners());
+              case "everyone" -> {
+                // The proxy and a server are audiences of players too.
+                proxy.sendActionBar(Component.text("Everyone"));
+                proxy.getServer("lobby").orElseThrow().showTitle(Title.title(Component.text("LobbyOnly"), Component.empty()));
+                signal("everyone");
+              }
               default -> { }
             }
           });
@@ -212,6 +218,15 @@ public final class VelocityDisplayTests {
               packet -> boss(packet, 0)), 10_000), "the bar is sent again after the switch");
           require(NativeApiTests.waitFor(() -> DisplayApiTests.afterJoin(alice.received(packet -> true), JOIN_GAME, joins + 1,
               packet -> id(packet) == HEADER), 10_000), "and so is the header");
+
+          // With Alice on survival and Bob on lobby: the proxy's action bar reaches both, lobby's title only Bob.
+          bob.chat("/vdisplay everyone");
+          VelocityCompatTests.awaitSignal("everyone");
+          alice.await(packet -> title(packet, 2) && json(packet).contains("Everyone"), "the proxy-wide action bar");
+          bob.await(packet -> title(packet, 2) && json(packet).contains("Everyone"), "the proxy-wide action bar, for Bob too");
+          bob.await(packet -> title(packet, 0) && json(packet).contains("LobbyOnly"), "the title shown to the lobby");
+          Thread.sleep(200);
+          require(alice.received(packet -> title(packet, 0) && json(packet).contains("LobbyOnly")).isEmpty(), "Alice is not on the lobby");
 
           // Alice hides it: it leaves her screen and she hears no more of it, but Bob still views it.
           alice.chat("/vdisplay hide");
