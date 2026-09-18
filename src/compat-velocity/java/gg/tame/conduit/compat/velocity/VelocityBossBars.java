@@ -2,12 +2,14 @@
 package gg.tame.conduit.compat.velocity;
 
 import gg.tame.conduit.api.player.Player;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.text.Component;
 
@@ -20,8 +22,15 @@ import net.kyori.adventure.text.Component;
 final class VelocityBossBars {
   // ponytail: one lock for every bar; per-bar locks if show/hide ever contend.
   private final Map<BossBar, Shown> shown = new IdentityHashMap<>();
+  /**
+   * Players already forgotten. A plugin that kept one past their disconnect and showed them a bar made
+   * them its viewer again, and nothing would forget them twice: the bar held their session for good.
+   * Weak, so remembering who left holds nobody either.
+   */
+  private final Set<Player> gone = Collections.newSetFromMap(new WeakHashMap<>());
 
   synchronized void show(Player viewer, BossBar bar) {
+    if (gone.contains(viewer)) return;
     Shown entry = shown.get(bar);
     if (entry == null) {
       entry = new Shown(bar);
@@ -40,6 +49,7 @@ final class VelocityBossBars {
 
   /** The player is gone: every bar they viewed forgets them. Their session already let go of its side. */
   synchronized void forget(Player viewer) {
+    gone.add(viewer);
     for (Iterator<Map.Entry<BossBar, Shown>> bars = shown.entrySet().iterator(); bars.hasNext(); ) {
       Map.Entry<BossBar, Shown> entry = bars.next();
       if (!entry.getValue().viewers.remove(viewer) || !entry.getValue().viewers.isEmpty()) continue;

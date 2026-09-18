@@ -62,6 +62,8 @@ public final class VelocityDisplayTests {
       """ + VelocityCompatTests.SIGNAL_METHOD + """
         static final UUID FAKE = new UUID(0x1234, 0x5678);
         static final BossBar BAR = BossBar.bossBar(Component.text("Raid"), 0.5f, BossBar.Color.RED, BossBar.Overlay.NOTCHED_10);
+        /** Bob, kept past his disconnect as a careless plugin keeps a player. */
+        static Player stale;
         private final ProxyServer proxy;
         @Inject public VDisplay(ProxyServer proxy) { this.proxy = proxy; }
 
@@ -99,7 +101,12 @@ public final class VelocityDisplayTests {
                 signal("latency:" + player.getTabList().getEntry(FAKE).orElseThrow().getLatency());
               }
               case "untab" -> signal("untab:" + player.getTabList().removeEntry(FAKE).isPresent() + ":" + player.getTabList().getEntries().size());
-              case "show" -> { player.showBossBar(BAR); signal("listeners:" + listeners()); }
+              case "show" -> {
+                if (player.getUsername().equals("Bob")) stale = player;
+                player.showBossBar(BAR);
+                signal("listeners:" + listeners());
+              }
+              case "stale" -> { stale.showBossBar(BAR); signal("stale:" + listeners()); }
               case "update" -> {
                 BAR.progress(0.25f);
                 BAR.name(Component.text("Raid 2"));
@@ -244,6 +251,11 @@ public final class VelocityDisplayTests {
             Thread.sleep(100);
             return VelocityCompatTests.count("listeners:0") >= 1;
           }, 10_000), "the bar's listener is released when its last viewer disconnects");
+
+          // A plugin that kept Bob shows him the bar after he left: the bar must not take him back as a
+          // viewer, and with him its listener and every reference to his session.
+          alice.chat("/vdisplay stale");
+          VelocityCompatTests.awaitSignal("stale:0");
 
           // And when its last viewer hides it.
           alice.chat("/vdisplay show");
