@@ -94,7 +94,7 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
     return output.toByteArray();
   }
   @Override public GameProfile getGameProfile() { return new GameProfile(getUniqueId(), getUsername(), List.of()); }
-  @Override public long getPing() { return -1; }
+  @Override public long getPing() { return player.ping(); }
 
   // Not tracked by Conduit's API.
   @Override public HandshakeIntent getHandshakeIntent() { throw Unsupported.api("Player.getHandshakeIntent"); }

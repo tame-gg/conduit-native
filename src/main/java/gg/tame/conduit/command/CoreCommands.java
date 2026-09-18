@@ -199,9 +199,10 @@ public final class CoreCommands {
   }
 
   private static void ping(CommandSource source) {
+    long latency = source instanceof gg.tame.conduit.api.player.Player player ? player.ping() : -1;
     source.sendMessage(Text.of("Connected through ").color(Messages.LABEL)
         .append(Text.of(Conduit.BRAND + " " + Conduit.VERSION).color(Messages.BRAND).bold())
-        .append(Text.of(".").color(Messages.LABEL)));
+        .append(Text.of(latency < 0 ? "." : ", ping " + latency + " ms.").color(Messages.LABEL)));
   }
 
   private static void hub(CommandSource source, ConduitRuntime runtime) {

@@ -33,6 +33,12 @@ public interface Player extends CommandSource {
    * once it is in the game and whenever the player changes them. Empty until it has sent them.
    */
   default java.util.Optional<java.util.Locale> locale() { return java.util.Optional.empty(); }
+  /**
+   * The player's latency in milliseconds: the round trip of the last keep-alive the client answered,
+   * as the game itself measures it. -1 until the client has answered one, which in practice takes
+   * up to a keep-alive interval (about 15 seconds on a vanilla backend) after it joins.
+   */
+  default long ping() { return -1; }
   void sendMessage(String message);
   default void sendMessage(Text text) {
     sendMessage(text == null ? "" : text.plain());

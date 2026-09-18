@@ -124,7 +124,7 @@ logger named after the class it is injected into, not the plugin's Conduit logge
 | `getRemoteAddress`: the address is correct, but the port is always 0 because Conduit's API does not carry it | Partial | VCT |
 | `getRawVirtualHost`: host name only, with FML markers removed | Partial | |
 | `getGameProfile`: id and name only, no properties such as skins | Partial | VCT |
-| `getPing`: always `-1`, which the API defines as "unknown" | Partial | |
+| `getPing`: the round trip of the last keep-alive the client answered, measured by Conduit between writing it and reading the answer, as the game measures it; `-1` ("unknown") until the client has answered one, up to a keep-alive interval after joining | Supported | `PlayerLatencyTests` |
 | `getPlayerSettings`: the client's own locale once it has sent its settings (`hasSentPlayerSettings()` then true; `en_US` before), and the vanilla client's defaults for the rest (view distance 12, chat shown with colours, every skin part, right hand), because Conduit's API carries only the language. `getEffectiveLocale` is what a plugin set with `setEffectiveLocale`, or else the client's locale, and null before the client has sent it. | Partial | VCT |
 | `sendMessage(Component)`, `sendRichMessage` (MiniMessage) | Partial: keeps colour (hex snapped to the nearest named colour), bold, italic, run-command clicks and text hovers; other decorations and events are dropped, and translatable, keybind, score and selector components are sent as plain text | VCT, Maintenance |
 | `disconnect(Component)`: a real kick screen, with the same formatting kept | Supported | VCT |

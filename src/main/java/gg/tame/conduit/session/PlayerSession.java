@@ -131,6 +131,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * that is not a translation error but a crash inside the rewriter.
    */
   private final SwitchJoinGate awaitingBackendJoinGame;
+  private final KeepAliveClock keepAlive;
   private volatile boolean commandsDeclared;
   private static final int MAX_DEFERRED_PLAY = 512;
   /** Set once Conduit has synthesised finish_configuration for a non-configuration backend. */
@@ -159,6 +160,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       Handshake handshake, byte[] originalHandshake, byte[] originalLoginStart, InetAddress address) {
     this.configuration = configuration; this.client = client; this.protocol = protocol; this.clientState = clientState;
     this.awaitingBackendJoinGame = new SwitchJoinGate(protocol);
+    this.keepAlive = new KeepAliveClock(protocol);
     this.clientProtocol = protocol.version().number();
     this.backendProtocol = this.clientProtocol;
     this.backendDefinition = protocol;
@@ -996,6 +998,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     try {
       while (!closed) {
         byte[] packet = client.read(configuration.maxFrameBytes());
+        keepAlive.read(clientState.state(), packet);
         if (ProtocolTrace.enabled()) {
           try {
             ProtocolTrace.note("client packet " + clientState.state() + " id=0x"
@@ -1191,6 +1194,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
 
   /** The first field of Client Information in every version is the client's language, as "en_us". */
+  @Override public long ping() { return keepAlive.latencyMillis(); }
   @Override public java.util.Optional<java.util.Locale> locale() {
     byte[] information = clientInformation;
     if (information == null) return java.util.Optional.empty();
@@ -2114,6 +2118,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());
     }
     gg.tame.conduit.protocol.ClientboundDump.record(outbound);
+    keepAlive.written(clientState.state(), outbound);
     if (flush) client.write(outbound);
     else {
       client.writeUnflushed(outbound);

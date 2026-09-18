@@ -99,6 +99,7 @@ public final class AllTests {
     ShutdownTests.run();
     RoutingFailoverTests.run();
     LifecycleRaceTests.run();
+    PlayerLatencyTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityLifecycleTests.run();
