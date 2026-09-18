@@ -8,6 +8,17 @@ import java.util.Locale;
 public record ParsedCommand(String name, List<String> arguments) {
   public static ParsedCommand parse(String line) { return parseInternal(line, false); }
   public static ParsedCommand parseKeepEmpty(String line) { return parseInternal(line, true); }
+  /**
+   * What follows the command's name and the one space after it, exactly as typed: the arguments
+   * list collapses runs of spaces, and a command that takes free text needs them as they were.
+   */
+  public static String argumentText(String line) {
+    if (line == null) return "";
+    String rest = line.stripLeading();
+    if (rest.startsWith("/")) rest = rest.substring(1);
+    int space = rest.indexOf(' ');
+    return space < 0 ? "" : rest.substring(space + 1);
+  }
   private static ParsedCommand parseInternal(String line, boolean keepTrailing) {
     if (line == null) return new ParsedCommand("", List.of());
     String trimmed = keepTrailing ? line.stripLeading() : line.strip();

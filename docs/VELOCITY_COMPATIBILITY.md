@@ -238,7 +238,7 @@ become section codes (RGB as the nearest named colour), and clicks and hovers ar
 | API | Status | Verified by |
 |---|---|---|
 | `SimpleCommand`: execute, suggest, `hasPermission`, aliases, `alias()` of the invocation | Supported | VCT, Maintenance, velocity-hub |
-| `RawCommand`: the argument string arrives with runs of spaces collapsed | Partial | VCT |
+| `RawCommand`: execute, suggest and `hasPermission`; the argument string arrives exactly as typed, runs of spaces kept (`hasPermission` sees them collapsed) | Supported | VCT, `CommandForwardingTests` |
 | `BrigadierCommand`: parsed, permission-checked, executed and completed on the proxy with the Brigadier library, and syntax errors are shown to the player | Partial: clients are sent only the command's literal name, not its argument nodes, which is also true of Conduit's own commands; completion is not covered by a test | VCT (execute and syntax error) |
 | `metaBuilder`, `register`, `unregister`, `getCommandMeta`, `getAliases` (Velocity-registered aliases only), `hasCommand` (any proxy command, including Conduit's own and native plugins') | Supported | VCT |
 | Registering an alias the same plugin already holds replaces its command (mclo.gs registers each Brigadier subcommand under one meta); another plugin's alias throws | Supported | VCT (`/vre`, `reregister:true`), mclo.gs |

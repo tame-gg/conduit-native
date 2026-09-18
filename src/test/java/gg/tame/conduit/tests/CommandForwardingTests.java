@@ -89,6 +89,8 @@ public final class CommandForwardingTests {
               return invocation.source() instanceof Player player && player.getUsername().equals("Admin");
             }
           });
+          proxy.getCommandManager().register(proxy.getCommandManager().metaBuilder("vtext").plugin(this).build(),
+              (com.velocitypowered.api.command.RawCommand) invocation -> signal("vtext:[" + invocation.arguments() + "]"));
           signal("vsecret-ready");
         }
       }
@@ -119,6 +121,9 @@ public final class CommandForwardingTests {
         admin.send(chat("/vfwd"));
         require(lobby.await(packet -> id(packet) == CHAT_IN && chatText(packet).equals("/vsecret z")),
             "CommandResult.forwardToServer(command) sends the rewritten command to the backend");
+        // A RawCommand is owed its arguments as typed; the argument list collapsed runs of spaces.
+        guest.send(chat("/vtext  two   spaced words "));
+        VelocityCompatTests.awaitSignal("vtext:[ two   spaced words ]");
         guest.send(chat("vhi"));
         require(lobby.await(packet -> id(packet) == CHAT_IN && chatText(packet).equals("velocity hello")), "ChatResult.message rewrites chat");
         require(lobby.received(packet -> id(packet) == CHAT_IN && chatText(packet).equals("vhi")).isEmpty(), "and the typed line never goes");

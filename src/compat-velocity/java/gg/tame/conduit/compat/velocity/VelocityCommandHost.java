@@ -77,8 +77,23 @@ final class VelocityCommandHost implements CommandManager {
           forgetAlias(alias);
         }
         environment.conduit.commands().register(owner, gg.tame.conduit.api.command.CommandManager.Command.builder(alias)
-            .handler((source, arguments) -> run(registration, alias, source, arguments))
-            .completer((source, arguments) -> suggest(registration, alias, source, arguments))
+            .handler(new gg.tame.conduit.api.command.CommandManager.Handler() {
+              @Override public void execute(gg.tame.conduit.api.command.CommandSource source, List<String> arguments) {
+                run(registration, alias, source, arguments, String.join(" ", arguments));
+              }
+              // The text as typed: a RawCommand is owed its runs of spaces, which the list collapses.
+              @Override public void execute(gg.tame.conduit.api.command.CommandSource source, List<String> arguments, String text) {
+                run(registration, alias, source, arguments, text);
+              }
+            })
+            .completer(new gg.tame.conduit.api.command.CommandManager.Completer() {
+              @Override public List<String> complete(gg.tame.conduit.api.command.CommandSource source, List<String> arguments) {
+                return suggest(registration, alias, source, arguments, String.join(" ", arguments));
+              }
+              @Override public List<String> complete(gg.tame.conduit.api.command.CommandSource source, List<String> arguments, String text) {
+                return suggest(registration, alias, source, arguments, text);
+              }
+            })
             .requires((source, arguments) -> available(registration, alias, source, arguments))
             .build());
         byAlias.put(alias, registration);
@@ -174,12 +189,12 @@ final class VelocityCommandHost implements CommandManager {
     return environment.console;
   }
 
-  private void run(Registration registration, String alias, gg.tame.conduit.api.command.CommandSource conduitSource, List<String> arguments) {
+  private void run(Registration registration, String alias, gg.tame.conduit.api.command.CommandSource conduitSource, List<String> arguments, String text) {
     CommandSource source = velocitySource(conduitSource);
     Runnable body = () -> {
       try {
         String[] split = arguments.toArray(String[]::new);
-        String raw = String.join(" ", arguments);
+        String raw = text;
         switch (registration.command) {
           case SimpleCommand simple -> simple.execute(new SimpleInvocation(source, alias, split));
           case RawCommand rawCommand -> rawCommand.execute(new RawInvocation(source, alias, raw));
@@ -199,10 +214,10 @@ final class VelocityCommandHost implements CommandManager {
     else environment.work.execute(body);
   }
 
-  private List<String> suggest(Registration registration, String alias, gg.tame.conduit.api.command.CommandSource conduitSource, List<String> arguments) {
+  private List<String> suggest(Registration registration, String alias, gg.tame.conduit.api.command.CommandSource conduitSource, List<String> arguments, String text) {
     CommandSource source = velocitySource(conduitSource);
     String[] split = arguments.toArray(String[]::new);
-    String raw = String.join(" ", arguments);
+    String raw = text;
     CompletableFuture<List<String>> suggestions = CompletableFuture.supplyAsync(() -> {
       if (!permitted(registration, alias, source, split, raw)) return CompletableFuture.completedFuture(List.<String>of());
       return switch (registration.command) {

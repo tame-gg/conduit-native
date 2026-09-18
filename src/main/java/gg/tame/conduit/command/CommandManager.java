@@ -62,9 +62,19 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   public synchronized java.util.Set<String> displacedBuiltIns() { return java.util.Set.copyOf(displaced.keySet()); }
   @Override public void register(Plugin plugin, gg.tame.conduit.api.command.CommandManager.Command command) {
     var requirement = command.requirement();
-    register(plugin, new RegisteredCommand(command.name(), command.aliases(), command.permission(),
-        (source, arguments) -> command.handler().execute(external(source), arguments),
-        (source, arguments) -> command.completer().complete(external(source), arguments),
+    CommandExecutor executor = new CommandExecutor() {
+      @Override public void execute(CommandSource source, List<String> arguments) { command.handler().execute(external(source), arguments); }
+      @Override public void execute(CommandSource source, List<String> arguments, String text) {
+        command.handler().execute(external(source), arguments, text);
+      }
+    };
+    TabCompleter completer = new TabCompleter() {
+      @Override public List<String> complete(CommandSource source, List<String> arguments) { return command.completer().complete(external(source), arguments); }
+      @Override public List<String> complete(CommandSource source, List<String> arguments, String text) {
+        return command.completer().complete(external(source), arguments, text);
+      }
+    };
+    register(plugin, new RegisteredCommand(command.name(), command.aliases(), command.permission(), executor, completer,
         requirement == null ? null : (source, arguments) -> requirement.test(external(source), arguments)));
   }
   /** Removes a command by any of its names; returns it, or null when nothing matched. */
@@ -114,7 +124,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
       Messages.permission(source);
       return true;
     }
-    command.executor().execute(source, parsed.arguments());
+    command.executor().execute(source, parsed.arguments(), ParsedCommand.argumentText(line));
     return true;
   }
   /**
@@ -143,7 +153,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     if (command == null || command.completer() == null) return List.of();
     if (!permitted(source, command) || !there(source, command, parsed.arguments())) return List.of();
     String prefix = parsed.arguments().isEmpty() ? "" : parsed.arguments().getLast();
-    List<String> raw = command.completer().complete(source, parsed.arguments());
+    List<String> raw = command.completer().complete(source, parsed.arguments(), ParsedCommand.argumentText(line));
     if (prefix.isEmpty()) return raw;
     String needle = prefix.toLowerCase(Locale.ROOT);
     List<String> filtered = new ArrayList<>();

@@ -47,12 +47,20 @@ public interface CommandManager {
   @FunctionalInterface
   interface Handler {
     void execute(CommandSource source, List<String> arguments);
+    /**
+     * Called instead, with {@code text} what followed the command's name and one space exactly as
+     * typed: {@code arguments} collapses runs of spaces, which a command taking free text may need.
+     * Override this one then; by default it runs {@link #execute(CommandSource, List)}.
+     */
+    default void execute(CommandSource source, List<String> arguments, String text) { execute(source, arguments); }
   }
 
   /** Suggestions for the argument being typed, which is the last one and may be empty. Conduit filters by what was typed. */
   @FunctionalInterface
   interface Completer {
     List<String> complete(CommandSource source, List<String> arguments);
+    /** As {@link Handler#execute(CommandSource, List, String)}: {@code text} is the arguments exactly as typed. */
+    default List<String> complete(CommandSource source, List<String> arguments, String text) { return complete(source, arguments); }
   }
 
   /**
