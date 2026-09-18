@@ -98,6 +98,7 @@ public final class AllTests {
     ObservabilityTests.run();
     ShutdownTests.run();
     RoutingFailoverTests.run();
+    LifecycleRaceTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityLifecycleTests.run();

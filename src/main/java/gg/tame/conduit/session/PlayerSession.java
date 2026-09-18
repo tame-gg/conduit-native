@@ -212,6 +212,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return java.util.concurrent.CompletableFuture.completedFuture(new gg.tame.conduit.api.player.ConnectResult(
           gg.tame.conduit.api.player.ConnectResult.Status.ALREADY_CONNECTED, ""));
     }
+    if (closed) {
+      return java.util.concurrent.CompletableFuture.completedFuture(new gg.tame.conduit.api.player.ConnectResult(
+          gg.tame.conduit.api.player.ConnectResult.Status.FAILED, "the player has left"));
+    }
     var result = new java.util.concurrent.CompletableFuture<gg.tame.conduit.api.player.ConnectResult>();
     gg.tame.conduit.network.SocketThreads.start(() -> {
       try { result.complete(runSwitch(target)); }
@@ -1707,7 +1711,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (selector.knownDown(server.name())) throw new IOException(server.name() + " is unavailable");
     ensureCompatible(server);
     synchronized (lock) {
-      if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
+      // closed is set the moment the client's connection ends, before the lifecycle says so; a plugin
+      // moving a player from their disconnect event had a backend dialled and logged in to for nobody.
+      if (closed || lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
       if (!fallback && lifecycle.get() != SessionLifecycle.CONNECTED) throw new IOException("session busy");
       // Stay CONNECTED during prepare so the current backend keeps flowing packets.
     }
