@@ -325,21 +325,14 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       return selector.health() != null && selector.health().isDraining(server.name());
     }
     @Override public gg.tame.conduit.api.server.ServerStatus status() { return selector.status(server.name()); }
-    /** A socket thread of its own: the probe blocks for up to the health timeout. The cache is left alone. */
     @Override public CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping() {
-      var result = new CompletableFuture<gg.tame.conduit.api.server.ServerStatus>();
-      gg.tame.conduit.network.SocketThreads.start(() -> {
-        try {
-          result.complete(gg.tame.conduit.protocol.BackendStatusProbe.probe(server.address(), runtime.configuration().health().timeoutMs())
-              .map(ad -> gg.tame.conduit.api.server.ServerStatus.online(server.name(), ad.protocol(), ad.name(),
-                  ad.onlinePlayers(), ad.maxPlayers(), ad.latencyMillis(), java.time.Instant.now()))
-              .orElseGet(() -> gg.tame.conduit.api.server.ServerStatus.offline(server.name(), java.time.Instant.now())));
-        } catch (RuntimeException | Error failure) {
-          result.complete(gg.tame.conduit.api.server.ServerStatus.offline(server.name(), java.time.Instant.now()));
-          throw failure;
-        }
-      });
-      return result;
+      return ping(gg.tame.conduit.protocol.BackendStatusProbe.ANY_PROTOCOL, null, null);
+    }
+    /** On the probe's bounded pool of socket threads. The cache is left alone. */
+    @Override public CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping(int protocol, String virtualHost, java.time.Duration timeout) {
+      int millis = timeout == null || timeout.isZero() || timeout.isNegative()
+          ? runtime.configuration().health().timeoutMs() : (int) Math.min(Integer.MAX_VALUE, timeout.toMillis());
+      return gg.tame.conduit.protocol.BackendStatusProbe.ping(server.name(), server.address(), virtualHost, protocol, millis);
     }
     @Override public CompletableFuture<Boolean> connect(Player player) { return player.connect(this); }
     BackendServer backend() { return server; }

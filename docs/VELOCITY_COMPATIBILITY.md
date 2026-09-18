@@ -8,7 +8,9 @@ and names the test or real plugin that verifies it. If a feature is not listed, 
 Where these marks come from: **VCT** is `VelocityCompatTests`, which compiles purpose-built plugins
 against the real velocity-api (its annotation processor writes their `velocity-plugin.json`), loads
 them from jars into a real `MinecraftProxy`, and drives them with a scripted 1.8 client and two
-scripted backends. **P9** is `Phase9Tests`. The **real plugins** are listed at the end.
+scripted backends. **P9** is `Phase9Tests`. **BPT** is `BackendPingTests`, which pings scripted
+backends through the native API and through a compiled Velocity plugin. The **real plugins** are
+listed at the end.
 
 The adapter is a clean-room implementation. It was written from velocity-api's public interfaces,
 its Javadoc, the public documentation and observable behaviour. No code from Velocity's proxy,
@@ -128,8 +130,8 @@ logger named after the class it is injected into, not the plugin's Conduit logge
 | `getCurrentServer`, and on `ServerConnection`: `getServer`, `getServerInfo`, `getPlayer`, `getPreviousServer` (from the last switch) | Supported | VCT |
 | `sendPluginMessage` to the client (`Player`), or to the backend (`ServerConnection`, and `RegisteredServer` through a player connected to it); byte-array and encoder forms | Supported | VCT |
 | `RegisteredServer`: `getServerInfo`, `getPlayersConnected`, `sendMessage` | Supported | VCT |
-| `RegisteredServer.ping()`: Conduit asks the backend for its status now. The `ServerPing` has its version and player counts; its description is empty and it has no favicon or player sample, because Conduit's probe does not keep them. A backend that does not answer fails the future. Callbacks run on the adapter's threads. | Partial | VCT (`backend-ping`, `dead-ping`) |
-| `RegisteredServer.ping(PingOptions)`: `PingOptions.DEFAULT` only; any other options throw | Partial | |
+| `RegisteredServer.ping()`: Conduit asks the backend for its status now. The `ServerPing` has the backend's version name and protocol, online and maximum counts, player sample, description and favicon; `getModinfo()` is empty, as Conduit does not read a backend's mod list. The description keeps what Conduit Text carries, so colours outside the sixteen named ones, fonts and translation arguments are dropped. The handshake announces protocol `-1` (no client version, so the backend answers with its own) and the host of the server's configured address; `[health] timeout-ms` bounds the whole ping. A backend that cannot be reached, does not answer in time, or sends something that is not a status answer (malformed or oversized JSON, a connection closed mid-answer) fails the future with an `IOException`. Pings run on a bounded pool of socket threads, 32 at once; up to 1024 more wait their turn inside their own timeout, and beyond that a ping fails at once. Callbacks run on the adapter's threads. | Partial | VCT (`backend-ping`, `dead-ping`), BPT |
+| `RegisteredServer.ping(PingOptions)`: the answer is as for `ping()`, and every option is honoured: the protocol version is announced in the handshake (`UNKNOWN` announces `-1`), the virtual host is the host the handshake names (none: the configured address's host), and a timeout replaces `[health] timeout-ms` (zero: that default) | Supported | BPT |
 | Titles, action bar, boss bars, sounds, books, dialogs, signed-message chat, resource packs, tab list and its header/footer, cookies, transfer, server links, custom chat completions, `spoofChatInput`, `getClientBrand`, `getModInfo`, `getIdentifiedKey`, `getHandshakeIntent`, game profile properties | Unsupported: every one throws `UnsupportedOperationException` naming the API, including Adventure methods that are silent no-ops by default | VCT (`sendActionBar`) |
 
 ## Permissions

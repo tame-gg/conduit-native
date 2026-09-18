@@ -114,7 +114,8 @@ public final class TextCodec {
     return tree == null ? Text.of(json) : fromTree(tree);
   }
 
-  private static Text fromTree(Object node) {
+  /** {@link #fromJson} for a component already parsed by {@link ComponentCodec#parseJson}. */
+  public static Text fromTree(Object node) {
     if (node instanceof List<?> list) {
       // A bare array is its first element with the rest appended, which is how the client reads it.
       if (list.isEmpty()) return Text.empty();

@@ -630,7 +630,9 @@ failing is logged in full once, then only counted, at its 2nd, 4th, 8th... failu
 plugin's threads end once any task still running returns, and proxy shutdown interrupts any that has not.
 
 `proxy().serverListDefaults()` is the configured `[status]` answer, and `RegisteredServer.ping()` asks a
-backend for its status now instead of reading the cached `status()`.
+backend for its status now instead of reading the cached `status()`: version, counts and player sample,
+description and favicon. It never blocks the caller, and a backend that does not answer gives an offline
+status rather than a failed future.
 
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins

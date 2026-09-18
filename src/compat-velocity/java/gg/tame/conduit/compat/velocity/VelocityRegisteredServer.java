@@ -8,7 +8,9 @@ import com.velocitypowered.api.proxy.server.PingOptions;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
 import com.velocitypowered.api.proxy.server.ServerPing;
+import com.velocitypowered.api.util.Favicon;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -34,22 +36,25 @@ final class VelocityRegisteredServer implements RegisteredServer, Unsupported.Ch
     for (var player : server.players()) players.add(environment.player(player));
     return List.copyOf(players);
   }
+  @Override public CompletableFuture<ServerPing> ping() { return ping(PingOptions.DEFAULT); }
   /**
-   * Conduit's own status probe of the backend: its version and player counts. The probe does not
-   * keep the backend's MOTD, icon or player sample, so the description is empty and there is none.
-   * A backend that does not answer fails the future, and callbacks run on the adapter's threads.
+   * The backend's own status answer: version, players with their sample, description (as Conduit
+   * Text carries it) and favicon; never mod info. Every option is honoured: an unknown version or no
+   * virtual host leaves the native defaults, and a zero timeout is Conduit's health-check timeout. A
+   * backend that does not answer fails the future, and callbacks run on the adapter's threads.
    */
-  @Override public CompletableFuture<ServerPing> ping() {
-    return server.ping().thenApplyAsync(status -> {
-      if (!status.online()) throw new CompletionException(new IOException("server " + info.getName() + " did not answer the ping"));
-      return new ServerPing(new ServerPing.Version(status.protocol().orElse(-1), status.versionName()),
-          new ServerPing.Players(status.onlinePlayers().orElse(0), status.maxPlayers().orElse(0), List.of()), Component.empty(), null);
-    }, environment.work);
-  }
-  /** Conduit's probe takes no options: only the defaults can be honoured. */
   @Override public CompletableFuture<ServerPing> ping(PingOptions options) {
-    if (!PingOptions.DEFAULT.equals(options)) throw Unsupported.api("RegisteredServer.ping(PingOptions) with options other than the defaults");
-    return ping();
+    Duration timeout = options.getTimeout() > 0 ? Duration.ofMillis(options.getTimeout()) : null;
+    return server.ping(options.getProtocolVersion().getProtocol(), options.getVirtualHost(), timeout).thenApplyAsync(status -> {
+      if (!status.online()) throw new CompletionException(new IOException("server " + info.getName() + " did not answer the ping"));
+      boolean counted = status.onlinePlayers().isPresent() || status.maxPlayers().isPresent();
+      List<ServerPing.SamplePlayer> sample = status.samplePlayers().stream()
+          .map(player -> new ServerPing.SamplePlayer(player.name(), player.uniqueId())).toList();
+      return new ServerPing(new ServerPing.Version(status.protocol().orElse(-1), status.versionName()),
+          counted ? new ServerPing.Players(status.onlinePlayers().orElse(0), status.maxPlayers().orElse(0), sample) : null,
+          // The four-argument constructor would claim an empty FML mod list the backend never sent.
+          Texts.toAdventure(status.description()), status.favicon().map(Favicon::new).orElse(null), null);
+    }, environment.work);
   }
   /** Through a player on the server, as there is no other connection to it; false with nobody there. */
   @Override public boolean sendPluginMessage(ChannelIdentifier identifier, byte[] data) {
