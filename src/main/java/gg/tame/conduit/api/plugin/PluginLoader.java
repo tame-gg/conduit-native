@@ -34,6 +34,12 @@ public interface PluginLoader {
   Loaded load(Path jar) throws Exception;
 
   /**
+   * Called once when the proxy stops, after every plugin has been disabled: the loader lets go of
+   * whatever it holds itself, such as the threads its plugins' code ran on. Does nothing by default.
+   */
+  default void close() { }
+
+  /**
    * One plugin read from a jar.
    *
    * <p>{@code resources} is closed exactly once: after the plugin's {@code onDisable}, or as soon as

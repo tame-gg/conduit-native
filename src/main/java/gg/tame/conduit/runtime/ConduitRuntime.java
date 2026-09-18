@@ -264,6 +264,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     if (!closed.compareAndSet(false, true)) return;
     if (started.get()) events.fire(new gg.tame.conduit.api.event.proxy.ProxyShutdownEvent(this));
     plugins.disableAll();
+    plugins.closeLoaders();
     health.close();
     scheduler.close();
     if (metricsEndpoint != null) metricsEndpoint.close();

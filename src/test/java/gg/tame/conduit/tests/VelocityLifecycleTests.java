@@ -28,7 +28,9 @@ public final class VelocityLifecycleTests {
   public static void main(String[] arguments) throws Exception { run(); }
 
   public static void run() throws Exception {
+    long before = adapterThreads();
     aDisabledPluginsChannelsGoWithIt();
+    theAdaptersThreadsEndWithTheProxy(before);
     System.out.println("VelocityLifecycleTests OK");
   }
 
@@ -117,6 +119,21 @@ public final class VelocityLifecycleTests {
     } finally {
       proxy.close();
     }
+  }
+
+  /**
+   * The adapter runs plugin code on a pool of its own, which nothing shut down: its idle threads
+   * outlived the proxy by a minute, and a handler still running kept its thread for good. The test
+   * above ran Velocity handlers on it and closed its proxy; none of that proxy's threads may be left.
+   */
+  private static void theAdaptersThreadsEndWithTheProxy(long before) throws InterruptedException {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5);
+    while (adapterThreads() > before && System.nanoTime() < deadline) Thread.sleep(20);
+    require(adapterThreads() <= before, "the adapter's threads ended with the proxy: " + adapterThreads() + " left, " + before + " before");
+  }
+
+  private static long adapterThreads() {
+    return Thread.getAllStackTraces().keySet().stream().filter(thread -> thread.getName().startsWith("conduit-velocity-")).count();
   }
 
   @SuppressWarnings("unchecked")

@@ -48,7 +48,8 @@ command bodies, tab completions, scheduled task bodies and a plugin's permission
 Conduit itself checks a permission) all run on the adapter's own pool of daemon platform threads.
 When a connection thread needs a plugin's answer (deny this login? redirect this connect? may this
 player run /server?), it waits at most 10 seconds and then continues with the event as the plugin
-left it, or with the permission denied, logging a warning.
+left it, or with the permission denied, logging a warning. The pool ends when the proxy stops, once every plugin
+has been disabled (VLT).
 
 **Class path.** The proxy class path supplies what velocity-api's POM declares and plugins expect
 the proxy to provide:

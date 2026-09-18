@@ -28,6 +28,11 @@ final class VelocityPluginLoader implements PluginLoader {
   VelocityPluginLoader(VelocityEnvironment environment) { this.environment = environment; }
 
   @Override public String format() { return "velocity"; }
+  /**
+   * The adapter's pool outlived the proxy: its idle threads lingered for a minute after shutdown,
+   * and a handler still running kept its thread for good. Every plugin is disabled by now.
+   */
+  @Override public void close() { environment.work.shutdownNow(); }
   @Override public boolean accepts(JarFile jar) { return jar.getEntry(METADATA) != null; }
 
   @Override public Loaded load(Path jar) throws Exception {

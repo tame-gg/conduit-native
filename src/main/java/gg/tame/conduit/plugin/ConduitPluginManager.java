@@ -255,6 +255,12 @@ public final class ConduitPluginManager implements PluginManager {
     List<Plugin> enabled = new ArrayList<>(plugins());
     for (Plugin plugin : enabled.reversed()) disable(plugin);
   }
+  /** Proxy shutdown, once every plugin is disabled: each format's loader lets go of what it holds. */
+  public void closeLoaders() {
+    for (PluginLoader loader : loaders) {
+      try { loader.close(); } catch (RuntimeException | LinkageError failed) { ConduitLog.error("plugin loader " + loader.format() + " failed to close", failed); }
+    }
+  }
   private static void close(AutoCloseable resources) {
     try { resources.close(); } catch (Exception exception) { ConduitLog.warn("could not release plugin resources: " + exception); }
   }
