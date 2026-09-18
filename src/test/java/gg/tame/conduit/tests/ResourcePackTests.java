@@ -56,6 +56,7 @@ public final class ResourcePackTests {
     eachEraIsReadBack();
     theGateHoldsOffersUntilTheClientHasAWorld();
     answersAreSortedByWhosePackItIs();
+    aServerCannotGrowTheRecordWithoutEnd();
     aScriptedClientAnswersAcrossASwitch();
     aModernClientAnswersWhileReconfiguring();
     aVelocityPluginOffersPacksAndHearsTheAnswers();
@@ -169,6 +170,41 @@ public final class ResourcePackTests {
     ClientResourcePacks old = new ClientResourcePacks(null, ProtocolDefinition.forVersion(340), written::add, event -> { });
     require(!old.remove(PACK.id()) && !old.clear(), "before 1.20.3 a client cannot be told to drop a pack");
     require(!new ClientResourcePacks(null, ProtocolDefinition.forVersion(5), written::add, event -> { }).offer(PACK), "1.7 cannot be offered one");
+  }
+
+  /**
+   * A server's offers are followed on their way to the client, and each one it had not finished
+   * answering was kept: a server offering pack after pack to a client that never answered -- a new
+   * UUID or URL each time, or the same pack again and again -- grew the proxy's record of that one
+   * player without end. The record is bounded, and what is past the bound still reaches the client.
+   */
+  private static void aServerCannotGrowTheRecordWithoutEnd() throws Exception {
+    for (int version : new int[] {765, 340}) {
+      ProtocolDefinition definition = ProtocolDefinition.forVersion(version);
+      List<byte[]> written = new CopyOnWriteArrayList<>();
+      ClientResourcePacks packs = new ClientResourcePacks(null, definition, written::add, event -> { });
+      byte[] joinGame = bytes(definition.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN), out -> out.writeInt(1));
+      packs.afterWrite(ConnectionState.PLAY, joinGame);
+      ResourcePack same = new ResourcePack(new UUID(8, 8), URL, HASH, false, Text.empty());
+      for (int i = 0; i < 10_000; i++) {
+        ResourcePack distinct = new ResourcePack(new UUID(7, i), URL + "?" + i, "", false, Text.empty());
+        packs.beforeWrite(ConnectionState.PLAY, ResourcePackPackets.offer(definition, distinct).orElseThrow());
+        packs.beforeWrite(ConnectionState.PLAY, ResourcePackPackets.offer(definition, same).orElseThrow());
+      }
+      require(packs.offered().size() <= 64, version + ": " + packs.offered().size() + " of a server's offers are kept");
+      var unanswered = ClientResourcePacks.class.getDeclaredField("unanswered");
+      unanswered.setAccessible(true);
+      int waiting = ((java.util.Collection<?>) unanswered.get(packs)).size();
+      require(waiting <= 64, version + ": " + waiting + " offers are waiting for an answer");
+      // The proxy's own pack is still offered, and its answer still found, past all of that.
+      require(packs.offer(PACK) && Arrays.equals(written.getLast(), ResourcePackPackets.offer(definition, PACK).orElseThrow()), version + ": the proxy's pack goes out");
+    }
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    ClientResourcePacks packs = new ClientResourcePacks(null, v765, packet -> { }, event -> { });
+    for (int i = 0; i < 10_000; i++) {
+      packs.beforeWrite(ConnectionState.PLAY, ResourcePackPackets.offer(v765, new ResourcePack(new UUID(7, i), URL, "", false, Text.empty())).orElseThrow());
+    }
+    require(!packs.fromClient(ConnectionState.PLAY, status765(new UUID(7, 9_999), 3)), "an answer about a pack past the bound goes on to its server");
   }
 
   private static void answersAreSortedByWhosePackItIs() throws Exception {

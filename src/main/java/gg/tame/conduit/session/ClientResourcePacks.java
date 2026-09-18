@@ -37,6 +37,12 @@ import java.util.function.Consumer;
  * them, and the proxy neither removes nor re-sends those.
  */
 public final class ClientResourcePacks {
+  /**
+   * The most of a server's offers followed, and of offers waiting for an answer before 1.20.3. A server
+   * offering pack after pack to a client that never answered grew both without end; past this its
+   * offers still reach the client, and their answers its server, unseen by plugins.
+   */
+  private static final int MAX_FOLLOWED = 64;
   private final Player player;
   private final ProtocolDefinition protocol;
   private final ClientDisplay.Output output;
@@ -150,8 +156,8 @@ public final class ClientResourcePacks {
     switch (relayed) {
       case ResourcePackPackets.Offer offer -> {
         offers.remove(offer.id());
-        offer.pack().ifPresent(pack -> offers.put(offer.id(), new Offer(pack, true, true)));
-        if (!offer.named()) unanswered.addLast(offer.id());
+        if (offers.size() < MAX_FOLLOWED) offer.pack().ifPresent(pack -> offers.put(offer.id(), new Offer(pack, true, true)));
+        if (!offer.named()) awaitAnswer(offer.id());
       }
       case ResourcePackPackets.Removal removal -> {
         if (removal.id().isPresent()) offers.remove(removal.id().get());
@@ -223,10 +229,16 @@ public final class ClientResourcePacks {
       if (packet.isEmpty()) return;
       output.write(packet.get());
       offer.written = true;
-      if (!named) unanswered.addLast(offer.pack.id());
+      if (!named) awaitAnswer(offer.pack.id());
     } catch (IOException gone) {
       // The client is going away; the session notices that on its own.
     }
+  }
+
+  /** Called holding lock. The oldest goes first: a client this far behind has left it unanswered for good. */
+  private void awaitAnswer(UUID id) {
+    if (unanswered.size() == MAX_FOLLOWED) unanswered.removeFirst();
+    unanswered.addLast(id);
   }
 
   /** Called holding lock: drops the pack {@code id}, or every pack when null. */
