@@ -13,7 +13,8 @@ Conduit is free software, licensed under the GNU General Public License version 
 option) any later version (`GPL-3.0-or-later`). See `LICENSE`. Third-party components keep their
 own licenses; they are listed in `THIRD-PARTY-NOTICES`. `docs/LICENSING_VIA.md` explains how Conduit
 uses the GPL ViaVersion projects and what a binary distribution has to carry. `gradle distZip`
-builds one that includes its Corresponding Source.
+builds one that includes its Corresponding Source. Each Java source file names its license with an
+`SPDX-License-Identifier` line.
 
 ## Build and test
 

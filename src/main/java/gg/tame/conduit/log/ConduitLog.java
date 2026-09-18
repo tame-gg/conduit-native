@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.log;
 
 /** Structured levels. TRACE stays opt-in via -Dconduit.trace=true. */

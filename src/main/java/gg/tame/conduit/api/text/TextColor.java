@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.api.text;
 
 /** Named Minecraft text colors for Conduit components. */

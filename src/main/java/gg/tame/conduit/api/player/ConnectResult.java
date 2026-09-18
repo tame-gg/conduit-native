@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.api.player;
 
 /** How a {@link Player#connectWithResult} ended. {@code reason} is empty unless the status is a failure. */

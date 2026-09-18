@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.event;
 
 import gg.tame.conduit.api.event.Event;

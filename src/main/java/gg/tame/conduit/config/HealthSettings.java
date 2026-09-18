@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.config;
 
 /** Periodic backend health probe settings with hysteresis thresholds. */

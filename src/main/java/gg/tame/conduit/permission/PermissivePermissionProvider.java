@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.permission;
 
 import gg.tame.conduit.api.permission.PermissionProvider;

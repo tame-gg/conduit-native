@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.command;
 
 /** The operator at the proxy's own terminal: every permission, no backend, output to stdout. */

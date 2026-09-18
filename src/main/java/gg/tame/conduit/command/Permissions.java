@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.command;
 
 /** Permission nodes for native commands. Default provider may grant all of them. */

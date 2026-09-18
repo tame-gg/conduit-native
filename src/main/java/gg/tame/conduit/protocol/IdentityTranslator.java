@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.protocol;
 
 /** Pass-through translator for DIRECT same-version sessions. */

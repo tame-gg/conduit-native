@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.command;
 
 /** The API's command source plus the backend it is on, which the built-in commands need. */
