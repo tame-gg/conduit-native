@@ -131,6 +131,7 @@ public final class AllTests {
     ApiBoundaryTests.run();
     ConfigurationEventsTests.run();
     LoginPluginMessageTests.run();
+    ServerResourcePackTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

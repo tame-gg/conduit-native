@@ -45,7 +45,7 @@ final class VelocityResourcePackInfo implements ResourcePackInfo {
   @Override public boolean getShouldForce() { return pack.required(); }
   @Override public byte[] getHash() { return pack.hash().isEmpty() ? null : HexFormat.of().parseHex(pack.hash()); }
   @Override public Origin getOrigin() { return origin; }
-  /** Conduit neither rewrites nor re-sends a server's pack, so a pack's origin never changes. */
+  /** The origin is where a pack's answers go, which a plugin putting another pack in place of a server's does not change. */
   @Override public Origin getOriginalOrigin() { return origin; }
   @Override public ResourcePackInfo.Builder asBuilder() { return new Builder(pack.url()).from(this); }
   @Override public ResourcePackInfo.Builder asBuilder(String url) { return new Builder(url).from(this); }

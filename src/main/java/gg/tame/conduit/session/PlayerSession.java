@@ -185,7 +185,33 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         : new SwitchPacketQueue(1);
     runtime.modded().remember(address, this.clientProtocol, this.modClassifier);
     this.display = new ClientDisplay(this, protocol, this::writeClient);
-    this.resourcePacks = new ClientResourcePacks(this, protocol, this::writeClient, event -> runtime.events().fire(event));
+    this.resourcePacks = new ClientResourcePacks(this, protocol, this::writeClient, event -> runtime.events().fire(event), new ServerPacks());
+  }
+  /** Plugins' say over the packs the server the player is on, or is moving to, sends them. */
+  private final class ServerPacks implements ClientResourcePacks.Server {
+    private BackendConnection from() { return switchingTarget != null ? switchingTarget : backend; }
+    private gg.tame.conduit.api.server.RegisteredServer server() {
+      BackendConnection from = from();
+      return from == null ? null : runtime.registered(from.server().name()).orElse(null);
+    }
+    @Override public gg.tame.conduit.api.player.ResourcePack offered(gg.tame.conduit.api.player.ResourcePack pack) {
+      var server = server();
+      if (server == null) return pack;
+      var event = runtime.events().fire(new gg.tame.conduit.api.event.player.ServerResourcePackOfferEvent(PlayerSession.this, server, pack));
+      return event.cancelled() ? null : event.pack();
+    }
+    @Override public boolean removed(java.util.Optional<java.util.UUID> id) {
+      var server = server();
+      return server == null || !runtime.events().fire(new gg.tame.conduit.api.event.player.ServerResourcePackRemoveEvent(PlayerSession.this, server, id)).cancelled();
+    }
+    /** As the client's own packet goes to its server, through whatever translates the pair. */
+    @Override public void answer(byte[] answer) throws IOException {
+      BackendConnection target = from();
+      if (target == null) return;
+      byte[] outbound = towardBackend(clientState.state(), answer);
+      if (outbound != null) target.writeUncompressed(outbound);
+      flushTranslatorExtras(target);
+    }
   }
   public ModLoaderFamily modLoaderFamily() { return modClassifier.family(); }
   public HandshakeClassifier modClassifier() { return modClassifier; }
@@ -2512,8 +2538,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     gg.tame.conduit.protocol.ClientboundDump.record(outbound);
     keepAlive.written(clientState.state(), outbound);
     ConnectionState writtenIn = clientState.state();
+    // A server's resource pack may be kept from the client, or another put in its place.
+    outbound = resourcePacks.beforeWrite(writtenIn, outbound);
+    if (outbound == null) return;
     display.beforeWrite(writtenIn, outbound);
-    resourcePacks.beforeWrite(writtenIn, outbound);
     if (flush) client.write(outbound);
     else {
       client.writeUnflushed(outbound);

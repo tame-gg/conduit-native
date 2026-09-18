@@ -760,7 +760,7 @@ A `Player` can be offered resource packs of the proxy's own (`sendResourcePack`,
 `removeResourcePack` and `clearResourcePacks`), in the client's protocol: Resource Pack Send through
 1.20.2, Push and Pop by UUID from 1.20.3. The client's answers arrive as
 `PlayerResourcePackStatusEvent`, for the proxy's packs and for the ones its server offers; answers
-about the proxy's packs never reach the server, and a server's packs pass through untouched.
+about the proxy's packs never reach the server. A server's offer goes past `ServerResourcePackOfferEvent` first (cancel it and the server is told the client declined; `setPack` offers the client another, whose answers reach the server as about its own), and its removal past `ServerResourcePackRemoveEvent`.
 `resourcePacks()` lists what the client was offered and still has or is deciding on; a loaded pack
 offered again unchanged counts as loaded while the client answers again.
 
@@ -788,7 +788,7 @@ This is not full Velocity compatibility. Titles, the action bar, boss bars, the 
 footer, a player's tab-list entries and sounds work through the adapter (only the proxy's own entries: the
 backend's are not tracked), for a player or for everyone on the proxy or a server, and so do
 resource packs a plugin offers. Plugins built around the
-backend's tab list or scoreboard teams, rewriting a backend's resource packs, voice chat, Bedrock
+backend's tab list or scoreboard teams, voice chat, Bedrock
 players, packet injection or Velocity's own network pipeline (ViaVersion and its relatives) are not
 expected to work.
 

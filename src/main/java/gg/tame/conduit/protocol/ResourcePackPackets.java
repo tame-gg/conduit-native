@@ -159,6 +159,37 @@ public final class ResourcePackPackets {
     }
   }
 
+  /**
+   * An answer in the client's own protocol and {@code state}, as Conduit gives one to a server on the
+   * client's behalf: about the pack {@code id} from 1.20.3, carrying {@code hash} on 1.8. Empty when
+   * the release has no such packet in that state.
+   */
+  public static Optional<byte[]> status(ProtocolDefinition protocol, ConnectionState state, UUID id, String hash,
+                                        ResourcePack.Status status) throws IOException {
+    PacketKind kind = kind(state, PacketKind.PLAY_RESOURCE_PACK_STATUS, PacketKind.CONFIGURATION_RESOURCE_PACK_STATUS);
+    if (kind == null || !protocol.defines(state, PacketDirection.CLIENT_TO_SERVER, kind)) return Optional.empty();
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, protocol.id(state, PacketDirection.CLIENT_TO_SERVER, kind));
+      if (named(protocol)) uuid(output, id);
+      if (ProtocolEras.resourcePackStatusHash(protocol.version().number())) MinecraftOutput.string(output, hash);
+      MinecraftOutput.varInt(output, wire(status));
+    }
+    return Optional.of(bytes.toByteArray());
+  }
+  private static int wire(ResourcePack.Status status) {
+    return switch (status) {
+      case LOADED -> 0;
+      case DECLINED -> 1;
+      case FAILED_DOWNLOAD -> 2;
+      case ACCEPTED -> 3;
+      case DOWNLOADED -> 4;
+      case INVALID_URL -> 5;
+      case FAILED_RELOAD -> 6;
+      case DISCARDED -> 7;
+    };
+  }
+
   /** The wire's results, 0-3 since 1.8 and 4-7 from 1.20.3. */
   private static Optional<ResourcePack.Status> status(int result) {
     return Optional.ofNullable(switch (result) {

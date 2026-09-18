@@ -14,6 +14,8 @@ import com.velocitypowered.api.event.player.PlayerSettingsChangedEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
+import com.velocitypowered.api.event.player.ServerResourcePackRemoveEvent;
+import com.velocitypowered.api.event.player.ServerResourcePackSendEvent;
 import com.velocitypowered.api.event.player.TabCompleteEvent;
 import com.velocitypowered.api.event.player.configuration.PlayerConfigurationEvent;
 import com.velocitypowered.api.event.player.configuration.PlayerEnterConfigurationEvent;
@@ -33,6 +35,7 @@ import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.InboundConnection;
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
+import com.velocitypowered.api.proxy.player.ResourcePackInfo;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import com.velocitypowered.api.util.Favicon;
@@ -435,5 +438,26 @@ final class VelocityEventBridge {
         : com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent.Status.valueOf(event.status().name());
     environment.events.fire(new com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent(player, event.pack().id(), status,
         VelocityResourcePackInfo.of(event.pack(), event.fromServer())));
+  }
+
+  /** A server's pack: denied, the client never sees it; another provided, the client gets that one instead. */
+  @Subscribe public void onServerResourcePack(gg.tame.conduit.api.event.player.ServerResourcePackOfferEvent event) {
+    if (!listening(ServerResourcePackSendEvent.class)) return;
+    VelocityPlayer player = environment.player(event.player());
+    ResourcePackInfo received = VelocityResourcePackInfo.of(event.offered(), true);
+    ServerResourcePackSendEvent send = environment.fireAndWait(new ServerResourcePackSendEvent(received,
+        new VelocityServerConnection(environment.server(event.server()), player, player.previousServer)));
+    if (!send.getResult().isAllowed()) event.setCancelled(true);
+    else if (send.getProvidedResourcePack() != null && send.getProvidedResourcePack() != received) {
+      event.setPack(VelocityResourcePackInfo.toConduit(send.getProvidedResourcePack()));
+    }
+  }
+  /** A server takes a pack, or every pack, away; denied, the client keeps them. */
+  @Subscribe public void onServerResourcePackRemove(gg.tame.conduit.api.event.player.ServerResourcePackRemoveEvent event) {
+    if (!listening(ServerResourcePackRemoveEvent.class)) return;
+    VelocityPlayer player = environment.player(event.player());
+    ServerResourcePackRemoveEvent remove = environment.fireAndWait(new ServerResourcePackRemoveEvent(event.id().orElse(null),
+        new VelocityServerConnection(environment.server(event.server()), player, player.previousServer)));
+    if (!remove.getResult().isAllowed()) event.setCancelled(true);
   }
 }

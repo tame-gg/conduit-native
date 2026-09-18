@@ -68,7 +68,9 @@ final class VelocityEventBus implements EventManager {
       com.velocitypowered.api.event.player.configuration.PlayerConfigurationEvent.class,
       com.velocitypowered.api.event.player.configuration.PlayerFinishConfigurationEvent.class,
       com.velocitypowered.api.event.player.configuration.PlayerFinishedConfigurationEvent.class,
-      com.velocitypowered.api.event.player.ServerLoginPluginMessageEvent.class);
+      com.velocitypowered.api.event.player.ServerLoginPluginMessageEvent.class,
+      com.velocitypowered.api.event.player.ServerResourcePackSendEvent.class,
+      com.velocitypowered.api.event.player.ServerResourcePackRemoveEvent.class);
 
   private final VelocityEnvironment environment;
   private final CopyOnWriteArrayList<Handler> handlers = new CopyOnWriteArrayList<>();

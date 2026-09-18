@@ -396,7 +396,7 @@ public final class ResourcePackTests {
     }
   }
 
-  private static byte[] status18(String hash, int result) throws IOException {
+  static byte[] status18(String hash, int result) throws IOException {
     return bytes(0x19, out -> { MinecraftOutput.string(out, hash); MinecraftOutput.varInt(out, result); });
   }
 

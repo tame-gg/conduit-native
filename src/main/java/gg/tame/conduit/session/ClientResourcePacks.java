@@ -20,9 +20,11 @@ import java.util.function.Consumer;
 
 /**
  * The resource packs one client is offered through the proxy: the proxy's own, which it writes in the
- * client's protocol past any translator, and the ones its server offers, which pass untouched and are
- * only followed. The client's answers about the proxy's packs end here; its answers about a server's
- * packs go on to that server, which is waiting for them and never hears about the proxy's.
+ * client's protocol past any translator, and the ones its server offers, which pass as they came unless
+ * plugins keep one from the client or put another in its place ({@link Server}). The client's answers
+ * about the proxy's packs end here; its answers about a server's packs go on to that server, which is
+ * waiting for them and never hears about the proxy's, and hears about its own pack when the client got
+ * another in its place.
  *
  * <p>A 1.20.3+ client names the pack each answer is about. An older one does not, and answers one
  * offer after another, so every offer it is written, whoever made it, joins a queue in order and its
@@ -42,7 +44,8 @@ public final class ClientResourcePacks {
   /**
    * The most of a server's offers followed, and of offers waiting for an answer before 1.20.3. A server
    * offering pack after pack to a client that never answered grew both without end; past this its
-   * offers still reach the client, and their answers its server, unseen by plugins.
+   * offers still reach the client, and their answers its server as the client wrote them, unseen by
+   * plugins.
    */
   private static final int MAX_FOLLOWED = 64;
   private final Player player;
@@ -66,19 +69,39 @@ public final class ClientResourcePacks {
   private static final class Offer {
     final ResourcePack pack;
     final boolean fromServer;
+    /** The server's own pack when a plugin put {@link #pack} in its place; the server hears about this one. */
+    final ResourcePack original;
     boolean written;
     boolean loaded;
-    Offer(ResourcePack pack, boolean fromServer, boolean written) {
-      this.pack = pack; this.fromServer = fromServer; this.written = written;
+    Offer(ResourcePack pack, boolean fromServer, boolean written) { this(pack, fromServer, written, null); }
+    Offer(ResourcePack pack, boolean fromServer, boolean written, ResourcePack original) {
+      this.pack = pack; this.fromServer = fromServer; this.written = written; this.original = original;
     }
   }
 
+  /** The session's side of a server's packs: plugins' say over them, and the way back to the server. */
+  public interface Server {
+    /** A server offers {@code pack}: what the client is offered instead, or null for nothing at all. */
+    ResourcePack offered(ResourcePack pack);
+    /** A server removes the pack {@code id}, or every pack when empty: whether the client is told. */
+    boolean removed(Optional<UUID> id);
+    /** Writes {@code answer}, a client's packet in the client's protocol, to the server it is about. */
+    void answer(byte[] answer) throws IOException;
+  }
+  private final Server server;
+
   public ClientResourcePacks(Player player, ProtocolDefinition protocol, ClientDisplay.Output output,
                              Consumer<PlayerResourcePackStatusEvent> statuses) {
+    this(player, protocol, output, statuses, null);
+  }
+  /** With {@code server} null, a server's packs pass as they came. */
+  public ClientResourcePacks(Player player, ProtocolDefinition protocol, ClientDisplay.Output output,
+                             Consumer<PlayerResourcePackStatusEvent> statuses, Server server) {
     this.player = player;
     this.protocol = protocol;
     this.output = output;
     this.statuses = statuses;
+    this.server = server;
     this.named = ResourcePackPackets.named(protocol);
   }
 
@@ -138,13 +161,65 @@ public final class ClientResourcePacks {
 
   // ---- every clientbound packet passes these ------------------------------------------------
 
-  /** Before {@code packet} is written in {@code state}: follows a server's offer, and closes the gate if the world goes. */
-  public void beforeWrite(ConnectionState state, byte[] packet) {
+  /**
+   * Before {@code packet} is written in {@code state}: a server's offer or removal is put to plugins
+   * and followed, and the gate closes if the world goes. Returns what to write instead: the packet
+   * itself, the pack a plugin put in place of the server's, or null for nothing. Called without lock,
+   * so plugins deciding never hold it.
+   */
+  public byte[] beforeWrite(ConnectionState state, byte[] packet) throws IOException {
+    byte[] outbound = packet;
     if (!Thread.holdsLock(lock)) {
       Optional<ResourcePackPackets.Clientbound> relayed = ResourcePackPackets.read(protocol, state, packet);
-      if (relayed.isPresent()) synchronized (lock) { follow(relayed.get()); }
+      if (relayed.isPresent()) outbound = fromServer(state, packet, relayed.get());
     }
-    if (ClientDisplay.takesWorld(protocol, state, packet)) synchronized (lock) { inWorld = false; }
+    if (outbound != null && ClientDisplay.takesWorld(protocol, state, outbound)) synchronized (lock) { inWorld = false; }
+    return outbound;
+  }
+
+  /** A server's offer or removal: what plugins make of it, and what the client is written. */
+  private byte[] fromServer(ConnectionState state, byte[] packet, ResourcePackPackets.Clientbound relayed) throws IOException {
+    switch (relayed) {
+      case ResourcePackPackets.Offer offer -> {
+        ResourcePack offered = offer.pack().orElse(null);
+        ResourcePack chosen = offered == null || server == null ? offered : server.offered(offered);
+        if (offered != null && chosen == null) {
+          // The server waits for an answer it will now never get from the client: this is it.
+          Optional<byte[]> declined = ResourcePackPackets.status(protocol, state, offer.id(), offered.hash(), ResourcePack.Status.DECLINED);
+          if (declined.isPresent()) server.answer(declined.get());
+          return null;
+        }
+        byte[] outbound = chosen == null || chosen.equals(offered) ? packet : ResourcePackPackets.offer(protocol, state, chosen).orElse(null);
+        if (outbound == null) {
+          outbound = packet;
+          chosen = offered;
+        }
+        boolean replaced = outbound != packet;
+        synchronized (lock) {
+          UUID id = replaced ? chosen.id() : offer.id();
+          offers.remove(id);
+          if (offers.size() < MAX_FOLLOWED && chosen != null) offers.put(id, new Offer(chosen, true, true, replaced ? offered : null));
+          if (!offer.named()) awaitAnswer(id);
+        }
+        return outbound;
+      }
+      case ResourcePackPackets.Removal removal -> {
+        if (server != null && !server.removed(removal.id())) return null;
+        synchronized (lock) {
+          if (removal.id().isEmpty()) {
+            offers.values().removeIf(offer -> offer.written);
+            return packet;
+          }
+          // A pack a plugin put in place of the server's is the one the client has.
+          UUID id = removal.id().get();
+          for (Offer offer : offers.values()) {
+            if (offer.original != null && offer.original.id().equals(id)) id = offer.pack.id();
+          }
+          offers.remove(id);
+          return id.equals(removal.id().get()) ? packet : ResourcePackPackets.remove(protocol, state, id).orElse(packet);
+        }
+      }
+    }
   }
 
   /** After {@code packet} was written in {@code state}: reopens the gate and writes what waited for it. */
@@ -169,21 +244,6 @@ public final class ClientResourcePacks {
     synchronized (lock) { configuring = open; }
   }
 
-  /** Called holding lock: a server's offer or removal on its way to the client. */
-  private void follow(ResourcePackPackets.Clientbound relayed) {
-    switch (relayed) {
-      case ResourcePackPackets.Offer offer -> {
-        offers.remove(offer.id());
-        if (offers.size() < MAX_FOLLOWED) offer.pack().ifPresent(pack -> offers.put(offer.id(), new Offer(pack, true, true)));
-        if (!offer.named()) awaitAnswer(offer.id());
-      }
-      case ResourcePackPackets.Removal removal -> {
-        if (removal.id().isPresent()) offers.remove(removal.id().get());
-        else offers.values().removeIf(offer -> offer.written);
-      }
-    }
-  }
-
   // ---- the client's answers ------------------------------------------------------------------
 
   /**
@@ -196,6 +256,7 @@ public final class ClientResourcePacks {
     ResourcePackPackets.Answer answer = read.get();
     PlayerResourcePackStatusEvent event = null;
     boolean ours;
+    Optional<byte[]> aboutOriginal = Optional.empty();
     synchronized (lock) {
       UUID id = answer.id().orElseGet(() -> legacyTarget(answer.hash()));
       Offer offer = id == null ? null : offers.get(id);
@@ -204,6 +265,11 @@ public final class ClientResourcePacks {
       ours = !offer.fromServer;
       if (answer.status().isPresent()) {
         ResourcePack.Status status = answer.status().get();
+        // The server offered its own pack and waits to hear about that one, by its id or its hash.
+        if (offer.original != null) {
+          try { aboutOriginal = ResourcePackPackets.status(protocol, state, offer.original.id(), offer.original.hash(), status); }
+          catch (IOException impossible) { }
+        }
         if (status == ResourcePack.Status.LOADED) {
           offer.loaded = true;
           // Before 1.20.3 a client holds one server pack: the one it just loaded is the only one left.
@@ -215,6 +281,11 @@ public final class ClientResourcePacks {
       }
     }
     if (event != null) statuses.accept(event);
+    if (aboutOriginal.isPresent() && server != null) {
+      try { server.answer(aboutOriginal.get()); }
+      catch (IOException gone) { }  // the server went; the session notices that on its own
+      return true;
+    }
     return ours;
   }
 
