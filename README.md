@@ -764,7 +764,9 @@ A `Player` can be offered resource packs of the proxy's own (`sendResourcePack`,
 `PlayerResourcePackStatusEvent`, for the proxy's packs and for the ones its server offers; answers
 about the proxy's packs never reach the server. A server's offer goes past `ServerResourcePackOfferEvent` first (cancel it and the server is told the client declined; `setPack` offers the client another, whose answers reach the server as about its own), and its removal past `ServerResourcePackRemoveEvent`.
 `resourcePacks()` lists what the client was offered and still has or is deciding on; a loaded pack
-offered again unchanged counts as loaded while the client answers again.
+offered again unchanged counts as loaded while the client answers again. Once it lists 64 packs, a
+server's further offers still reach the client and the client's answers the server, but those packs are
+not listed and their answers raise no `PlayerResourcePackStatusEvent`.
 
 `Player.spoofChatInput(input)` sends the backend a chat line or command as if the player had typed it
 (for a 1.19+ client, which signs what it says, only a command, and only from 1.20.5).

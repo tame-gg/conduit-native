@@ -548,11 +548,12 @@ Known gaps:
 - Derived versions inherit their base's `ProtocolCapabilities`. Per-release
   capability auditing is outstanding for all 32 derived protocols.
 - **Backend login plugin requests other than Velocity modern forwarding are
-  refused.** Conduit completes every backend login itself, including a DIRECT
-  initial join since `2de8348` (switches and MODERN joins always did), so a
-  backend that sends another login query, such as a Forge login handshake,
-  fails the connection instead of having it relayed to the client. Forge and
-  NeoForge real-client joins are not verified either way.
+  relayed only during the first login.** A plugin can answer one itself
+  (`BackendLoginPluginMessageEvent`). Otherwise, while the client is still
+  logging in, the request goes to the client and its answer back to the backend
+  (see Login plugin queries); on a switch or a fallback the client has no login
+  phase left, so an unanswered request fails that connection. Of Forge-family
+  real clients, only NeoForge 20.2.93's initial join is verified.
 
 ## Protocols
 
@@ -756,7 +757,7 @@ else.
   it will not do. Forge 1.13 - 1.20.1 asks on `fml:loginwrapper` during login, so
   a switch onto such a backend aborts with `backend asked login plugin channel
   fml:loginwrapper with no client login phase to answer it` and the session falls
-  back.
+  back, unless a plugin answers the request (`BackendLoginPluginMessageEvent`).
 
 ### The join that stalled one time in two (Windows)
 
