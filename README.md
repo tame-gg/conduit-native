@@ -700,7 +700,9 @@ everyone online is still connected; the shutdown waits for its listeners), reloa
 applied), a plugin registering or unregistering a server, the client's settings and brand, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
 version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer),
 pre-login (`PlayerPreLoginEvent`: the claimed name and UUID, before authentication; deny it before any
-encryption, or force online or offline mode for that connection), game profile (`GameProfileRequestEvent`:
+encryption, or force online or offline mode for that connection, and `sendLoginPluginMessage` asks a 1.13+
+client something while it logs in, the login waiting for the answer), a backend's login query
+(`BackendLoginPluginMessageEvent`: reply for the player, or leave it to go to the client as before), game profile (`GameProfileRequestEvent`:
 replace the profile -- UUID, name, skin -- that backends and the client's tab list see; `Player.gameProfile()`
 reads it back), transfer (`PlayerTransferEvent`: cancel or redirect a 1.20.5+ Transfer, a plugin's or a
 backend's),

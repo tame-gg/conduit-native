@@ -33,14 +33,24 @@ public final class GameProfileRequestEvent implements Event {
   private final boolean transferred;
   private final boolean onlineMode;
   private final GameProfile originalProfile;
+  private final java.util.function.BiFunction<String, byte[], java.util.concurrent.CompletableFuture<byte[]>> loginMessages;
   private volatile GameProfile gameProfile;
 
   public GameProfileRequestEvent(String username, InetAddress remoteAddress, InetSocketAddress virtualHost, int protocolVersion,
                                  boolean transferred, boolean onlineMode, GameProfile originalProfile) {
+    this(username, remoteAddress, virtualHost, protocolVersion, transferred, onlineMode, originalProfile, (channel, data) -> {
+      throw new IllegalStateException("no client login to send a login plugin message to");
+    });
+  }
+  public GameProfileRequestEvent(String username, InetAddress remoteAddress, InetSocketAddress virtualHost, int protocolVersion,
+                                 boolean transferred, boolean onlineMode, GameProfile originalProfile,
+                                 java.util.function.BiFunction<String, byte[], java.util.concurrent.CompletableFuture<byte[]>> loginMessages) {
     this.username = username; this.remoteAddress = remoteAddress; this.virtualHost = virtualHost;
     this.protocolVersion = protocolVersion; this.transferred = transferred; this.onlineMode = onlineMode;
-    this.originalProfile = originalProfile; this.gameProfile = originalProfile;
+    this.originalProfile = originalProfile; this.gameProfile = originalProfile; this.loginMessages = loginMessages;
   }
+  /** As {@link PlayerPreLoginEvent#sendLoginPluginMessage}; a request made here is sent once PlayerLoginEvent has let the login go on. */
+  public java.util.concurrent.CompletableFuture<byte[]> sendLoginPluginMessage(String channel, byte[] data) { return loginMessages.apply(channel, data); }
   /** The name the client logged in with. */
   public String username() { return username; }
   public InetAddress remoteAddress() { return remoteAddress; }

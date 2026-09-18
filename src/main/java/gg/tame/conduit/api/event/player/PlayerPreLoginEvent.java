@@ -7,6 +7,8 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.BiFunction;
 
 /**
  * A client has asked to log in, and nothing about it has been verified yet: fired once its Login
@@ -46,14 +48,41 @@ public final class PlayerPreLoginEvent implements Event {
   private final InetSocketAddress virtualHost;
   private final int protocolVersion;
   private final boolean transferred;
+  private final BiFunction<String, byte[], CompletableFuture<byte[]>> loginMessages;
   private volatile Text denied;
   private volatile Authentication authentication = Authentication.PROXY_DEFAULT;
 
   public PlayerPreLoginEvent(String username, Optional<UUID> claimedUniqueId, InetAddress remoteAddress,
                              InetSocketAddress virtualHost, int protocolVersion, boolean transferred) {
+    this(username, claimedUniqueId, remoteAddress, virtualHost, protocolVersion, transferred, (channel, data) -> {
+      throw new IllegalStateException("no client login to send a login plugin message to");
+    });
+  }
+  public PlayerPreLoginEvent(String username, Optional<UUID> claimedUniqueId, InetAddress remoteAddress,
+                             InetSocketAddress virtualHost, int protocolVersion, boolean transferred,
+                             BiFunction<String, byte[], CompletableFuture<byte[]>> loginMessages) {
     this.username = username; this.claimedUniqueId = claimedUniqueId; this.remoteAddress = remoteAddress;
     this.virtualHost = virtualHost; this.protocolVersion = protocolVersion; this.transferred = transferred;
+    this.loginMessages = loginMessages;
   }
+  /**
+   * Sends the client a Login Plugin Request on {@code channel} (a namespaced key; {@code minecraft:}
+   * when it has none) with {@code data}, and completes with the client's answer: its bytes, or null
+   * when the client did not understand the channel.
+   *
+   * <p>Nothing is written at once. A request made in this event is sent once the proxy has
+   * authenticated the client (after encryption, in online mode); one made later in the login --
+   * from {@link GameProfileRequestEvent} to {@link PlayerLoginEvent}, by keeping this event -- once
+   * PlayerLoginEvent has let the login go on. At each point the requests go out in the order they were
+   * made, and the login waits for every answer, within the login's own deadline, before it goes
+   * further. The future completes on the connection's thread, so what depends on it must not block;
+   * it completes exceptionally when the login ends first. Once PlayerLoginEvent has been decided no
+   * more can be sent.
+   *
+   * @throws IllegalStateException for a client before 1.13, which has no login plugin messages, or once the login has been decided
+   * @throws IllegalArgumentException for a channel that is not a namespaced key, or more than 1 MiB of data
+   */
+  public CompletableFuture<byte[]> sendLoginPluginMessage(String channel, byte[] data) { return loginMessages.apply(channel, data); }
   /** The name in the client's Login Start, unverified. */
   public String username() { return username; }
   /** The UUID in the client's Login Start, unverified; empty for a client whose Login Start carries none. */

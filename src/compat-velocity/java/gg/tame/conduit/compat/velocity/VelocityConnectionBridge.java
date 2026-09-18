@@ -65,8 +65,8 @@ final class VelocityConnectionBridge {
           case FORCE_OFFLINE -> PreLoginComponentResult.forceOfflineMode();
           case PROXY_DEFAULT -> PreLoginComponentResult.allowed();
         };
-    PreLoginEvent pre = new PreLoginEvent(new LoginConnection(event.remoteAddress(), event.virtualHost(), event.protocolVersion(),
-        event.transferred()), event.username(), event.claimedUniqueId().orElse(null));
+    PreLoginEvent pre = new PreLoginEvent(new LoginConnection(environment, event.remoteAddress(), event.virtualHost(), event.protocolVersion(),
+        event.transferred(), event::sendLoginPluginMessage), event.username(), event.claimedUniqueId().orElse(null));
     pre.setResult(offered);
     PreLoginComponentResult result = environment.fireAndWait(pre).getResult();
     if (result == offered) return;
@@ -86,8 +86,8 @@ final class VelocityConnectionBridge {
   @Subscribe public void onGameProfileRequest(gg.tame.conduit.api.event.player.GameProfileRequestEvent event) {
     if (!environment.events.listening(GameProfileRequestEvent.class)) return;
     com.velocitypowered.api.util.GameProfile offered = Profiles.toVelocity(event.gameProfile());
-    GameProfileRequestEvent request = new GameProfileRequestEvent(new LoginConnection(event.remoteAddress(), event.virtualHost(),
-        event.protocolVersion(), event.transferred()), Profiles.toVelocity(event.originalProfile()), event.onlineMode());
+    GameProfileRequestEvent request = new GameProfileRequestEvent(new LoginConnection(environment, event.remoteAddress(), event.virtualHost(),
+        event.protocolVersion(), event.transferred(), event::sendLoginPluginMessage), Profiles.toVelocity(event.originalProfile()), event.onlineMode());
     if (!event.gameProfile().equals(event.originalProfile())) request.setGameProfile(offered);
     com.velocitypowered.api.util.GameProfile chosen = environment.fireAndWait(request).getGameProfile();
     if (chosen == request.getOriginalProfile() || chosen == offered) return;
@@ -99,17 +99,40 @@ final class VelocityConnectionBridge {
   }
 
   /**
+   * A backend's login query that Conduit has no answer of its own for. The native thread waits; a
+   * reply from a plugin is the backend's answer, and {@code unknown()}, the default, leaves the query as
+   * Conduit handles it without plugins: relayed to a client still logging in, or failing a switch.
+   */
+  @Subscribe public void onBackendLoginMessage(gg.tame.conduit.api.event.player.BackendLoginPluginMessageEvent event) {
+    if (!environment.events.listening(com.velocitypowered.api.event.player.ServerLoginPluginMessageEvent.class)) return;
+    VelocityRegisteredServer server = environment.server(event.server());
+    if (server == null) return;
+    VelocityPlayer player = environment.player(event.player());
+    VelocityRegisteredServer current = (VelocityRegisteredServer) player.getCurrentServer()
+        .map(com.velocitypowered.api.proxy.ServerConnection::getServer).orElse(null);
+    ChannelIdentifier channel;
+    try { channel = com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier.from(event.channel()); }
+    catch (IllegalArgumentException notNamespaced) { channel = new com.velocitypowered.api.proxy.messages.LegacyChannelIdentifier(event.channel()); }
+    var message = environment.fireAndWait(new com.velocitypowered.api.event.player.ServerLoginPluginMessageEvent(
+        new VelocityServerConnection(server, player, current), channel, event.data(), event.messageId()));
+    if (message.getResult().isAllowed()) event.reply(message.getResult().getResponse());
+  }
+
+  /**
    * A connection in Login, before it is a player. A class, not a record, so no public accessor hands
-   * a plugin a Conduit type. It is a LoginPhaseConnection because Velocity documents that cast; login
-   * plugin messages from a plugin are not supported.
+   * a plugin a Conduit type. It is a LoginPhaseConnection because Velocity documents that cast.
    */
   static final class LoginConnection implements LoginPhaseConnection {
+    private final VelocityEnvironment environment;
     private final InetAddress address;
     private final InetSocketAddress virtualHost;
     private final int protocol;
     private final boolean transferred;
-    LoginConnection(InetAddress address, InetSocketAddress virtualHost, int protocol, boolean transferred) {
-      this.address = address; this.virtualHost = virtualHost; this.protocol = protocol; this.transferred = transferred;
+    private final java.util.function.BiFunction<String, byte[], java.util.concurrent.CompletableFuture<byte[]>> messages;
+    LoginConnection(VelocityEnvironment environment, InetAddress address, InetSocketAddress virtualHost, int protocol, boolean transferred,
+                    java.util.function.BiFunction<String, byte[], java.util.concurrent.CompletableFuture<byte[]>> messages) {
+      this.environment = environment; this.address = address; this.virtualHost = virtualHost; this.protocol = protocol;
+      this.transferred = transferred; this.messages = messages;
     }
     /** The port is 0, as for a player: Conduit's API carries the address only. */
     @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(address, 0); }
@@ -119,8 +142,19 @@ final class VelocityConnectionBridge {
     @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.getProtocolVersion(protocol); }
     @Override public ProtocolState getProtocolState() { return ProtocolState.LOGIN; }
     @Override public HandshakeIntent getHandshakeIntent() { return transferred ? HandshakeIntent.TRANSFER : HandshakeIntent.LOGIN; }
+    /**
+     * Queued at once, sent at the next point Conduit's login stops for such messages (see Conduit's
+     * PlayerPreLoginEvent.sendLoginPluginMessage), and the login waits for the answer. The consumer
+     * runs on the adapter's threads, with null when the client did not understand the channel; not at
+     * all when the login ends first. A client before 1.13, or a login already decided, throws
+     * IllegalStateException.
+     */
     @Override public void sendLoginPluginMessage(ChannelIdentifier identifier, byte[] contents, MessageConsumer consumer) {
-      throw Unsupported.api("LoginPhaseConnection.sendLoginPluginMessage");
+      java.util.Objects.requireNonNull(consumer, "consumer");
+      messages.apply(identifier.getId(), contents).thenAcceptAsync(answer -> {
+        try { consumer.onMessageResponse(answer); }
+        catch (RuntimeException failed) { environment.log.log(java.util.logging.Level.WARNING, "A login plugin message consumer failed", failed); }
+      }, environment.work);
     }
     @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("LoginPhaseConnection.getIdentifiedKey"); }
   }

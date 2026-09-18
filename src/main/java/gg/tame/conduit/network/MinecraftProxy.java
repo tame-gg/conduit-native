@@ -159,6 +159,7 @@ public final class MinecraftProxy implements AutoCloseable {
     InetAddress remote = null;
     Socket client = channel.socket();
     PacketTransport[] opened = new PacketTransport[1];
+    ClientLoginMessages[] loginMessages = new ClientLoginMessages[1];
     try {
       remote = client.getInetAddress();
       if (runtime.security().botFilter().isBlocked(remote)) {
@@ -234,10 +235,12 @@ public final class MinecraftProxy implements AutoCloseable {
       byte[] loginStart = transport.read(configuration.maxFrameBytes());
       LoginPipeline pipeline = new LoginPipeline(session, protocol); pipeline.observe(gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER, loginStart);
       InetAddress playerAddress = configuration.forwardedPlayerAddress().orElse(remote);
+      ClientLoginMessages messages = loginMessages[0] = new ClientLoginMessages(protocol);
       // Plugins' first say, on nothing but what the client claims: a refusal here costs no encryption
       // and no session-server round trip, and a login refused here never becomes a Player.
       PlayerPreLoginEvent preLogin = runtime.events().fire(new PlayerPreLoginEvent(pipeline.player().username(),
-          claimedUniqueId(pipeline, protocol), playerAddress, virtualHost(handshake), handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER));
+          claimedUniqueId(pipeline, protocol), playerAddress, virtualHost(handshake), handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER,
+          messages::send));
       if (!preLogin.allowed()) {
         try { transport.write(LoginDisconnect.encode(protocol, preLogin.denyReason().orElseThrow())); } catch (IOException ignored) { }
         return;
@@ -250,16 +253,19 @@ public final class MinecraftProxy implements AutoCloseable {
           throw new IOException(exception.getMessage(), exception);
         }
       }
+      // What PlayerPreLoginEvent's listeners asked the client, now that the proxy's own exchange with it
+      // is done: answered before anything else is decided, so later listeners can go by the answers.
+      messages.exchange(transport, configuration.maxFrameBytes());
       // Everything above is the proxy protecting itself, and no plugin can see or override any of it.
       // From here the client is a Player: plugins set it up first, and only then is anything decided
       // about it, so that a permission plugin already knows the player when maintenance asks.
-      requestGameProfile(pipeline, playerAddress, handshake);
+      requestGameProfile(pipeline, playerAddress, handshake, messages);
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
           handshake, firstPacket, loginStart, playerAddress)) {
         if (!claimIdentity(player, transport, protocol)) return;
         try {
           runtime.events().fire(new PlayerSetupEvent(player));
-          admit(player, transport, protocol);
+          admit(player, transport, protocol, messages);
         } finally {
           // Whatever ended the login, plugins that set something up for this player hear it once;
           // every path that knows why has already said so, and this is for the ones that threw.
@@ -276,6 +282,7 @@ public final class MinecraftProxy implements AutoCloseable {
       throw unexpected;
     }
     finally {
+      if (loginMessages[0] != null) loginMessages[0].close();
       // Through the transport once there is one: it ends the output first, so a client still sending
       // reads the last thing it was sent -- a disconnect's reason -- before the socket goes.
       if (opened[0] != null) opened[0].close();
@@ -319,7 +326,7 @@ public final class MinecraftProxy implements AutoCloseable {
     return false;
   }
   /** The proxy's and the plugins' decisions on a player who is set up: maintenance, then PlayerLoginEvent. */
-  private void admit(PlayerSession player, PacketTransport transport, ProtocolDefinition protocol) throws IOException {
+  private void admit(PlayerSession player, PacketTransport transport, ProtocolDefinition protocol, ClientLoginMessages messages) throws IOException {
     // Setup listeners may hold the login for seconds -- a permission plugin loading the player from
     // its database -- and nothing is decided for a client that gave up meanwhile.
     if (over(player, transport)) return;
@@ -336,6 +343,10 @@ public final class MinecraftProxy implements AutoCloseable {
       return;
     }
     if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
+    // What plugins asked the client since the first exchange, answered before a backend is dialled.
+    // The login is decided: nothing more can be asked, and the ids stay clear of the backend's queries.
+    messages.exchange(transport, configuration.maxFrameBytes());
+    messages.close();
     // Login listeners may have held it as long. A client that gave up meanwhile would otherwise still
     // be logged in to a backend, and reported by a PlayerPostLoginEvent as having joined.
     if (over(player, transport)) return;
@@ -384,12 +395,12 @@ public final class MinecraftProxy implements AutoCloseable {
    * Lets plugins replace the settled profile before anything else sees it. The login itself is not
    * theirs to redo: whether the session server vouched for the connection stays as it was.
    */
-  private void requestGameProfile(LoginPipeline pipeline, InetAddress playerAddress, Handshake handshake) {
+  private void requestGameProfile(LoginPipeline pipeline, InetAddress playerAddress, Handshake handshake, ClientLoginMessages messages) {
     var settled = pipeline.player();
     GameProfile original = new GameProfile(settled.uniqueId(), settled.username(), settled.properties().stream()
         .map(property -> new GameProfile.Property(property.name(), property.value(), property.signature())).toList());
     GameProfile chosen = runtime.events().fire(new GameProfileRequestEvent(settled.username(), playerAddress, virtualHost(handshake),
-        handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER, settled.authenticated(), original)).gameProfile();
+        handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER, settled.authenticated(), original, messages::send)).gameProfile();
     if (chosen.equals(original)) return;
     pipeline.replace(new gg.tame.conduit.login.PlayerProfile(chosen.uniqueId(), chosen.name(), chosen.properties().stream()
         .map(property -> new gg.tame.conduit.login.ProfileProperty(property.name(), property.value(), property.signature())).toList(),

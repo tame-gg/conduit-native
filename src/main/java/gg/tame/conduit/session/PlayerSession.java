@@ -610,6 +610,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   public boolean closed() { return closed; }
   private BackendConnection track(BackendConnection connection) {
     open.add(connection);
+    connection.login().answerQueriesWith(request -> runtime.events().fire(new gg.tame.conduit.api.event.player.BackendLoginPluginMessageEvent(
+        this, runtime.registered(connection.server().name()).orElse(null), request.channel(), request.data(), request.messageId()))
+        .reply().orElse(null));
     return connection;
   }
 

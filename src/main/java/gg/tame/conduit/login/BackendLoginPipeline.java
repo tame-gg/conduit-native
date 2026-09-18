@@ -53,6 +53,15 @@ public final class BackendLoginPipeline {
    * is still in LOGIN may enable it: nobody else can produce a Login Plugin Response.
    */
   public void allowClientLoginQueries() { clientCanAnswerQueries = true; }
+  /** Answers a backend's login query of the proxy's own choosing: the reply, or null to leave it as it would go. */
+  public interface QueryAnswerer { byte[] answer(LoginPluginRequest request); }
+  private volatile QueryAnswerer answerer;
+  /**
+   * Who is asked first about a login query Conduit has no answer of its own for (anything but modern
+   * forwarding's). A reply goes to the backend as the player's; without one the query is relayed as
+   * before, or fails a login with no client to relay it to.
+   */
+  public void answerQueriesWith(QueryAnswerer answerer) { this.answerer = answerer; }
   /** True while any login query handed to the client is still owed an answer to the backend. */
   public synchronized boolean awaitingLoginQuery() { return !pendingQueries.isEmpty(); }
   /** How many queries the client has been given and not yet answered. */
@@ -128,7 +137,13 @@ public final class BackendLoginPipeline {
       throw new IOException("unexpected backend login packet id " + id);
     }
     LoginPluginRequest request = LoginPluginRequest.decode(body, maximumPacketBytes);
-    if (!MODERN_CHANNEL.equals(request.channel())) return relayToClient(request);
+    if (!MODERN_CHANNEL.equals(request.channel())) {
+      QueryAnswerer answering = answerer;
+      byte[] reply = answering == null ? null : answering.answer(request);
+      if (reply == null) return relayToClient(request);
+      forwardToClient = false;
+      return new LoginPluginResponse(request.messageId(), true, reply).encode(protocol.id(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, PacketKind.LOGIN_PLUGIN_RESPONSE));
+    }
     if (forwarder.mode() != ForwardingMode.MODERN) throw new IOException("backend requested modern forwarding but Conduit is not configured for it");
     // The request names the highest forwarding version the backend reads. A backend from before that
     // byte existed sends no data and reads only the first version: Paper 1.13.1 does.

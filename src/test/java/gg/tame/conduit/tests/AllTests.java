@@ -130,6 +130,7 @@ public final class AllTests {
     ChannelCommandHandshakeEventTests.run();
     ApiBoundaryTests.run();
     ConfigurationEventsTests.run();
+    LoginPluginMessageTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {
