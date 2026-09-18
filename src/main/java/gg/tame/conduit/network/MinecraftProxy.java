@@ -46,6 +46,13 @@ public final class MinecraftProxy implements AutoCloseable {
   private static final int MAX_CONNECTIONS = 2048;
   private static final int MAX_CONCURRENT_AUTH = 32;
   private static final int ENCRYPTION_RESPONSE_TIMEOUT_MS = 30_000;
+  /**
+   * How long after its handshake a connection may still be read from before it reaches Play, or its
+   * status exchange ends. Long enough for the encryption response, which waits on the client's own
+   * round trip to Mojang, and for a first backend or two to refuse. The
+   * {@code conduit.loginDeadlineMillis} system property overrides it, so tests can use a short one.
+   */
+  private static final long LOGIN_DEADLINE_MS = 60_000;
   private final ServerSocketChannel listener;
   private final ConduitConfiguration configuration;
   private final PlayerInfoForwarder forwarder;
@@ -148,6 +155,7 @@ public final class MinecraftProxy implements AutoCloseable {
       int handshakeTimeout = runtime.security().botFilter().settings().handshakeTimeoutMs();
       client.setSoTimeout(handshakeTimeout);
       PacketTransport transport = new PacketTransport(client);
+      transport.setReadDeadline(Long.getLong("conduit.loginDeadlineMillis", LOGIN_DEADLINE_MS));
       byte[] firstPacket;
       try {
         firstPacket = transport.read(configuration.maxFrameBytes());

@@ -251,6 +251,8 @@ Application-level abuse mitigation only — not upstream DDoS protection.
 
 * **Connection throttle** — early accept-path limits per IPv4 /32 or IPv6 /64 (NAT-friendly defaults: 40 attempts / 1s window, 32 concurrent). Aggregate drop logs.
 * **Bot filter** — strikes for idle/malformed TCP; status/list pings are legitimate; temporary blocks after threshold. Handshake read timeout cancels once Minecraft data arrives.
+* **Login deadline** — the handshake timeout bounds each read; on top of that a connection has 60 s from its handshake to reach Play (or finish a status exchange) for everything read from the client, so a peer that announces a large frame and trickles it byte by byte is cut off instead of holding its slot for hours.
+* **Usernames** — a Login Start name must be 1–16 characters from `!` to `~`, the rule vanilla servers apply; anything else (empty, spaces, control characters, `§`, non-ASCII) is refused before any plugin sees the player, and the refusal never echoes the name into the log.
 * **Channel guard** — configurable plugin-message channel rules (`log` / `drop` / `kick`); unknown channels allowed; `minecraft:brand` and `velocity:*` never blocked by default. Disabled by default.
 * **Attack mode** — `/conduit attack on|off|status` tightens live throttle/bot thresholds. **Runtime only** (reset on restart).
 
