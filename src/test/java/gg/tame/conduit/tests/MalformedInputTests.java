@@ -138,6 +138,24 @@ public final class MalformedInputTests {
     String deepest = "{\"extra\":[".repeat(255) + "\"x\"" + "]}".repeat(255);
     require(gg.tame.conduit.protocol.text.ComponentCodec.parseJson(deepest) != null, "510 levels still parse");
     require(gg.tame.conduit.text.TextCodec.fromJson(deepest).plain().equals("x"), "and read as the text they hold");
+    // The same text as a 1.20.3+ backend sends it, in network NBT: a kick reason, a configuration
+    // refusal or a resource-pack prompt 20,000 compounds deep overflowed the backend reader's stack,
+    // and the StackOverflowError got past every catch meant for an unreadable reason.
+    try {
+      gg.tame.conduit.protocol.text.ComponentCodec.nbtBytesToJson(nestedCompounds(20_000));
+      throw new AssertionError("20,000 nested compounds were read");
+    } catch (IOException expected) { }
+    require(gg.tame.conduit.protocol.text.ComponentCodec.nbtBytesToJson(nestedCompounds(512)).startsWith("{\"\":{\"\":"),
+        "512 levels, the client's own limit, still read");
+  }
+
+  /** A root compound holding a compound named "" holding another, {@code depth} in all. */
+  private static byte[] nestedCompounds(int depth) {
+    ByteArrayOutputStream nbt = new ByteArrayOutputStream();
+    nbt.write(0x0A);
+    for (int level = 1; level < depth; level++) { nbt.write(0x0A); nbt.write(0); nbt.write(0); }
+    for (int level = 0; level < depth; level++) nbt.write(0);
+    return nbt.toByteArray();
   }
 
   /**

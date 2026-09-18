@@ -40,7 +40,7 @@ public final class ComponentCodec {
 
   /** Reads a nameless network-NBT component and renders it as a JSON component. */
   public static String nbtToJson(DataInput input) throws IOException {
-    Object value = readTag(input, input.readUnsignedByte());
+    Object value = readTag(input, input.readUnsignedByte(), 1);
     return Json.write(value);
   }
 
@@ -165,7 +165,14 @@ public final class ComponentCodec {
 
   // ----------------------------------------------------------------- from NBT
 
-  private static Object readTag(DataInput input, int type) throws IOException {
+  /**
+   * {@code depth} counts the lists and compounds this tag sits in, itself included. Past the JSON
+   * reader's limit, the client's own, a list or compound is refused rather than recursed into: a 1.20.3+
+   * backend's kick reason or pack prompt nested a few thousand levels deep overflowed the stack of the
+   * thread reading it, and the StackOverflowError escaped every catch meant for an unreadable text.
+   */
+  private static Object readTag(DataInput input, int type, int depth) throws IOException {
+    if ((type == 9 || type == 10) && depth > Json.MAX_DEPTH) throw new IOException("nbt nests deeper than " + Json.MAX_DEPTH);
     return switch (type) {
       case 0 -> null;
       case 1 -> input.readByte() != 0;
@@ -181,7 +188,7 @@ public final class ComponentCodec {
         int length = input.readInt();
         if (length < 0 || length > 65536) throw new IOException("nbt list " + length);
         List<Object> items = new ArrayList<>(Math.min(length, 64));
-        for (int index = 0; index < length; index++) items.add(readTag(input, element));
+        for (int index = 0; index < length; index++) items.add(readTag(input, element, depth + 1));
         // Undo the wrapper a heterogeneous list is stored in: each element is a
         // compound whose only key is the empty string.
         yield items.stream().map(ComponentCodec::unwrap).toList();
@@ -191,7 +198,7 @@ public final class ComponentCodec {
         while (true) {
           int child = input.readUnsignedByte();
           if (child == 0) yield map;
-          map.put(input.readUTF(), readTag(input, child));
+          map.put(input.readUTF(), readTag(input, child, depth + 1));
         }
       }
       case 11 -> numberArray(input, 4);
