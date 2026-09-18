@@ -178,7 +178,7 @@ public final class PluginRuntimeTests {
     ConduitRuntime runtime = runtime(plugins, root);
     try {
       runtime.pluginRuntime().loadAll();
-      require(await(() -> SIGNALS.stream().filter("sleeping"::equals).count() == 2), "both tasks are running");
+      require(await(() -> List.copyOf(SIGNALS).stream().filter("sleeping"::equals).count() == 2), "both tasks are running");
       require(threads("conduit-plugin-sleeper-") == 2, "on the plugin's own threads");
     } finally {
       runtime.close();

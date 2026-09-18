@@ -153,7 +153,7 @@ public final class CommandApiTests {
     try {
       runtime.pluginRuntime().loadAll();
       runtime.pluginRuntime().loadAll();
-      require(SIGNALS.stream().filter("enable:alpha"::equals).count() == 1, "a second loadAll enables nothing again, signals " + SIGNALS);
+      require(List.copyOf(SIGNALS).stream().filter("enable:alpha"::equals).count() == 1, "a second loadAll enables nothing again, signals " + SIGNALS);
       for (String id : List.of("alpha", "beta", "delta", "epsilon")) require(runtime.plugins().plugin(id).isPresent(), id + " enabled");
       require(runtime.plugins().plugin("broken").isEmpty(), "a plugin whose onEnable threw is not enabled");
       require(runtime.plugins().plugin("gamma").isEmpty(), "a plugin whose dependency failed is not enabled, signals " + SIGNALS);
