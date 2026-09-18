@@ -690,9 +690,20 @@ and tab-list entries of the proxy's own, each written in that client's protocol.
 and entries are sent again after a server switch; what a client's release cannot show is documented
 on each method (see also "Display by client release" in `docs/VELOCITY_COMPATIBILITY.md`).
 
+A command's `requires((source, arguments) -> ...)` decides whether the proxy has that command at all
+for a source: when it says no, a player's command goes on to their backend and `execute` returns false,
+where a missing `permission` instead tells the player they may not use it. A `CommandExecuteEvent`
+listener may `setCommand` (what the proxy then looks up and runs, and what a pre-1.19 client's backend
+gets) or `forwardToServer()` (the backend gets it even when the proxy has a command by that name).
+
+`Player.ping()` is the round trip of the last keep-alive the client answered, `-1` until it has
+answered one; `Player.clientBrand()` is what the client last sent on the brand channel.
+`proxy().shutdown(Text reason)` stops the proxy with every player shown that reason.
+
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins
-then go through the same lifecycle as native ones.
+then go through the same lifecycle as native ones; a loader's `close()` is called once at shutdown,
+after every plugin is disabled, to let go of what the loader itself holds.
 
 ## Velocity compatibility
 
