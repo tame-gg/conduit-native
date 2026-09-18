@@ -94,6 +94,8 @@ public final class PrometheusEndpoint implements AutoCloseable {
     counter(out, "conduit_channel_guard_actions_total", "Plugin messages the channel guard acted on.", metrics.channelGuardActions());
     counter(out, "conduit_attack_mode_activations_total", "Times attack mode was switched on.", metrics.attackModeActivations());
     counter(out, "conduit_authentications_total", "Players verified with Mojang.", metrics.authentications());
+    counter(out, "conduit_sessions_ended_total", "Players who left after reaching a server.", metrics.sessionsEnded());
+    counter(out, "conduit_session_seconds_total", "Time those players spent in the game, from their first server to leaving.", metrics.sessionSeconds());
     counter(out, "conduit_backend_connects_total", "Connections made to backends.", metrics.backendConnects());
     counter(out, "conduit_backend_connect_failures_total", "Backends that could not be reached when a player was sent to them.", metrics.backendConnectFailures());
     counter(out, "conduit_backend_connect_seconds_total", "Time spent making backend connections.", metrics.backendConnectSeconds());

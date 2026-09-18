@@ -163,6 +163,14 @@ public final class ObservabilityTests {
         HttpResponse<String> post = http.send(HttpRequest.newBuilder(endpoint).POST(HttpRequest.BodyPublishers.ofString("x")).build(),
             HttpResponse.BodyHandlers.ofString());
         require(post.statusCode() == 405, "anything but GET or HEAD is refused, got " + post.statusCode());
+
+        double endedBefore = value(body, "conduit_sessions_ended_total");
+        client.close();
+        require(await(() -> gg.tame.conduit.metrics.ConduitMetrics.current().sessionsEnded() >= endedBefore + 1), "the session ended");
+        String after = http.send(HttpRequest.newBuilder(endpoint).GET().build(), HttpResponse.BodyHandlers.ofString()).body();
+        require(value(after, "conduit_players{path=\"direct\"}") == 0, "no player is left");
+        require(value(after, "conduit_sessions_ended_total") >= endedBefore + 1 && value(after, "conduit_session_seconds_total") > 0,
+            "the session and how long it lasted are counted:\n" + after);
       } finally {
         proxy.close();
         serving.join(10_000);

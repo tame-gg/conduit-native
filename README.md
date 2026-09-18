@@ -259,7 +259,8 @@ version gate's name and message replace these while they apply, and a plugin can
 Conduit also serves them at `GET /metrics` in Prometheus' text format: players by `path` (`direct`,
 `translated`) and per server, open backend connections, enabled plugins, shutdown and maintenance state,
 each backend's health, draining and last ping time, and counters for accepted, throttled and malformed
-connections, bot-filter and channel-guard actions, authentications, backend connects and connect
+connections, bot-filter and channel-guard actions, authentications, sessions ended and their total
+time in the game, backend connects and connect
 failures, switches and switch failures, fallbacks, Via translation failures, plugin task failures, and
 packets and bytes each way. It carries the operator's server names and nothing about players,
 addresses, tokens or paths. It has no authentication: keep it on loopback or a private network. It is

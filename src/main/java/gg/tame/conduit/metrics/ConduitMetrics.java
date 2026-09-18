@@ -35,6 +35,8 @@ public final class ConduitMetrics {
   private final LongAdder backendConnectFailures = new LongAdder();
   private final LongAdder translationFailures = new LongAdder();
   private final LongAdder pluginTaskFailures = new LongAdder();
+  private final LongAdder sessionsEnded = new LongAdder();
+  private final LongAdder sessionNanos = new LongAdder();
   private final AtomicLong windowStart = new AtomicLong(System.nanoTime());
   private final AtomicLong lastInboundPackets = new AtomicLong();
   private final AtomicLong lastOutboundPackets = new AtomicLong();
@@ -43,6 +45,14 @@ public final class ConduitMetrics {
   public static ConduitMetrics current() { return INSTANCE; }
   public void playerJoined() { players.incrementAndGet(); }
   public void playerLeft() { players.updateAndGet(value -> Math.max(0, value - 1)); }
+  /** A player left after {@code playedNanos} in the game, from their first server to their disconnect. */
+  public void playerLeft(long playedNanos) {
+    playerLeft();
+    sessionsEnded.increment();
+    sessionNanos.add(playedNanos);
+  }
+  public long sessionsEnded() { return sessionsEnded.sum(); }
+  public double sessionSeconds() { return sessionNanos.sum() / 1e9; }
   public void backendOpened() { backends.incrementAndGet(); }
   public void backendClosed() { backends.updateAndGet(value -> Math.max(0, value - 1)); }
   public void inbound(int bytes) { inboundPackets.increment(); inboundBytes.add(bytes); }

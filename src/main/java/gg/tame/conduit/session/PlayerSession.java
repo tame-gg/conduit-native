@@ -371,6 +371,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); lock.notifyAll(); }
     players.add(this);
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
+    long joined = System.nanoTime();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
     runtime.registered(initial.server().name()).ifPresent(first -> runtime.events().fire(
         new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first)));
@@ -379,7 +380,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     finally {
       closed = true;
       players.remove(this);
-      gg.tame.conduit.metrics.ConduitMetrics.current().playerLeft();
+      gg.tame.conduit.metrics.ConduitMetrics.current().playerLeft(System.nanoTime() - joined);
       leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
       backendReader.interrupt();
       close();
