@@ -23,11 +23,13 @@ from pathlib import Path
 
 MANIFEST = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
 RESOURCES = "https://resources.download.minecraft.net"
+# Requests name Conduit's development tools and nothing else: no user, machine or path.
+USER_AGENT = {"User-Agent": "Conduit-Development/0.9.0-SNAPSHOT"}
 ROOT = Path(__file__).resolve().parent.parent
 
 
 def fetch(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=120) as response:
+    with urllib.request.urlopen(urllib.request.Request(url, headers=USER_AGENT), timeout=120) as response:
         return response.read()
 
 

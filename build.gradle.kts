@@ -48,6 +48,8 @@ val gplSources = mapOf(
 val fetchViaSource = tasks.register("fetchViaSource") {
   val target = layout.buildDirectory.dir("corresponding-source")
   val sources = gplSources // a local copy: the configuration cache cannot serialize the script itself
+  // Downloads name Conduit's build and nothing else: no user, machine or path.
+  val userAgent = "Conduit-Development/$version"
   inputs.property("sources", sources)
   outputs.dir(target)
   doLast {
@@ -55,7 +57,9 @@ val fetchViaSource = tasks.register("fetchViaSource") {
       val file = target.get().file("$name.zip").asFile
       val part = File(file.path + ".part")
       file.parentFile.mkdirs()
-      URI(url).toURL().openStream().use { input -> part.outputStream().use { input.copyTo(it) } }
+      val connection = URI(url).toURL().openConnection()
+      connection.setRequestProperty("User-Agent", userAgent)
+      connection.getInputStream().use { input -> part.outputStream().use { input.copyTo(it) } }
       if (!part.renameTo(file) && !(file.delete() && part.renameTo(file))) throw GradleException("cannot write $file")
     }
   }

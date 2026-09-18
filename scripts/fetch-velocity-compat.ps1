@@ -7,6 +7,8 @@ $root = Split-Path -Parent $PSScriptRoot
 if (-not $LibDir) { $LibDir = Join-Path $root "lib" }
 New-Item -ItemType Directory -Path $LibDir -Force | Out-Null
 
+# Downloads name Conduit's development scripts and nothing else: no user, machine or path.
+$userAgent = "Conduit-Development/0.9.0-SNAPSHOT"
 $paper = "https://repo.papermc.io/repository/maven-public"
 $central = "https://repo1.maven.org/maven2"
 # The Adventure version velocity-api's own POM imports (adventure-bom). Its signatures, such as
@@ -68,7 +70,7 @@ foreach ($artifact in $artifacts) {
   }
   Write-Host "fetch $($artifact.Name)"
   try {
-    Invoke-WebRequest -Uri $artifact.Url -OutFile $dest -UseBasicParsing
+    Invoke-WebRequest -Uri $artifact.Url -OutFile $dest -UseBasicParsing -UserAgent $userAgent
   } catch {
     Remove-Item $dest -ErrorAction SilentlyContinue
     throw "failed to download $($artifact.Url): $_"

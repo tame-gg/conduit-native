@@ -7,6 +7,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $lib = Join-Path $root "lib\via"
 New-Item -ItemType Directory -Force -Path $lib | Out-Null
 
+# Downloads name Conduit's development scripts and nothing else: no user, machine or path.
+$userAgent = "Conduit-Development/0.9.0-SNAPSHOT"
 $viaRepo = "https://repo.viaversion.com/everything"
 $maven = "https://repo1.maven.org/maven2"
 
@@ -16,7 +18,7 @@ function Get-Artifact([string]$url, [string]$out) {
     return
   }
   Write-Host "GET $url"
-  Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing
+  Invoke-WebRequest -Uri $url -OutFile $out -UseBasicParsing -UserAgent $userAgent
   Write-Host "OK $(Split-Path $out -Leaf) $((Get-Item $out).Length)"
 }
 

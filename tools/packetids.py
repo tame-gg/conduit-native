@@ -33,6 +33,8 @@ ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "artifacts" / "_mcdata"
 BASE_URL = "https://raw.githubusercontent.com/PrismarineJS/minecraft-data/master/data/"
 PATHS_URL = BASE_URL + "dataPaths.json"
+# Requests name Conduit's development tools and nothing else: no user, machine or path.
+USER_AGENT = {"User-Agent": "Conduit-Development/0.9.0-SNAPSHOT"}
 
 DEFINITION = ROOT / "src/main/java/gg/tame/conduit/protocol/ProtocolDefinition.java"
 
@@ -173,7 +175,7 @@ def paths() -> dict:
     CACHE.mkdir(parents=True, exist_ok=True)
     cached = CACHE / "dataPaths.json"
     if not cached.exists():
-        with urllib.request.urlopen(PATHS_URL, timeout=120) as response:
+        with urllib.request.urlopen(urllib.request.Request(PATHS_URL, headers=USER_AGENT), timeout=120) as response:
             cached.write_bytes(response.read())
     return json.loads(cached.read_text(encoding="utf-8"))["pc"]
 
@@ -185,7 +187,7 @@ def protocol_json(release: str) -> dict | None:
     cached = CACHE / f"{release}.protocol.json"
     if not cached.exists():
         url = BASE_URL + index[release]["protocol"] + "/protocol.json"
-        with urllib.request.urlopen(url, timeout=180) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=USER_AGENT), timeout=180) as response:
             cached.write_bytes(response.read())
     return json.loads(cached.read_text(encoding="utf-8"))
 
