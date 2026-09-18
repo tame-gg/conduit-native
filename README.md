@@ -121,6 +121,19 @@ logged in from another location." and the new login waits for it to end. That ha
 new login has authenticated, before maintenance or any plugin decides on it. In offline mode that lets
 anyone who types a player's name kick them, so it is off by default. It is read at each login, so
 `/conduit reload` applies it unless a setting that needs a restart changed in the same reload.
+A plugin that replaces a player's profile (`GameProfileRequestEvent`) does not get round this: the
+account that logged in and the replacement are both counted as connected.
+
+### Transfers (1.20.5+)
+
+A client another server sent here with a Transfer packet (handshake intent 3) logs in like any other;
+there is no setting that refuses transfers, but a `PlayerPreLoginEvent` listener sees
+`transferred()` and may deny them. Its backends are asked for an ordinary login, since a vanilla server
+refuses transfers by default. `Player.transferred()` says how a player arrived, and
+`Player.transferToHost(host, port)` sends a 1.20.5+ player elsewhere with a Transfer packet (false for an
+older client). Every Transfer -- a plugin's, or one the backend sends -- fires `PlayerTransferEvent`
+first, which can cancel it or change the address. A 1.20.4 or older handshake with intent 3 is
+malformed and closed, as before.
 
 ### Online
 
@@ -658,6 +671,11 @@ Events include proxy start/pre-shutdown/shutdown (`ProxyPreShutdownEvent`: new p
 everyone online is still connected; the shutdown waits for its listeners), reload (after `/conduit reload`
 applied), a plugin registering or unregistering a server, the client's settings and brand, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
 version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer),
+pre-login (`PlayerPreLoginEvent`: the claimed name and UUID, before authentication; deny it before any
+encryption, or force online or offline mode for that connection), game profile (`GameProfileRequestEvent`:
+replace the profile -- UUID, name, skin -- that backends and the client's tab list see; `Player.gameProfile()`
+reads it back), transfer (`PlayerTransferEvent`: cancel or redirect a 1.20.5+ Transfer, a plugin's or a
+backend's),
 player setup (`PlayerSetupEvent`: after authentication and before anything is decided about the player, so
 a permission plugin loads them here), login (deniable; maintenance refuses before it), auth,
 initial-server choice, server connect (cancellable and redirectable, for the first server too),

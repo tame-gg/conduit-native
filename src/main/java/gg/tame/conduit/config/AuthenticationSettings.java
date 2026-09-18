@@ -10,10 +10,15 @@ public record AuthenticationSettings(AuthenticationMode mode, String sessionUrl,
   public static final String DEFAULT_SESSION_URL = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
   public AuthenticationSettings {
     if (sessionUrl == null || sessionUrl.isBlank()) throw new IllegalArgumentException("authentication.session-url is required");
-    if (mode == AuthenticationMode.ONLINE && !sessionUrl.startsWith("https://") && !sessionUrl.startsWith("http://127.0.0.1") && !sessionUrl.startsWith("http://localhost")) {
+    if (mode == AuthenticationMode.ONLINE && !secure(sessionUrl)) {
       throw new IllegalArgumentException("authentication.session-url must use HTTPS");
     }
     if (timeoutMillis < 100 || timeoutMillis > 60_000) throw new IllegalArgumentException("authentication.timeout-millis must be 100..60000");
+  }
+  /** Whether the session URL may carry an online-mode check: HTTPS, or a loopback address. */
+  public boolean sessionUrlSecure() { return secure(sessionUrl); }
+  private static boolean secure(String url) {
+    return url.startsWith("https://") || url.startsWith("http://127.0.0.1") || url.startsWith("http://localhost");
   }
   public AuthenticationSettings(AuthenticationMode mode, String sessionUrl, int timeoutMillis) {
     this(mode, sessionUrl, timeoutMillis, false);

@@ -291,7 +291,7 @@ public final class LoginLifecycleTests {
   }
 
   /** Handshake, Login Start and the encryption exchange of a 1.8 client, as far as the proxy's verdict. */
-  private static PacketTransport encrypt(Socket socket, String name) throws Exception {
+  static PacketTransport encrypt(Socket socket, String name) throws Exception {
     MinecraftFrames.write(socket.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
     MinecraftFrames.write(socket.getOutputStream(), loginStart(name));
     var request = gg.tame.conduit.login.EncryptionRequest.decode(P47, MinecraftFrames.read(socket.getInputStream(), 4096));

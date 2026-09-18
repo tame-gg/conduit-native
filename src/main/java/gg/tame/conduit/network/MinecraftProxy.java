@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.network;
 
+import gg.tame.conduit.api.event.player.GameProfileRequestEvent;
 import gg.tame.conduit.api.event.player.PlayerAuthenticatedEvent;
 import gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus;
 import gg.tame.conduit.api.event.player.PlayerLoginEvent;
+import gg.tame.conduit.api.event.player.PlayerPreLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerSetupEvent;
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
 import gg.tame.conduit.api.permission.PermissionProvider;
+import gg.tame.conduit.api.player.GameProfile;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.auth.Authenticators;
 import gg.tame.conduit.auth.AuthenticationException;
@@ -66,6 +69,8 @@ public final class MinecraftProxy implements AutoCloseable {
   private final ConduitConfiguration configuration;
   private final PlayerInfoForwarder forwarder;
   private final PlayerAuthenticator authenticator;
+  /** The session check an offline proxy runs for a connection a plugin forced online; built on first use. */
+  private volatile PlayerAuthenticator forcedOnline;
   private final KeyPair rsaKeys;
   private final ConduitRuntime runtime;
   private final Semaphore authPermits = new Semaphore(MAX_CONCURRENT_AUTH);
@@ -220,9 +225,18 @@ public final class MinecraftProxy implements AutoCloseable {
       }
       byte[] loginStart = transport.read(configuration.maxFrameBytes());
       LoginPipeline pipeline = new LoginPipeline(session, protocol); pipeline.observe(gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER, loginStart);
-      if (authenticator.mode() == AuthenticationMode.ONLINE) {
+      InetAddress playerAddress = configuration.forwardedPlayerAddress().orElse(remote);
+      // Plugins' first say, on nothing but what the client claims: a refusal here costs no encryption
+      // and no session-server round trip, and a login refused here never becomes a Player.
+      PlayerPreLoginEvent preLogin = runtime.events().fire(new PlayerPreLoginEvent(pipeline.player().username(),
+          claimedUniqueId(pipeline, protocol), playerAddress, virtualHost(handshake), handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER));
+      if (!preLogin.allowed()) {
+        try { transport.write(LoginDisconnect.encode(protocol, preLogin.denyReason().orElseThrow())); } catch (IOException ignored) { }
+        return;
+      }
+      if (checksSession(preLogin.authentication())) {
         try {
-          authenticateOnline(transport, protocol, pipeline, remote.getHostAddress());
+          authenticateOnline(transport, protocol, pipeline, remote.getHostAddress(), sessionChecker());
         } catch (AuthenticationException exception) {
           try { transport.write(LoginDisconnect.encode(protocol, "Failed to verify username!")); } catch (IOException ignored) { }
           throw new IOException(exception.getMessage(), exception);
@@ -231,8 +245,9 @@ public final class MinecraftProxy implements AutoCloseable {
       // Everything above is the proxy protecting itself, and no plugin can see or override any of it.
       // From here the client is a Player: plugins set it up first, and only then is anything decided
       // about it, so that a permission plugin already knows the player when maintenance asks.
+      requestGameProfile(pipeline, playerAddress, handshake);
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
-          handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(remote))) {
+          handshake, firstPacket, loginStart, playerAddress)) {
         if (!claimIdentity(player, transport, protocol)) return;
         try {
           runtime.events().fire(new PlayerSetupEvent(player));
@@ -357,7 +372,63 @@ public final class MinecraftProxy implements AutoCloseable {
       return false;
     }
   }
-  private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address) throws IOException, AuthenticationException {
+  /**
+   * Lets plugins replace the settled profile before anything else sees it. The login itself is not
+   * theirs to redo: whether the session server vouched for the connection stays as it was.
+   */
+  private void requestGameProfile(LoginPipeline pipeline, InetAddress playerAddress, Handshake handshake) {
+    var settled = pipeline.player();
+    GameProfile original = new GameProfile(settled.uniqueId(), settled.username(), settled.properties().stream()
+        .map(property -> new GameProfile.Property(property.name(), property.value(), property.signature())).toList());
+    GameProfile chosen = runtime.events().fire(new GameProfileRequestEvent(settled.username(), playerAddress, virtualHost(handshake),
+        handshake.protocolVersion(), handshake.nextState() == Handshake.TRANSFER, settled.authenticated(), original)).gameProfile();
+    if (chosen.equals(original)) return;
+    pipeline.replace(new gg.tame.conduit.login.PlayerProfile(chosen.uniqueId(), chosen.name(), chosen.properties().stream()
+        .map(property -> new gg.tame.conduit.login.ProfileProperty(property.name(), property.value(), property.signature())).toList(),
+        settled.authenticated()));
+    ConduitLog.info("A plugin replaced " + settled.username() + " (" + settled.uniqueId() + ")'s profile: "
+        + pipeline.player().summary());
+  }
+  /** Whether this connection is checked with the session server: the proxy's mode, unless a PlayerPreLoginEvent forced one. */
+  private boolean checksSession(PlayerPreLoginEvent.Authentication chosen) {
+    return switch (chosen) {
+      case FORCE_ONLINE -> true;
+      case FORCE_OFFLINE -> false;
+      case PROXY_DEFAULT -> authenticator.mode() == AuthenticationMode.ONLINE;
+    };
+  }
+  /**
+   * The online-mode check for a connection that has one. An offline proxy that a plugin asked to
+   * check a connection builds one from its [authentication] settings, held to online mode's rule for
+   * the session URL: an offline proxy's URL was never checked, and a check over plain HTTP proves
+   * nothing to anyone on the path.
+   */
+  private PlayerAuthenticator sessionChecker() throws AuthenticationException {
+    if (authenticator.mode() == AuthenticationMode.ONLINE) return authenticator;
+    PlayerAuthenticator forced = forcedOnline;
+    if (forced != null) return forced;
+    if (!configuration.authentication().sessionUrlSecure()) {
+      ConduitLog.error("A plugin forced online mode, but authentication.session-url is not HTTPS or loopback; the login is refused");
+      throw new AuthenticationException("session-url is not secure");
+    }
+    return forcedOnline = new gg.tame.conduit.auth.MojangSessionAuthenticator(configuration.authentication());
+  }
+  /** The UUID in the client's Login Start, when it sent one; otherwise the proxy derived it from the name. */
+  private static Optional<java.util.UUID> claimedUniqueId(LoginPipeline pipeline, ProtocolDefinition protocol) {
+    var profile = pipeline.player();
+    // ponytail: a 1.19.1-1.20.1 client that sends exactly its offline UUID reads as having sent none.
+    boolean sent = protocol.capabilities().loginStartUuid()
+        || !profile.uniqueId().equals(gg.tame.conduit.login.LoginStart.offlineUuid(profile.username()));
+    return sent ? Optional.of(profile.uniqueId()) : Optional.empty();
+  }
+  /** As Player.virtualHost() reports it: the dialled host without Forge's markers, unresolved. */
+  private static java.net.InetSocketAddress virtualHost(Handshake handshake) {
+    String host = handshake.requestedHost();
+    int marker = host.indexOf('\0');
+    return java.net.InetSocketAddress.createUnresolved(marker < 0 ? host : host.substring(0, marker), handshake.requestedPort());
+  }
+  private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address,
+                                  PlayerAuthenticator authenticator) throws IOException, AuthenticationException {
     if (!authPermits.tryAcquire()) throw new AuthenticationException("authentication busy");
     try {
       EncryptionHandshake handshake = new EncryptionHandshake(rsaKeys);

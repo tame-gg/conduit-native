@@ -22,25 +22,43 @@ public final class PlayerManager {
    */
   private final java.util.Map<UUID, PlayerSession> claimedIds = new java.util.HashMap<>();
   private final java.util.Map<String, PlayerSession> claimedNames = new java.util.HashMap<>();
-  /** Claims {@code session}'s UUID and name; null when it now holds them, else the session holding either. */
+  /**
+   * Claims {@code session}'s identities; null when it now holds them all, else a session holding one.
+   * Both the account that logged in and the profile a plugin replaced it with count: the account, so
+   * one account is one session whatever a plugin calls it, and the replacement, so no two sessions are
+   * shown to plugins and backends under one UUID or name.
+   */
   public synchronized PlayerSession claim(PlayerSession session) {
-    String name = session.username().toLowerCase(Locale.ROOT);
-    PlayerSession holder = claimedIds.get(session.uniqueId());
-    if (holder == null) holder = claimedNames.get(name);
-    if (holder != null && holder != session) return holder;
-    claimedIds.put(session.uniqueId(), session);
-    claimedNames.put(name, session);
+    for (UUID id : ids(session)) {
+      PlayerSession holder = claimedIds.get(id);
+      if (holder != null && holder != session) return holder;
+    }
+    for (String name : names(session)) {
+      PlayerSession holder = claimedNames.get(name);
+      if (holder != null && holder != session) return holder;
+    }
+    for (UUID id : ids(session)) claimedIds.put(id, session);
+    for (String name : names(session)) claimedNames.put(name, session);
     return null;
   }
   public synchronized void release(PlayerSession session) {
-    boolean held = claimedIds.remove(session.uniqueId(), session);
-    held |= claimedNames.remove(session.username().toLowerCase(Locale.ROOT), session);
+    boolean held = false;
+    for (UUID id : ids(session)) held |= claimedIds.remove(id, session);
+    for (String name : names(session)) held |= claimedNames.remove(name, session);
     if (held) notifyAll();
+  }
+  private static List<UUID> ids(PlayerSession session) { return List.of(session.uniqueId(), session.accountProfile().uniqueId()); }
+  private static List<String> names(PlayerSession session) {
+    return List.of(session.username().toLowerCase(Locale.ROOT), session.accountProfile().username().toLowerCase(Locale.ROOT));
+  }
+  private boolean holds(PlayerSession holder) {
+    return ids(holder).stream().anyMatch(id -> claimedIds.get(id) == holder)
+        || names(holder).stream().anyMatch(name -> claimedNames.get(name) == holder);
   }
   /** Waits up to {@code millis} for {@code holder} to release its claim; true once it has. */
   public synchronized boolean awaitRelease(PlayerSession holder, long millis) throws InterruptedException {
     long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(millis);
-    while (claimedIds.get(holder.uniqueId()) == holder || claimedNames.get(holder.username().toLowerCase(Locale.ROOT)) == holder) {
+    while (holds(holder)) {
       long left = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
       if (left <= 0) return false;
       wait(left);

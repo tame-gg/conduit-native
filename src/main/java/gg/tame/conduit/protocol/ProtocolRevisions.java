@@ -801,6 +801,8 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.21; capabilities inherited from 1.20.4",
       List.of(
+          PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_TRANSFER, 0x0B),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x73),
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT, 0x02),
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH, 0x03),
           PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KEEP_ALIVE, 0x04),
@@ -882,6 +884,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.21.3; capabilities inherited from 1.21",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x7A),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x3A),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x28),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x7E),
@@ -1050,6 +1053,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 1.21.10; capabilities inherited from 1.21.8",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x7F),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x3E),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x2C),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x83),
@@ -1112,6 +1116,7 @@ public final class ProtocolRevisions {
       CodecStatus.DERIVED,
       "published packet ids for 26.1; capabilities inherited from 1.21.11",
       List.of(
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x81),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ABILITIES, 0x40),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA, 0x2D),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES, 0x85),

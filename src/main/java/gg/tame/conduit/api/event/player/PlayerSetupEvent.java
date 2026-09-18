@@ -15,7 +15,9 @@ import gg.tame.conduit.api.player.Player;
  * filter, connection throttling, a malformed or unsupported handshake, the version gate, a failed
  * online-mode authentication, and a login of a player who is already connected (see
  * {@code [authentication] kick-existing-players}). A client refused there never becomes a Player, and
- * no plugin hears of it, so a plugin never sees two players with one UUID. When a newer login does
+ * no plugin hears of it as a Player, so a plugin never sees two players with one UUID. The only
+ * earlier say plugins have is {@link PlayerPreLoginEvent}, on the unverified claim, and
+ * {@link GameProfileRequestEvent}, on the settled profile; neither makes a Player. When a newer login does
  * take over, the session it displaces has had its {@link PlayerDisconnectEvent} before this event
  * fires for the newcomer. From this event on, every player gets exactly one {@link PlayerDisconnectEvent}, however the
  * login ends, so anything set up here can be released there.

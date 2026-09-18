@@ -190,6 +190,68 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   public PlayerProfile profile() { return AuthenticatedPlayerProfile.require(loginPipeline.player()); }
   /** Same object as {@link #profile()}; the session never recreates identity on {@code /server}. */
   public PlayerProfile authenticatedProfile() { return profile(); }
+  /** The account that logged in; {@link #profile()} differs only when a GameProfileRequestEvent listener replaced it. */
+  public PlayerProfile accountProfile() { return loginPipeline.account(); }
+  @Override public gg.tame.conduit.api.player.GameProfile gameProfile() {
+    PlayerProfile profile = profile();
+    return new gg.tame.conduit.api.player.GameProfile(profile.uniqueId(), profile.username(), profile.properties().stream()
+        .map(property -> new gg.tame.conduit.api.player.GameProfile.Property(property.name(), property.value(), property.signature())).toList());
+  }
+  @Override public boolean transferred() { return handshake.nextState() == Handshake.TRANSFER; }
+  @Override public boolean transferToHost(String host, int port) {
+    if (host == null || host.isBlank()) throw new IllegalArgumentException("host is required");
+    if (port < 1 || port > 65535) throw new IllegalArgumentException("port out of range: " + port);
+    return transfer(host, port, null);
+  }
+  /**
+   * Sends a Transfer once PlayerTransferEvent allows it. {@code original} is a backend's own packet,
+   * written as it came while nobody changed where it points; null for a plugin's transfer.
+   */
+  private boolean transfer(String host, int port, byte[] original) {
+    ConnectionState state = clientState.state();
+    PacketKind kind = state == ConnectionState.PLAY ? PacketKind.PLAY_TRANSFER
+        : state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_TRANSFER : null;
+    if (closed || kind == null || !protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, kind)) return false;
+    var event = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerTransferEvent(this, host, port, original != null));
+    if (event.cancelled()) return false;
+    try {
+      if (original != null && event.host().equals(host) && event.port() == port) {
+        writeClient(original);
+      } else {
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var output = new java.io.DataOutputStream(bytes)) {
+          gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(state, PacketDirection.SERVER_TO_CLIENT, kind));
+          gg.tame.conduit.protocol.MinecraftOutput.string(output, event.host());
+          gg.tame.conduit.protocol.MinecraftOutput.varInt(output, event.port());
+        }
+        writeClient(bytes.toByteArray());
+      }
+      return true;
+    } catch (IOException failed) {
+      return false;
+    }
+  }
+  /**
+   * A backend's Transfer, which plugins hear of as they hear of their own; true when {@code packet} was
+   * one, and it has been sent on, changed or dropped.
+   */
+  private boolean relayedTransfer(byte[] packet) throws IOException {
+    ConnectionState state = clientState.state();
+    PacketKind kind = state == ConnectionState.PLAY ? PacketKind.PLAY_TRANSFER
+        : state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_TRANSFER : null;
+    if (kind == null || !protocol.is(state, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), kind)) return false;
+    String host;
+    int port;
+    try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(packet))) {
+      gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+      host = gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);
+      port = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+    } catch (IOException unreadable) {
+      return false;
+    }
+    transfer(host, port, packet);
+    return true;
+  }
   @Override public java.util.UUID uniqueId() { return profile().uniqueId(); }
   @Override public boolean authenticated() { return profile().authenticated(); }
   @Override public String connectionState() { return clientState.state().name(); }
@@ -678,7 +740,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       Handshake backendHandshake = new Handshake(backendProtocol, host, server.address().getPort(), 2);
       MinecraftFrames.write(socket.getOutputStream(), backendHandshake.encode());
     } else {
-      MinecraftFrames.write(socket.getOutputStream(), originalHandshake);
+      // A client that arrived by transfer is logged in to the backend as any other: the backend is
+      // Conduit's, not the server that sent the client, and a vanilla one refuses transfers by default.
+      MinecraftFrames.write(socket.getOutputStream(), transferred()
+          ? new Handshake(handshake.protocolVersion(), handshake.requestedHost(), handshake.requestedPort(), 2).encode()
+          : originalHandshake);
     }
   }
 
@@ -1420,6 +1486,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           continue;
         }
         if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
+        if (relayedTransfer(translated)) continue;
         // Everything below this point compensates for gaps in Conduit's own translators: a brand
         // the client never gets told, a command tree that has to be merged, a Configuration phase
         // one side of the pair does not have, a Play stream that must wait for the other side to

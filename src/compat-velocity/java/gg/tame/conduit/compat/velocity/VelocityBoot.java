@@ -12,6 +12,7 @@ public final class VelocityBoot {
   public static void install(ConduitProxy proxy) {
     VelocityEnvironment environment = new VelocityEnvironment(proxy);
     proxy.events().register(environment.owner, new VelocityEventBridge(environment));
+    proxy.events().register(environment.owner, new VelocityConnectionBridge(environment));
     proxy.plugins().registerLoader(new VelocityPluginLoader(environment));
   }
 }

@@ -7,7 +7,7 @@ public final class ProtocolSession {
   public ConnectionState state() { return state; }
   public void acceptHandshake(int nextState) {
     if (state != ConnectionState.AWAITING_HANDSHAKE) throw new IllegalStateException("handshake is not valid in " + state);
-    state = switch (nextState) { case 1 -> ConnectionState.STATUS; case 2 -> ConnectionState.LOGIN; default -> throw new IllegalArgumentException("unsupported handshake target: " + nextState); };
+    state = switch (nextState) { case 1 -> ConnectionState.STATUS; case 2, Handshake.TRANSFER -> ConnectionState.LOGIN; default -> throw new IllegalArgumentException("unsupported handshake target: " + nextState); };
   }
   public void close() { state = ConnectionState.CLOSED; }
   public void beginConfiguration() { transition(ConnectionState.LOGIN, ConnectionState.CONFIGURATION); }

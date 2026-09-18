@@ -32,6 +32,24 @@ public interface Player extends CommandSource {
   /** Host and port the client says it dialled, from its handshake, unresolved. Forge markers are removed. */
   InetSocketAddress virtualHost();
   /**
+   * The profile backends are told, read-only: {@link #uniqueId()}, {@link #username()} and the
+   * properties (skin textures) the session server gave an online-mode player, or what a
+   * {@code GameProfileRequestEvent} listener replaced them with. An offline player has none.
+   */
+  default GameProfile gameProfile() { return new GameProfile(uniqueId(), username(), java.util.List.of()); }
+  /** Whether the client arrived by a Transfer packet from another server (a 1.20.5+ handshake with intent 3). */
+  default boolean transferred() { return false; }
+  /**
+   * Sends the client to another address with a Transfer packet: it leaves this proxy and connects to
+   * {@code host}:{@code port} itself, arriving there by transfer. Not a move between this proxy's own
+   * servers. {@code PlayerTransferEvent} is fired first and may cancel it or change the address.
+   *
+   * @return false, with nothing sent, when the client's version has no Transfer packet (before
+   *     1.20.5), when it is not in the Configuration or Play phase, or when a listener cancelled it
+   * @throws IllegalArgumentException for a blank host or a port outside 1 to 65535
+   */
+  default boolean transferToHost(String host, int port) { return false; }
+  /**
    * The language the client says it uses (its "en_us" as {@code en-US}), from the settings it sends
    * once it is in the game and whenever the player changes them. Empty until it has sent them.
    */

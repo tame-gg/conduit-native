@@ -9,6 +9,10 @@ import java.io.IOException;
 
 /** The only packet decoded before transparent MVP relaying begins. */
 public record Handshake(int protocolVersion, String requestedHost, int requestedPort, int nextState) {
+  /** Intent of a client another server sent here with a Transfer packet: a login, arriving by transfer. */
+  public static final int TRANSFER = 3;
+  /** 1.20.5, the first version with transfers; an older client never sends that intent. */
+  public static final int TRANSFERS_FROM = 766;
   public byte[] encode() throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
@@ -28,7 +32,9 @@ public record Handshake(int protocolVersion, String requestedHost, int requested
       int port = input.readUnsignedShort();
       int nextState = MinecraftInput.varInt(input);
       if (input.available() != 0) throw new IOException("handshake contains trailing data");
-      if (nextState != 1 && nextState != 2) throw new IOException("unsupported handshake target");
+      if (nextState != 1 && nextState != 2 && !(nextState == TRANSFER && protocolVersion >= TRANSFERS_FROM)) {
+        throw new IOException("unsupported handshake target");
+      }
       return new Handshake(protocolVersion, host, port, nextState);
     }
   }

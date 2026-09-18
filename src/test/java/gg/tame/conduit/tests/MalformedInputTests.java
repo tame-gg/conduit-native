@@ -190,12 +190,15 @@ public final class MalformedInputTests {
       attacks.add(attackers.submit(() -> trickle(port)));
       attacks.add(attackers.submit(() -> exchange(port, frame(handshake(765, 2)), 0, 3_000)));
       // Login with names no player could have, a handshake for a protocol nobody speaks, a transfer
-      // intent, two Login Starts in a row, and a login that asks for a server that is down.
+      // intent from 1.20.4 (transfers came in 1.20.5, so it is malformed), a 1.20.5 transfer that is a
+      // login and sends nothing more, two Login Starts in a row, and a login that asks for a server
+      // that is down.
       for (String name : List.of("", "two words", "line\nbreak", "\u00a7cred")) {
         attacks.add(attackers.submit(() -> exchange(port, concat(frame(handshake(47, 2)), frame(loginStart(name))), 3_000)));
       }
       attacks.add(attackers.submit(() -> exchange(port, frame(handshake(999_999, 2)), 3_000)));
       attacks.add(attackers.submit(() -> exchange(port, frame(handshake(765, 3)), 3_000)));
+      attacks.add(attackers.submit(() -> exchange(port, frame(handshake(766, 3)), 3_000)));
       attacks.add(attackers.submit(() -> exchange(port, concat(frame(handshake(47, 2)), frame(loginStart("Twice")), frame(loginStart("Twice"))), 5_000)));
       // Status abuse: a request twice before the ping, and a ping before any request.
       byte[] request = frame(new byte[] { 0 });

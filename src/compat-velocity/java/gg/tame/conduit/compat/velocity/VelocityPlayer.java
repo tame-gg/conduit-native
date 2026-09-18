@@ -102,11 +102,11 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
     encoder.encode(output);
     return output.toByteArray();
   }
-  @Override public GameProfile getGameProfile() { return new GameProfile(getUniqueId(), getUsername(), List.of()); }
+  /** The profile backends are told: the session server's, or what a GameProfileRequestEvent set. */
+  @Override public GameProfile getGameProfile() { return Profiles.toVelocity(player.gameProfile()); }
   @Override public long getPing() { return player.ping(); }
 
-  // Not tracked by Conduit's API.
-  @Override public HandshakeIntent getHandshakeIntent() { throw Unsupported.api("Player.getHandshakeIntent"); }
+  @Override public HandshakeIntent getHandshakeIntent() { return player.transferred() ? HandshakeIntent.TRANSFER : HandshakeIntent.LOGIN; }
   /** What a plugin set, or else the client's own language; null until the client has sent its settings. */
   @Override public Locale getEffectiveLocale() { return effectiveLocale != null ? effectiveLocale : player.locale().orElse(null); }
   @Override public void setEffectiveLocale(Locale locale) { effectiveLocale = locale; }
@@ -117,7 +117,7 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   /** What the client last sent on the brand channel; null until it has. */
   @Override public String getClientBrand() { return player.clientBrand().orElse(null); }
   @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
-  @Override public List<GameProfile.Property> getGameProfileProperties() { throw Unsupported.api("Player.getGameProfileProperties"); }
+  @Override public List<GameProfile.Property> getGameProfileProperties() { return getGameProfile().getProperties(); }
   @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { throw Unsupported.api("Player.setGameProfileProperties"); }
   // Titles, action bar, boss bars and the tab-list header, through Conduit's own display.
   @Override public void sendActionBar(Component message) { player.sendActionBar(Texts.toConduit(message)); }
@@ -207,7 +207,13 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public void addCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.addCustomChatCompletions"); }
   @Override public void removeCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.removeCustomChatCompletions"); }
   @Override public void setCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.setCustomChatCompletions"); }
-  @Override public void transferToHost(InetSocketAddress address) { throw Unsupported.api("Player.transferToHost"); }
+  /** Through PreTransferEvent, as Velocity sends one; a client before 1.20.5 has no Transfer packet, and Velocity throws for it. */
+  @Override public void transferToHost(InetSocketAddress address) {
+    if (player.protocolVersion() < ProtocolVersion.MINECRAFT_1_20_5.getProtocol()) {
+      throw new IllegalArgumentException(getUsername() + " is on " + getProtocolVersion() + "; transfers need 1.20.5 or later");
+    }
+    player.transferToHost(address.getHostString(), address.getPort());
+  }
   @Override public void storeCookie(Key key, byte[] data) { throw Unsupported.api("Player.storeCookie"); }
   @Override public void requestCookie(Key key) { throw Unsupported.api("Player.requestCookie"); }
   @Override public void setServerLinks(List<ServerLink> links) { throw Unsupported.api("Player.setServerLinks"); }

@@ -56,7 +56,9 @@ final class VelocityEventBus implements EventManager {
       com.velocitypowered.api.event.proxy.ProxyPreShutdownEvent.class, com.velocitypowered.api.event.proxy.ProxyReloadEvent.class,
       com.velocitypowered.api.event.proxy.ListenerBoundEvent.class, com.velocitypowered.api.event.proxy.ListenerCloseEvent.class,
       com.velocitypowered.api.event.player.PlayerSettingsChangedEvent.class, com.velocitypowered.api.event.player.PlayerClientBrandEvent.class,
-      com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent.class);
+      com.velocitypowered.api.event.player.PlayerResourcePackStatusEvent.class,
+      com.velocitypowered.api.event.connection.PreLoginEvent.class, com.velocitypowered.api.event.player.GameProfileRequestEvent.class,
+      com.velocitypowered.api.event.connection.PreTransferEvent.class);
 
   private final VelocityEnvironment environment;
   private final CopyOnWriteArrayList<Handler> handlers = new CopyOnWriteArrayList<>();
