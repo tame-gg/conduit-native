@@ -2,6 +2,7 @@
 package gg.tame.conduit.protocol;
 
 import gg.tame.conduit.api.player.BossBar;
+import gg.tame.conduit.api.player.Sound;
 import gg.tame.conduit.api.player.TabListEntry;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.login.ProfileProperty;
@@ -16,8 +17,8 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Titles, the action bar, boss bars, the tab-list header and footer and tab-list entries, built in one
- * client's own protocol for the proxy to send on a plugin's behalf.
+ * Titles, the action bar, boss bars, the tab-list header and footer, tab-list entries and sounds, built
+ * in one client's own protocol for the proxy to send on a plugin's behalf.
  *
  * <p>Which packet carries what is the packet table's to say ({@link ProtocolDefinition#defines}):
  * 1.8-1.16 put every title action behind one Title packet, 1.17 gave each its own packet, boss bars
@@ -275,6 +276,105 @@ public final class DisplayPackets {
       properties.add(new ProfileProperty(property.name(), property.value(), Optional.ofNullable(property.signature())));
     }
     return properties;
+  }
+
+  // ---- sounds -------------------------------------------------------------------------------
+  //
+  // Always by name, so no release's sound registry is needed. Until 1.19.2 that is Named Sound
+  // Effect; 1.19.3 removed it and let Sound Effect and Entity Sound Effect carry the name inline
+  // instead of a registry id (an "ID or" field of 0 followed by the sound event).
+
+  /** {@code sound} at a position, fixed-point to an eighth of a block as every release sends it. */
+  public static Optional<byte[]> soundAt(ProtocolDefinition protocol, Sound sound,
+                                         double x, double y, double z, long seed) throws IOException {
+    int number = protocol.version().number();
+    Body position = output -> {
+      output.writeInt((int) (x * 8.0));
+      output.writeInt((int) (y * 8.0));
+      output.writeInt((int) (z * 8.0));
+    };
+    if (ProtocolEras.soundInlineEvent(number)) {
+      if (!defines(protocol, PacketKind.PLAY_SOUND_EFFECT)) return Optional.empty();
+      return Optional.of(packet(protocol, PacketKind.PLAY_SOUND_EFFECT, output -> {
+        inlineSoundEvent(output, sound);
+        MinecraftOutput.varInt(output, source(sound.source(), number));
+        position.write(output);
+        output.writeFloat(sound.volume());
+        output.writeFloat(sound.pitch());
+        output.writeLong(seed);
+      }));
+    }
+    if (!defines(protocol, PacketKind.PLAY_NAMED_SOUND_EFFECT)) return Optional.empty();
+    return Optional.of(packet(protocol, PacketKind.PLAY_NAMED_SOUND_EFFECT, output -> {
+      MinecraftOutput.string(output, sound.name());
+      if (ProtocolEras.soundCategory(number)) MinecraftOutput.varInt(output, source(sound.source(), number));
+      position.write(output);
+      output.writeFloat(sound.volume());
+      // 1.7-1.9 send pitch as a byte where 63 is normal pitch.
+      if (ProtocolEras.soundPitchFloat(number)) output.writeFloat(sound.pitch());
+      else output.writeByte(Math.max(0, Math.min(255, (int) (sound.pitch() * 63))));
+      if (ProtocolEras.soundSeed(number)) output.writeLong(seed);
+    }));
+  }
+
+  /**
+   * {@code sound} following entity {@code entityId}. Only 1.19.3+ clients take an entity's sound by
+   * name; an older one would need the sound's registry id, so it is sent nothing.
+   */
+  public static Optional<byte[]> soundFollowing(ProtocolDefinition protocol, Sound sound,
+                                                int entityId, long seed) throws IOException {
+    int number = protocol.version().number();
+    if (!ProtocolEras.soundInlineEvent(number) || !defines(protocol, PacketKind.PLAY_ENTITY_SOUND_EFFECT)) return Optional.empty();
+    return Optional.of(packet(protocol, PacketKind.PLAY_ENTITY_SOUND_EFFECT, output -> {
+      inlineSoundEvent(output, sound);
+      MinecraftOutput.varInt(output, source(sound.source(), number));
+      MinecraftOutput.varInt(output, entityId);
+      output.writeFloat(sound.volume());
+      output.writeFloat(sound.pitch());
+      output.writeLong(seed);
+    }));
+  }
+
+  /**
+   * Stops sounds named {@code name} (null for any) in {@code source} (null for all). 1.13+ has a
+   * packet for it; 1.9.3-1.12.2 the MC|StopSound channel, whose category and then sound name are
+   * strings with empty meaning any; 1.7 and 1.8 nothing at all.
+   */
+  public static Optional<byte[]> stopSound(ProtocolDefinition protocol, String name,
+                                           Sound.Source source) throws IOException {
+    int number = protocol.version().number();
+    if (defines(protocol, PacketKind.PLAY_STOP_SOUND)) {
+      return Optional.of(packet(protocol, PacketKind.PLAY_STOP_SOUND, output -> {
+        output.writeByte((source != null ? 1 : 0) | (name != null ? 2 : 0));
+        if (source != null) MinecraftOutput.varInt(output, source(source, number));
+        if (name != null) MinecraftOutput.string(output, name);
+      }));
+    }
+    if (!ProtocolEras.stopSound(number) || !defines(protocol, PacketKind.PLAY_PLUGIN_MESSAGE)) return Optional.empty();
+    ByteArrayOutputStream payload = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(payload)) {
+      MinecraftOutput.string(output, source == null ? "" : sourceName(source, number));
+      MinecraftOutput.string(output, name == null ? "" : name);
+    }
+    return Optional.of(new PluginMessage("MC|StopSound", payload.toByteArray())
+        .encode(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE)));
+  }
+
+  /** "ID or Sound Event" with the event inline: 0, then its name and no fixed range. */
+  private static void inlineSoundEvent(DataOutputStream output, Sound sound) throws IOException {
+    MinecraftOutput.varInt(output, 0);
+    MinecraftOutput.string(output, sound.name());
+    output.writeBoolean(false);
+  }
+
+  /** The category's wire value: declaration order, 0 (master) to 10 (ui); ui only where the release has it. */
+  private static int source(Sound.Source source, int protocol) {
+    if (source == Sound.Source.UI && !ProtocolEras.soundUiSource(protocol)) return 0;
+    return source.ordinal();
+  }
+
+  private static String sourceName(Sound.Source source, int protocol) {
+    return Sound.Source.values()[source(source, protocol)].name().toLowerCase(java.util.Locale.ROOT);
   }
 
   private static Optional<byte[]> bossBar(ProtocolDefinition protocol, UUID id, int operation, Body body) throws IOException {

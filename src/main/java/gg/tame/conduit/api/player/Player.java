@@ -148,6 +148,22 @@ public interface Player extends CommandSource {
   /** The proxy's own entries on this player's tab list, in the order they were added. */
   List<TabListEntry> tabListEntries();
 
+  // Sounds, by name. A sound is sent only while the client stands in a world, and is dropped rather
+  // than held when it does not (before its first Join Game, or while a switch reconfigures it).
+
+  /**
+   * Plays {@code sound} at the player, following them as they move. Only 1.19.3+ clients can be sent
+   * that by name; older ones are sent nothing, since Conduit does not know where the player stands.
+   */
+  void playSound(Sound sound);
+  /** Plays {@code sound} at a position in the player's current world. Every client from 1.7. */
+  void playSound(Sound sound, double x, double y, double z);
+  /**
+   * Stops sounds the client is playing: those named {@code name} (null for any) in {@code source}
+   * (null for every source). From 1.9.3 clients; 1.7 and 1.8 have no way to stop one and are sent nothing.
+   */
+  void stopSound(String name, Sound.Source source);
+
   interface OptionalServer {
     boolean isPresent();
     RegisteredServer orElse(RegisteredServer fallback);

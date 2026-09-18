@@ -268,6 +268,31 @@ public final class ProtocolEras {
     return protocol >= RESOURCE_PACK_PROMPT_FROM;
   }
 
+  // Sounds played by name. Which packets a release has is the table's to say; these are the fields.
+
+  /** First protocol whose sounds carry a category (1.9); 1.7 and 1.8 have none. */
+  public static final int SOUND_CATEGORY_FROM = 107;
+  /** First protocol whose Named Sound Effect sends pitch as a float (1.10); before it a byte, 63 being normal. */
+  public static final int SOUND_PITCH_FLOAT_FROM = 201;
+  /** First protocol that can stop sounds (1.9.3), through the MC|StopSound channel until 1.13 gave it a packet. */
+  public static final int STOP_SOUND_FROM = 110;
+  /** First protocol whose sounds carry the seed that picks among a sound's variants (1.19). */
+  public static final int SOUND_SEED_FROM = 759;
+  /**
+   * First protocol that names a sound inline in Sound Effect and Entity Sound Effect (1.19.3), where
+   * Named Sound Effect went; an entity's sound could be named only by registry id before it.
+   */
+  public static final int SOUND_INLINE_EVENT_FROM = 761;
+  /** First protocol with the {@code ui} sound category (26.1). */
+  public static final int SOUND_UI_SOURCE_FROM = 775;
+
+  public static boolean soundCategory(int protocol) { return protocol >= SOUND_CATEGORY_FROM; }
+  public static boolean soundPitchFloat(int protocol) { return protocol >= SOUND_PITCH_FLOAT_FROM; }
+  public static boolean stopSound(int protocol) { return protocol >= STOP_SOUND_FROM; }
+  public static boolean soundSeed(int protocol) { return protocol >= SOUND_SEED_FROM; }
+  public static boolean soundInlineEvent(int protocol) { return protocol >= SOUND_INLINE_EVENT_FROM; }
+  public static boolean soundUiSource(int protocol) { return protocol >= SOUND_UI_SOURCE_FROM; }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */

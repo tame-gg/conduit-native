@@ -686,9 +686,10 @@ description and favicon. It never blocks the caller, and a backend that does not
 status rather than a failed future.
 
 A `Player` can be shown titles, the action bar, proxy-owned `BossBar`s, a tab-list header and footer
-and tab-list entries of the proxy's own, each written in that client's protocol. Boss bars, the header
-and entries are sent again after a server switch; what a client's release cannot show is documented
-on each method (see also "Display by client release" in `docs/VELOCITY_COMPATIBILITY.md`).
+and tab-list entries of the proxy's own, and played (and stopped) `Sound`s by name, each written in
+that client's protocol. Boss bars, the header and entries are sent again after a server switch; what a
+client's release cannot show or play is documented on each method (see also "Display by client
+release" and "Sounds by client release" in `docs/VELOCITY_COMPATIBILITY.md`).
 
 A command's `requires((source, arguments) -> ...)` decides whether the proxy has that command at all
 for a source: when it says no, a player's command goes on to their backend and `execute` returns false,
@@ -720,7 +721,7 @@ Maintenance 5.1.0, Server Redirect 1.4.3, mclo.gs 3.3.3 and velocity-hub 1.10-SN
 one's result and its remaining gaps are in `docs/VELOCITY_COMPATIBILITY.md`.
 
 This is not full Velocity compatibility. Titles, the action bar, boss bars, the player-list header and
-footer and a player's tab-list entries work through the adapter (only the proxy's own entries: the
+footer, a player's tab-list entries and sounds work through the adapter (only the proxy's own entries: the
 backend's are not tracked), and so do resource packs a plugin offers. Plugins built around the
 backend's tab list or scoreboard teams, rewriting a backend's resource packs, voice chat, Bedrock
 players, packet injection or Velocity's own network pipeline (ViaVersion and its relatives) are not

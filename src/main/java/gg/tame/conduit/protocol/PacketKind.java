@@ -258,5 +258,10 @@ public enum PacketKind {
   PLAY_BORDER_WARNING_DISTANCE,
   PLAY_SET_SUBTITLE,
   PLAY_SET_TITLE_TEXT,
-  PLAY_SET_TITLE_TIMES
+  PLAY_SET_TITLE_TIMES,
+  /**
+   * A sound that follows an entity. Named by registry id until 1.19.3, which let it carry the sound's
+   * name inline; only that form is written by Conduit (DisplayPackets).
+   */
+  PLAY_ENTITY_SOUND_EFFECT
 }

@@ -310,7 +310,7 @@ public final class VelocityCompatTests {
               case "kick" -> player.disconnect(Component.text("bye from velocity"));
               case "unsupported" -> {
                 try {
-                  player.stopSound(net.kyori.adventure.sound.SoundStop.all());
+                  player.openBook(net.kyori.adventure.inventory.Book.book(Component.text("t"), Component.text("a"), Component.text("p")));
                   source.sendMessage(Component.text("silently accepted"));
                 } catch (UnsupportedOperationException expected) {
                   source.sendMessage(Component.text("uoe: " + expected.getMessage()));
@@ -649,7 +649,7 @@ public final class VelocityCompatTests {
 
           // Unsupported calls say so; Conduit's internals are out of reach.
           alice.chat("/vtest unsupported");
-          alice.awaitText("uoe: Player.stopSound is not supported");
+          alice.awaitText("uoe: Player.openBook is not supported");
           alice.chat("/vtest internals");
           alice.awaitText("internals hidden");
           alice.chat("/vtest rich");

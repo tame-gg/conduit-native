@@ -2299,6 +2299,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public boolean removeResourcePack(java.util.UUID id) { return id != null && resourcePacks.remove(id); }
   @Override public boolean clearResourcePacks() { return resourcePacks.clear(); }
   @Override public List<gg.tame.conduit.api.player.ResourcePack.Offered> resourcePacks() { return resourcePacks.offered(); }
+  @Override public void playSound(gg.tame.conduit.api.player.Sound sound) { display.playSound(java.util.Objects.requireNonNull(sound, "sound")); }
+  @Override public void playSound(gg.tame.conduit.api.player.Sound sound, double x, double y, double z) {
+    display.playSound(java.util.Objects.requireNonNull(sound, "sound"), x, y, z);
+  }
+  @Override public void stopSound(String name, gg.tame.conduit.api.player.Sound.Source source) { display.stopSound(name, source); }
   @Override public String currentBackend() {
     BackendConnection current = backend;
     return current == null ? "" : current.server().name();

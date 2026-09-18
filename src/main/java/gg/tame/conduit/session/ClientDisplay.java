@@ -3,6 +3,7 @@ package gg.tame.conduit.session;
 
 import gg.tame.conduit.api.player.BossBar;
 import gg.tame.conduit.api.player.Player;
+import gg.tame.conduit.api.player.Sound;
 import gg.tame.conduit.api.player.TabListEntry;
 import gg.tame.conduit.api.player.TitleTimes;
 import gg.tame.conduit.api.text.Text;
@@ -44,7 +45,8 @@ import java.util.UUID;
  * so nothing of the proxy's can land between the world going and the re-send.
  *
  * <p>While the gate is closed, bars, the header and entries are state and go out on reopening; titles
- * and the action bar are moments, and the last {@value #MAX_HELD} are held and sent then.
+ * and the action bar are moments, and the last {@value #MAX_HELD} are held and sent then. Sounds are
+ * dropped instead: one played seconds late, in a world loaded since, is a different sound.
  */
 public final class ClientDisplay {
   /** Writes one packet to the client the way every other clientbound packet goes. */
@@ -72,6 +74,8 @@ public final class ClientDisplay {
   private final Map<UUID, TabListEntry> entries = new LinkedHashMap<>();
   /** Entries removed, or given a new profile, while the gate was closed; the client may still list them. */
   private final List<UUID> removedWhileClosed = new ArrayList<>();
+  /** The player's own entity id, from the last Join Game the client was written; -1 before one. */
+  private int entityId = -1;
 
   public ClientDisplay(Player player, ProtocolDefinition protocol, Output output) {
     this.player = player;
@@ -93,6 +97,9 @@ public final class ClientDisplay {
     synchronized (lock) {
       if (closed) return;
       inWorld = true;
+      // Every release's Join Game opens with the player's entity id as an int, and it is the id as
+      // this client knows it, since the packet has already been through any translator.
+      if (is(protocol, packet, PacketKind.PLAY_LOGIN)) entityId = joinGameEntityId(packet);
       try {
         for (UUID hidden : hiddenWhileClosed) send(DisplayPackets.bossBarRemove(protocol, hidden));
         for (BossBar bar : bars.keySet()) send(DisplayPackets.bossBarAdd(protocol, bar));
@@ -253,6 +260,44 @@ public final class ClientDisplay {
   }
 
   public List<TabListEntry> entries() { synchronized (lock) { return List.copyOf(entries.values()); } }
+
+  // ---- sounds -------------------------------------------------------------------------------
+
+  /** At the player, following them: an entity sound on their own entity. */
+  public void playSound(Sound sound) {
+    synchronized (lock) {
+      if (closed || !inWorld || entityId < 0) return;
+      int self = entityId;
+      trySend(() -> DisplayPackets.soundFollowing(protocol, sound, self, seed(sound)));
+    }
+  }
+
+  public void playSound(Sound sound, double x, double y, double z) {
+    synchronized (lock) {
+      if (closed || !inWorld) return;
+      trySend(() -> DisplayPackets.soundAt(protocol, sound, x, y, z, seed(sound)));
+    }
+  }
+
+  public void stopSound(String name, Sound.Source source) {
+    synchronized (lock) {
+      if (closed || !inWorld) return;
+      trySend(() -> DisplayPackets.stopSound(protocol, name, source));
+    }
+  }
+
+  private static int joinGameEntityId(byte[] packet) {
+    try {
+      byte[] body = PlayPackets.body(packet);
+      return body.length >= 4 ? java.nio.ByteBuffer.wrap(body).getInt() : -1;
+    } catch (IOException unreadable) {
+      return -1;
+    }
+  }
+
+  private static long seed(Sound sound) {
+    return sound.seed().orElseGet(() -> java.util.concurrent.ThreadLocalRandom.current().nextLong());
+  }
 
   // ---- the end ------------------------------------------------------------------------------
 

@@ -111,10 +111,12 @@ public final class AllTests {
     ClientSettingsTests.run();
     DisplayApiTests.run();
     TextFidelityTests.run();
+    SoundApiTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityDisplayTests.run();
     VelocityTextTests.run();
+    VelocitySoundTests.run();
     VelocityLifecycleTests.run();
     LoginLifecycleTests.run();
     VelocityEventsTests.run();

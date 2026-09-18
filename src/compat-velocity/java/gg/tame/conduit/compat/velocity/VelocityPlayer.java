@@ -212,10 +212,24 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public void requestCookie(Key key) { throw Unsupported.api("Player.requestCookie"); }
   @Override public void setServerLinks(List<ServerLink> links) { throw Unsupported.api("Player.setServerLinks"); }
   // Player and Unsupported.ChatOnly both default these; the class has to pick.
-  @Override public void playSound(Sound sound) { throw Unsupported.api("Player.playSound"); }
-  @Override public void playSound(Sound sound, double x, double y, double z) { throw Unsupported.api("Player.playSound"); }
-  @Override public void playSound(Sound sound, Sound.Emitter emitter) { throw Unsupported.api("Player.playSound"); }
-  @Override public void stopSound(SoundStop stop) { throw Unsupported.api("Player.stopSound"); }
+  /** At the player, following them; only 1.19.3+ clients can be sent that (see Player.playSound). */
+  @Override public void playSound(Sound sound) { player.playSound(sound(sound)); }
+  @Override public void playSound(Sound sound, double x, double y, double z) { player.playSound(sound(sound), x, y, z); }
+  /** The player is the only emitter the proxy knows: it has no other entity to follow. */
+  @Override public void playSound(Sound sound, Sound.Emitter emitter) {
+    if (emitter != Sound.Emitter.self()) throw Unsupported.api("Player.playSound(Sound, Emitter) with an emitter other than Sound.Emitter.self()");
+    player.playSound(sound(sound));
+  }
+  @Override public void stopSound(SoundStop stop) {
+    player.stopSound(stop.sound() == null ? null : stop.sound().asString(), stop.source() == null ? null : source(stop.source()));
+  }
+  private static gg.tame.conduit.api.player.Sound sound(Sound sound) {
+    return new gg.tame.conduit.api.player.Sound(sound.name().asString(), source(sound.source()), sound.volume(), sound.pitch(), sound.seed());
+  }
+  // Both name the same eleven sources.
+  private static gg.tame.conduit.api.player.Sound.Source source(Sound.Source source) {
+    return gg.tame.conduit.api.player.Sound.Source.valueOf(source.name());
+  }
   @Override public void openBook(Book book) { throw Unsupported.api("Player.openBook"); }
   @Override public void showDialog(DialogLike dialog) { throw Unsupported.api("Player.showDialog"); }
   @Override public void closeDialog() { throw Unsupported.api("Player.closeDialog"); }

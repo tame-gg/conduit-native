@@ -139,6 +139,12 @@ KINDS: dict[tuple[str, str, str], list[str]] = {
     (STATE_PLAY, TO_CLIENT, "PLAY_CLEAR_TITLES"): ["clear_titles"],
     (STATE_PLAY, TO_CLIENT, "PLAY_BOSS_BAR"): ["boss_bar"],
     (STATE_PLAY, TO_CLIENT, "PLAY_TAB_LIST_HEADER"): ["playerlist_header"],
+    # Sounds the proxy plays by name: Named Sound Effect until 1.19.2, then Sound Effect and Entity
+    # Sound Effect with the name inline; Stop Sound from 1.13.
+    (STATE_PLAY, TO_CLIENT, "PLAY_NAMED_SOUND_EFFECT"): ["named_sound_effect"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_SOUND_EFFECT"): ["sound_effect"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_ENTITY_SOUND_EFFECT"): ["entity_sound_effect"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_STOP_SOUND"): ["stop_sound"],
 
     (STATE_PLAY, TO_SERVER, "PLAY_CLIENT_INFORMATION"): ["settings"],
     (STATE_PLAY, TO_SERVER, "PLAY_CHAT_COMMAND"): ["chat_command", "chat"],

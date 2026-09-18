@@ -1116,7 +1116,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, rebuilt));
       }
-      case PLAY_STATISTICS, PLAY_BOSS_BAR, PLAY_NAMED_SOUND_EFFECT, PLAY_NBT_QUERY_RESPONSE,
+      case PLAY_STATISTICS, PLAY_BOSS_BAR, PLAY_NAMED_SOUND_EFFECT, PLAY_ENTITY_SOUND_EFFECT, PLAY_NBT_QUERY_RESPONSE,
            PLAY_SPAWN_PAINTING, PLAY_SPAWN_GLOBAL_ENTITY, PLAY_BLOCK_ENTITY_DATA, PLAY_BLOCK_ACTION,
            PLAY_SCOREBOARD_OBJECTIVE, PLAY_TEAMS, PLAY_UPDATE_SCORE, PLAY_DISPLAY_SCOREBOARD,
            PLAY_TITLE, PLAY_STOP_SOUND, PLAY_CAMERA, PLAY_USE_BED, PLAY_FACE_PLAYER,
