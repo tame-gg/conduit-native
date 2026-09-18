@@ -74,7 +74,265 @@ public final class CommandApiTests {
     commandTreeHoldsAcrossDirectProtocols();
     pluginJarEndToEnd();
     badPluginJarsDoNotStopTheProxy();
+    pluginsEnableInDependencyOrderAndStopInReverse();
+    foreignFormatPluginsGetTheNativeLifecycle();
+    permissionProviderRevertsWhenItsPluginGoes();
+    apiCommandsServeAnySource();
+    pluginsDisplaceBuiltInsButNotEachOther();
     System.out.println("CommandApiTests OK");
+  }
+
+  /**
+   * velocity-hub registers /hub and /lobby, and was refused outright: Conduit's /hub and the /lobby
+   * server shortcut held both names. A plugin now displaces a built-in; never /conduit, and never
+   * another plugin.
+   */
+  private static void pluginsDisplaceBuiltInsButNotEachOther() throws Exception {
+    Fixture fixture = new Fixture();
+    RecordingPlayer player = new RecordingPlayer("Kyle", "survival", Set.of(Permissions.HUB, Permissions.SERVER_USE, "conduit.test"));
+    fixture.players.add(player);
+    RegisteredCommand builtInHub = fixture.commands.get("hub").orElseThrow();
+    RegisteredCommand builtInLobby = fixture.commands.get("lobby").orElseThrow();
+    RegisteredCommand builtInServer = fixture.commands.get("server").orElseThrow();
+    Plugin hubPlugin = new TestPlugin("velocity-hub");
+    List<String> ran = new ArrayList<>();
+    fixture.commands.register(hubPlugin, new RegisteredCommand("hub", List.of("lobby"), "",
+        (source, arguments) -> ran.add("plugin"), (source, arguments) -> List.of("from-plugin")));
+    fixture.commands.register(hubPlugin, cmd("server", List.of()));
+    fixture.commands.dispatch(player, "/hub");
+    fixture.commands.dispatch(player, "/lobby");
+    require(ran.equals(List.of("plugin", "plugin")), "both names run the plugin's command, ran " + ran);
+    require(player.backend.equals("survival"), "the built-ins did not run");
+    require(fixture.commands.tabComplete(player, "/lobby ").equals(List.of("from-plugin")), "completion is the plugin's");
+    require(fixture.commands.displacedBuiltIns().equals(Set.of("hub", "lobby", "server")), "displaced " + fixture.commands.displacedBuiltIns());
+    byte[] graph = CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765), fixture.names(), fixture.commands.names(),
+        fixture.commands.displacedBuiltIns());
+    require(childrenOf(graph, "server").isEmpty(), "the graph declares the plugin's /server, not the built-in's server list");
+    List<String> roots = rootChildren(graph);
+    require(roots.contains("hub") && roots.contains("lobby") && roots.stream().distinct().count() == roots.size(), "each name declared once, got " + roots);
+
+    boolean reserved = false;
+    try { fixture.commands.register(new TestPlugin("greedy"), cmd("mine", List.of("conduit"))); }
+    catch (IllegalArgumentException expected) { reserved = expected.getMessage().contains("reserved"); }
+    require(reserved, "/conduit is reserved, even as an alias");
+    require(fixture.commands.get("mine").isEmpty() && fixture.commands.get("conduit").orElseThrow() != null, "nothing of it registered");
+    boolean clash = false;
+    try { fixture.commands.register(new TestPlugin("rival"), cmd("fresh", List.of("hub"))); }
+    catch (IllegalArgumentException expected) { clash = true; }
+    require(clash && fixture.commands.get("fresh").isEmpty(), "another plugin's name still refuses the whole command");
+
+    fixture.commands.unregisterAll(hubPlugin);
+    require(fixture.commands.get("hub").orElseThrow() == builtInHub && fixture.commands.get("lobby").orElseThrow() == builtInLobby
+        && fixture.commands.get("server").orElseThrow() == builtInServer, "the built-ins come back when the plugin goes");
+    require(fixture.commands.displacedBuiltIns().isEmpty(), "nothing displaced any more");
+    fixture.commands.dispatch(player, "/lobby");
+    require(player.backend.equals("lobby"), "the /lobby shortcut works again, said " + player.messages);
+    require(childrenOf(CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765), fixture.names(), fixture.commands.names(),
+        fixture.commands.displacedBuiltIns()), "server").equals(fixture.names()), "the graph declares the built-in /server again");
+  }
+
+  /**
+   * Three lifecycle faults, each seen before this test: a plugin whose dependency threw in onEnable
+   * was enabled anyway; shutdown disabled a dependency before the plugins using it; and a second
+   * loadAll() enabled every plugin a second time.
+   */
+  private static void pluginsEnableInDependencyOrderAndStopInReverse() throws Exception {
+    Path root = TempFiles.dir("conduit-plugin-order");
+    Path plugins = Files.createDirectories(root.resolve("plugins"));
+    // Jar names sort dependents first, so directory order alone would get every one of these wrong.
+    buildPluginJar(plugins.resolve("A-beta.jar"), "beta", "beta.BetaPlugin", 1, lifecycle("beta", "Beta", false), "depend: [alpha]\n");
+    buildPluginJar(plugins.resolve("B-delta.jar"), "delta", "delta.DeltaPlugin", 1, lifecycle("delta", "Delta", false),
+        "optional-dependencies: [epsilon, absent]\n");
+    buildPluginJar(plugins.resolve("C-alpha.jar"), "alpha", "alpha.AlphaPlugin", 1, lifecycle("alpha", "Alpha", false));
+    buildPluginJar(plugins.resolve("D-epsilon.jar"), "epsilon", "epsilon.EpsilonPlugin", 1, lifecycle("epsilon", "Epsilon", false));
+    buildPluginJar(plugins.resolve("E-gamma.jar"), "gamma", "gamma.GammaPlugin", 1, lifecycle("gamma", "Gamma", false), "depend: [broken]\n");
+    buildPluginJar(plugins.resolve("F-broken.jar"), "broken", "broken.BrokenPlugin", 1, lifecycle("broken", "Broken", true));
+    SIGNALS.clear();
+    ConduitRuntime runtime = runtime(plugins, root);
+    try {
+      runtime.pluginRuntime().loadAll();
+      runtime.pluginRuntime().loadAll();
+      require(SIGNALS.stream().filter("enable:alpha"::equals).count() == 1, "a second loadAll enables nothing again, signals " + SIGNALS);
+      for (String id : List.of("alpha", "beta", "delta", "epsilon")) require(runtime.plugins().plugin(id).isPresent(), id + " enabled");
+      require(runtime.plugins().plugin("broken").isEmpty(), "a plugin whose onEnable threw is not enabled");
+      require(runtime.plugins().plugin("gamma").isEmpty(), "a plugin whose dependency failed is not enabled, signals " + SIGNALS);
+      require(!SIGNALS.contains("enable:gamma"), "its onEnable never ran");
+      require(before("enable:alpha", "enable:beta"), "dependency enabled first, signals " + SIGNALS);
+      require(before("enable:epsilon", "enable:delta"), "present optional dependency enabled first, signals " + SIGNALS);
+      runtime.plugins().disable(runtime.plugins().plugin("alpha").orElseThrow());
+      require(before("disable:beta", "disable:alpha"), "disabling a dependency disables its dependents first, signals " + SIGNALS);
+      require(runtime.plugins().plugin("beta").isEmpty(), "dependent went with it");
+    } finally {
+      runtime.close();
+    }
+    require(before("disable:delta", "disable:epsilon"), "shutdown disables in reverse enable order, signals " + SIGNALS);
+    try (var list = Files.list(plugins)) {
+      for (Path jar : list.filter(path -> path.toString().endsWith(".jar")).toList()) require(deletable(jar), "jar released: " + jar.getFileName());
+    }
+  }
+
+  private static boolean before(String first, String second) {
+    synchronized (SIGNALS) {
+      int a = SIGNALS.indexOf(first);
+      int b = SIGNALS.indexOf(second);
+      return a >= 0 && b >= 0 && a < b;
+    }
+  }
+
+  private static String lifecycle(String pkg, String name, boolean throwOnEnable) {
+    return plugin(pkg, name, """
+        @Override public void onEnable() {
+          gg.tame.conduit.tests.CommandApiTests.signal("enable:" + description().id());
+          if (%s) throw new IllegalStateException("enable failed");
+        }
+        @Override public void onDisable() { gg.tame.conduit.tests.CommandApiTests.signal("disable:" + description().id()); }
+        """.formatted(throwOnEnable));
+  }
+
+  /** The Velocity layer's route in: a loader for another jar format, run through the native lifecycle. */
+  private static void foreignFormatPluginsGetTheNativeLifecycle() throws Exception {
+    Path root = TempFiles.dir("conduit-plugin-format");
+    Path plugins = Files.createDirectories(root.resolve("plugins"));
+    foreignJar(plugins.resolve("A-foreign.jar"), "foreign");
+    buildPluginJar(plugins.resolve("B-alpha.jar"), "alpha", "alpha.AlphaPlugin", 1, lifecycle("alpha", "Alpha", false));
+    foreignJar(plugins.resolve("C-dupe.jar"), "alpha");
+    foreignJar(plugins.resolve("D-boom.jar"), "boom");
+    SIGNALS.clear();
+    TestFormat format = new TestFormat();
+    ConduitRuntime runtime = runtime(plugins, root);
+    try {
+      runtime.events().register(new TestPlugin("watch"), new Object() {
+        @Subscribe public void on(gg.tame.conduit.api.event.plugin.PluginEnableEvent event) { signal("enable-event:" + event.plugin().description().id()); }
+        @Subscribe public void off(gg.tame.conduit.api.event.plugin.PluginDisableEvent event) { signal("disable-event:" + event.plugin().description().id()); }
+      });
+      runtime.plugins().registerLoader(format);
+      runtime.pluginRuntime().loadAll();
+      require(before("enable:foreign", "enable-event:foreign"), "PluginEnableEvent follows onEnable, signals " + SIGNALS);
+      boolean refused = false;
+      try { runtime.plugins().registerLoader(new TestFormat()); } catch (IllegalStateException expected) { refused = true; }
+      require(refused, "a loader registered after loading is refused, not silently never used");
+      Plugin foreign = runtime.plugins().plugin("foreign").orElseThrow(() -> new AssertionError("foreign plugin not enabled, signals " + SIGNALS));
+      require(before("enable:alpha", "enable:foreign"), "foreign plugin ordered after its native dependency, signals " + SIGNALS);
+      require(foreign.dataDirectory().equals(plugins.toAbsolutePath().normalize().resolve("foreign")) && Files.isDirectory(foreign.dataDirectory()),
+          "attached with its own data directory");
+      require(foreign.getLogger() != null && foreign.proxy() == runtime, "attached logger and proxy");
+      require(runtime.pluginCatalog().all().stream().anyMatch(entry -> entry.display().contains("[testformat]")), "listed under its format");
+      require(format.closes.get() == 1, "the duplicate id's resources were closed, closes " + format.closes.get());
+      require(runtime.commands().hasCommand("foreign"), "its command is registered");
+      runtime.events().fire(new ProxyStartEvent(runtime));
+      require(SIGNALS.contains("foreign-event"), "its listener runs");
+
+      runtime.plugins().disable(foreign);
+      require(before("disable-event:foreign", "disable:foreign"), "PluginDisableEvent, then onDisable, signals " + SIGNALS);
+      require(format.closes.get() == 2, "resources closed once on disable, closes " + format.closes.get());
+      require(!runtime.commands().hasCommand("foreign"), "command released");
+      SIGNALS.remove("foreign-event");
+      runtime.events().fire(new ProxyStartEvent(runtime));
+      require(!SIGNALS.contains("foreign-event"), "listener released");
+      runtime.plugins().disable(foreign);
+      require(format.closes.get() == 2, "disabling twice closes nothing twice");
+    } finally {
+      runtime.close();
+    }
+  }
+
+  private static void foreignJar(Path jar, String id) throws Exception {
+    try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+      out.putNextEntry(new JarEntry("test-format.txt"));
+      out.write(id.getBytes(StandardCharsets.UTF_8));
+      out.closeEntry();
+    }
+  }
+
+  private static final class TestFormat implements gg.tame.conduit.api.plugin.PluginLoader {
+    private final java.util.concurrent.atomic.AtomicInteger closes = new java.util.concurrent.atomic.AtomicInteger();
+    @Override public String format() { return "testformat"; }
+    @Override public boolean accepts(java.util.jar.JarFile jar) { return jar.getEntry("test-format.txt") != null; }
+    @Override public Loaded load(Path jar) throws Exception {
+      String id;
+      try (java.util.jar.JarFile file = new java.util.jar.JarFile(jar.toFile());
+           var input = file.getInputStream(file.getEntry("test-format.txt"))) {
+        id = new String(input.readAllBytes(), StandardCharsets.UTF_8).strip();
+      }
+      if (id.equals("boom")) throw new IllegalStateException("unreadable format");
+      return new Loaded(new PluginDescription(id, id, "2.0", "none", 1, List.of("alpha")), new ForeignPlugin(), closes::incrementAndGet);
+    }
+  }
+
+  public static final class ForeignPlugin extends gg.tame.conduit.api.plugin.ConduitPlugin {
+    @Override public void onEnable() {
+      signal("enable:" + description().id());
+      proxy().commands().register(this, gg.tame.conduit.api.command.CommandManager.Command.builder("foreign").build());
+      proxy().events().register(this, this);
+    }
+    @Subscribe public void onStart(ProxyStartEvent event) { signal("foreign-event"); }
+    @Override public void onDisable() { signal("disable:" + description().id()); }
+  }
+
+  /** A provider left installed after its plugin went would answer from a closed class loader. */
+  private static void permissionProviderRevertsWhenItsPluginGoes() throws Exception {
+    Path root = TempFiles.dir("conduit-plugin-perms");
+    Path plugins = Files.createDirectories(root.resolve("plugins"));
+    buildPluginJar(plugins.resolve("perm.jar"), "perm", "perm.PermPlugin", 1, plugin("perm", "Perm", """
+        @Override public void onEnable() {
+          proxy().setPermissionProvider(this, (subject, node) -> node.equals("granted"));
+        }
+        """));
+    buildPluginJar(plugins.resolve("bystander.jar"), "bystander", "bystander.BystanderPlugin", 1, plugin("bystander", "Bystander", ""));
+    ConduitRuntime runtime = runtime(plugins, root);
+    try {
+      runtime.pluginRuntime().loadAll();
+      require(runtime.permissions().hasPermission(null, "granted") && !runtime.permissions().hasPermission(null, "other"),
+          "the plugin's provider answers");
+      runtime.plugins().disable(runtime.plugins().plugin("bystander").orElseThrow());
+      require(!runtime.permissions().hasPermission(null, "other"), "another plugin's disable leaves it alone");
+      runtime.plugins().disable(runtime.plugins().plugin("perm").orElseThrow());
+      require(runtime.permissions() instanceof gg.tame.conduit.permission.PermissivePermissionProvider, "default back after its owner went");
+    } finally {
+      runtime.close();
+    }
+  }
+
+  /** The Velocity layer runs commands as its own sources; it must get those same objects back. */
+  private static void apiCommandsServeAnySource() throws Exception {
+    Path root = TempFiles.dir("conduit-api-commands");
+    ConduitRuntime runtime = runtimeAt(root);
+    try {
+      gg.tame.conduit.api.command.CommandManager api = runtime.commands();
+      Plugin owner = new TestPlugin("api");
+      List<Object> ran = new ArrayList<>();
+      api.register(owner, gg.tame.conduit.api.command.CommandManager.Command.builder("greet").alias("hi").permission("greet.use")
+          .handler((source, arguments) -> { ran.add(source); ran.addAll(arguments); })
+          .completer((source, arguments) -> List.of("alice", "bob"))
+          .build());
+      ApiSource allowed = new ApiSource("Remote", Set.of("greet.use"), new ArrayList<>());
+      ApiSource denied = new ApiSource("Nobody", Set.of(), new ArrayList<>());
+      require(api.execute(allowed, "/hi x"), "alias runs");
+      require(ran.size() == 2 && ran.get(0) == allowed && ran.get(1).equals("x"), "handler got the caller's own source and its arguments, got " + ran);
+      require(api.execute(denied, "greet"), "a known command is handled even when refused");
+      require(ran.size() == 2 && denied.messages().stream().anyMatch(line -> line.contains("permission")), "refused, and told so");
+      require(api.complete(allowed, "/hi a").equals(List.of("alice")), "completer filtered by the typed prefix");
+      require(api.complete(allowed, "/gre").equals(List.of("greet")), "name completes");
+      require(api.complete(denied, "/gre").isEmpty(), "no suggestion without permission");
+      require(api.hasCommand("hi") && api.hasCommand("GREET") && !api.hasCommand("nope"), "hasCommand by name or alias");
+      require(!api.execute(allowed, "/nope"), "an unknown command is not handled");
+      require(api.execute(runtime.console(), "greet console"), "the console runs it");
+      require(runtime.console().hasPermission("anything") && runtime.console().username().equals("CONSOLE"), "console holds every node");
+      boolean threw = false;
+      try { api.register(owner, gg.tame.conduit.api.command.CommandManager.Command.builder("other").alias("hi").build()); }
+      catch (IllegalArgumentException expected) { threw = true; }
+      require(threw && !api.hasCommand("other"), "a clashing alias refuses the whole command");
+      api.unregisterAll(owner);
+      require(!api.hasCommand("greet") && !api.hasCommand("hi"), "unregisterAll releases name and alias");
+    } finally {
+      runtime.close();
+    }
+  }
+
+  private record ApiSource(String username, Set<String> permissions, List<String> messages) implements gg.tame.conduit.api.command.CommandSource {
+    @Override public boolean hasPermission(String permission) { return permissions.contains(permission); }
+    @Override public void sendMessage(String message) { messages.add(message); }
+    @Override public void sendMessage(Text text) { messages.add(text.plain()); }
   }
 
   /** register() used to install the name, then throw on a colliding alias, leaving half a command. */
@@ -660,7 +918,11 @@ public final class CommandApiTests {
   }
 
   /** Compiles the source in-process and packs it with a descriptor. */
-  private static void buildPluginJar(Path jar, String id, String mainClass, int apiVersion, String source) throws Exception {
+  static void buildPluginJar(Path jar, String id, String mainClass, int apiVersion, String source) throws Exception {
+    buildPluginJar(jar, id, mainClass, apiVersion, source, "");
+  }
+  /** {@code descriptorLines} is appended to conduit-plugin.yml as it stands, e.g. "depend: [a]\n". */
+  static void buildPluginJar(Path jar, String id, String mainClass, int apiVersion, String source, String descriptorLines) throws Exception {
     Path work = TempFiles.dir("conduit-plugin-build");
     String pkg = mainClass.substring(0, mainClass.lastIndexOf('.'));
     String simple = mainClass.substring(mainClass.lastIndexOf('.') + 1);
@@ -674,7 +936,7 @@ public final class CommandApiTests {
     try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
       out.putNextEntry(new JarEntry("conduit-plugin.yml"));
       out.write(("id: " + id + "\nname: " + id + "\nversion: 1.0.0\nmain: " + mainClass
-          + "\napi-version: " + apiVersion + "\n").getBytes(StandardCharsets.UTF_8));
+          + "\napi-version: " + apiVersion + "\n" + descriptorLines).getBytes(StandardCharsets.UTF_8));
       out.closeEntry();
       try (var classes = Files.walk(work.resolve(pkg))) {
         for (Path compiled : classes.filter(path -> path.toString().endsWith(".class")).toList()) {

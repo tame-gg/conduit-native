@@ -36,6 +36,11 @@ public final class CommandGraphs {
    */
   public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
       List<String> extraNames) throws IOException {
+    return mergeProxyCommands(protocol, packet, serverNames, extraNames, java.util.Set.of());
+  }
+  /** As above, with {@code displaced} the built-in names a plugin holds (CommandManager#displacedBuiltIns). */
+  public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
+      List<String> extraNames, java.util.Set<String> displaced) throws IOException {
     int id = PlayPackets.packetId(packet);
     int cursor = varIntLength(packet, 0);
     int count = readVarInt(packet, cursor);
@@ -59,7 +64,7 @@ public final class CommandGraphs {
     if ((flags & 0x08) != 0) header += varIntLength(packet, header);
     if (header > rootIndexStart) throw new IOException("command tree root node overruns the packet");
 
-    List<CommandGraph.LiteralCommand> literals = proxyLiterals(serverNames, extraNames);
+    List<CommandGraph.LiteralCommand> literals = proxyLiterals(serverNames, extraNames, displaced);
     int added = 0;
     for (CommandGraph.LiteralCommand literal : literals) added += 1 + literal.children().size();
 
@@ -125,11 +130,16 @@ public final class CommandGraphs {
     return proxyOnly(protocol, serverNames, List.of());
   }
   public static byte[] proxyOnly(ProtocolDefinition protocol, List<String> serverNames, List<String> extraNames) throws IOException {
+    return proxyOnly(protocol, serverNames, extraNames, java.util.Set.of());
+  }
+  public static byte[] proxyOnly(ProtocolDefinition protocol, List<String> serverNames, List<String> extraNames,
+      java.util.Set<String> displaced) throws IOException {
     CommandGraph graph = CommandGraph.decode(rootOnly());
-    graph.addLiteralCommands(proxyLiterals(serverNames, extraNames));
+    graph.addLiteralCommands(proxyLiterals(serverNames, extraNames, displaced));
     return graph.encode(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS));
   }
-  private static List<CommandGraph.LiteralCommand> proxyLiterals(List<String> serverNames, List<String> extraNames) {
+  private static List<CommandGraph.LiteralCommand> proxyLiterals(List<String> serverNames, List<String> extraNames,
+      java.util.Set<String> displaced) {
     List<String> sendChildren = new ArrayList<>();
     sendChildren.add("current");
     sendChildren.addAll(serverNames);
@@ -144,6 +154,9 @@ public final class CommandGraphs {
     literals.add(new CommandGraph.LiteralCommand("gkick", List.of()));
     literals.add(new CommandGraph.LiteralCommand("server", serverNames));
     literals.add(new CommandGraph.LiteralCommand("send", sendChildren));
+    // A built-in a plugin displaced is declared as that plugin's commands are, a bare literal: the
+    // built-in's server-name children would have the client suggest arguments the plugin never takes.
+    literals.replaceAll(literal -> displaced.contains(literal.name()) ? new CommandGraph.LiteralCommand(literal.name(), List.of()) : literal);
     java.util.LinkedHashSet<String> emitted = new java.util.LinkedHashSet<>();
     for (CommandGraph.LiteralCommand literal : literals) emitted.add(literal.name());
     // /<server> shortcuts first, then whatever else is registered -- plugin commands and their

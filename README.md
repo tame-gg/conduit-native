@@ -537,7 +537,9 @@ api-version: 1
 
 `api-version` is the Conduit API integer, not a Minecraft protocol. Incompatible plugins are rejected.
 
-Optional `depend: [other-plugin]` orders loading; a plugin whose dependencies are missing is skipped.
+Optional `depend: [other-plugin]` orders loading; a plugin whose dependencies are missing, or failed to
+enable, is skipped. `optional-dependencies: [other-plugin]` orders loading when that plugin is present and
+is ignored when it is not. Dependencies order enabling only; a plugin's classes cannot see another's.
 
 ```java
 package example;
@@ -573,15 +575,29 @@ itself catches everything); a parameter that is not an `Event` is rejected at re
 `plugins/<id>/`, which `dataDirectory()` returns; `SimplePluginConfiguration.load(path, defaults)` reads a
 `key=value` file there, creating it from the defaults and appending any key it is missing.
 
-Lifecycle: discover → validate → classload → dependency order → onLoad/onEnable. Disable unregisters events, commands, and scheduler tasks and closes the plugin classloader. Data lives in `plugins/<id>/`.
+Lifecycle: discover → validate → classload → dependency order → onLoad/onEnable → `PluginEnableEvent`.
+Disable fires `PluginDisableEvent`, calls `onDisable`, then unregisters the plugin's listeners, commands,
+scheduler tasks and permission provider and closes its classloader; disabling a plugin disables its
+dependents first, and shutdown disables everything in reverse enable order. Data lives in `plugins/<id>/`.
 
 A jar that fails any of those steps is logged and skipped — a bad descriptor, a duplicate id, a main class
 that will not initialize, or an `onEnable` that throws never stops the proxy from starting or the other
 plugins from loading, and the rejected jar's classloader is closed so the file is not left locked.
 
-Events include proxy start/shutdown, login/auth/disconnect, server connect/connected/switch/failed (cancellable connect), chat/command execute, plugin enable/disable, plugin messaging.
+Events include proxy start/shutdown, login (deniable), auth, initial-server choice, server connect
+(cancellable and redirectable, for the first server too), connected/switch/switch-failed, post-login,
+disconnect, chat (cancellable; clients before 1.19 only), command execute (cancellable), plugin
+enable/disable, and plugin messages (cancellable, both directions). Every event's Javadoc names the thread
+it fires on; events fire synchronously, and player events fire on that player's connection threads, so a
+listener must not block. `@Subscribe(order = ...)` orders listeners from `FIRST` to `LAST`. A listener
+that throws is logged and the others still run.
 
-Scheduler tasks run on `conduit-scheduler` threads, never on player socket threads.
+Scheduler tasks run on `conduit-scheduler` threads, never on player socket threads. A task that throws
+is logged and, if repeating, runs again next time.
+
+Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
+uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins
+then go through the same lifecycle as native ones.
 
 ## Velocity compatibility
 

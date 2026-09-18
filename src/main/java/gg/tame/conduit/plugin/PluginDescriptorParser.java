@@ -16,6 +16,7 @@ public final class PluginDescriptorParser {
     String text = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
     Map<String, String> values = new LinkedHashMap<>();
     List<String> depend = new ArrayList<>();
+    List<String> optional = new ArrayList<>();
     for (String raw : text.split("\\R")) {
       String line = raw.strip();
       if (line.isEmpty() || line.startsWith("#")) continue;
@@ -24,20 +25,21 @@ public final class PluginDescriptorParser {
       String key = line.substring(0, colon).strip();
       String value = line.substring(colon + 1).strip();
       if (value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) value = value.substring(1, value.length() - 1);
-      if (key.equals("depend") || key.equals("dependencies")) {
-        String inner = value;
-        if (inner.startsWith("[") && inner.endsWith("]")) inner = inner.substring(1, inner.length() - 1);
-        for (String item : inner.split(",")) {
-          String id = item.strip();
-          if (!id.isEmpty()) depend.add(id);
-        }
-        continue;
-      }
+      if (key.equals("depend") || key.equals("dependencies")) { list(value, depend); continue; }
+      if (key.equals("optional-dependencies")) { list(value, optional); continue; }
       values.put(key, value);
     }
     String main = first(values, "main", "main-class");
     int api = Integer.parseInt(first(values, "api-version", "apiVersion"));
-    return new PluginDescription(first(values, "id"), first(values, "name"), first(values, "version"), main, api, depend);
+    return new PluginDescription(first(values, "id"), first(values, "name"), first(values, "version"), main, api, depend, optional);
+  }
+  private static void list(String value, List<String> into) {
+    String inner = value;
+    if (inner.startsWith("[") && inner.endsWith("]")) inner = inner.substring(1, inner.length() - 1);
+    for (String item : inner.split(",")) {
+      String id = item.strip();
+      if (!id.isEmpty()) into.add(id);
+    }
   }
   private static String first(Map<String, String> values, String... keys) {
     for (String key : keys) {

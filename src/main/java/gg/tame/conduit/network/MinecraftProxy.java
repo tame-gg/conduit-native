@@ -2,8 +2,6 @@ package gg.tame.conduit.network;
 
 import gg.tame.conduit.api.event.player.PlayerAuthenticatedEvent;
 import gg.tame.conduit.api.event.player.PlayerLoginEvent;
-import gg.tame.conduit.api.event.proxy.ProxyShutdownEvent;
-import gg.tame.conduit.api.event.proxy.ProxyStartEvent;
 import gg.tame.conduit.auth.Authenticators;
 import gg.tame.conduit.auth.AuthenticationException;
 import gg.tame.conduit.auth.PlayerAuthenticator;
@@ -71,11 +69,20 @@ public final class MinecraftProxy implements AutoCloseable {
     this.forwarder = Forwarders.create(configuration); this.listener = listener; listener.bind(configuration.listener());
     Path configDir = pluginsDirectory.getParent() == null ? Path.of(".") : pluginsDirectory.getParent();
     this.runtime = new ConduitRuntime(configuration, pluginsDirectory, configDir);
+    runtime.bindListener((java.net.InetSocketAddress) listener.getLocalAddress());
+    runtime.onShutdownRequest(() -> {
+      try { close(); } catch (IOException failure) { ConduitLog.warn("shutdown: " + failure.getMessage()); }
+    });
     CoreCommands.register(runtime);
+    // The one bootstrap an optional layer gets: the Velocity adapter, when it is on the classpath, is
+    // handed the native API and registers its plugin format there (PluginManager#registerLoader).
+    // Found by name so that core never imports a Velocity type.
     try {
-      Class.forName("gg.tame.conduit.compat.velocity.VelocityBoot")
-          .getMethod("install", ConduitRuntime.class)
-          .invoke(null, runtime);
+      Class<?> boot = Class.forName("gg.tame.conduit.compat.velocity.VelocityBoot");
+      java.lang.reflect.Method install;
+      try { install = boot.getMethod("install", gg.tame.conduit.api.ConduitProxy.class); }
+      catch (NoSuchMethodException older) { install = boot.getMethod("install", ConduitRuntime.class); }
+      install.invoke(null, runtime);
     } catch (ClassNotFoundException ignored) {
     } catch (ReflectiveOperationException exception) {
       ConduitLog.error("Velocity compatibility layer failed to install", exception);
@@ -90,7 +97,7 @@ public final class MinecraftProxy implements AutoCloseable {
     running = true;
     accepting = true;
     try { runtime.pluginRuntime().loadAll(); } catch (Exception exception) { ConduitLog.error("plugin load failed", exception); }
-    runtime.events().fire(new ProxyStartEvent(runtime));
+    runtime.started();
     try (var workers = Executors.newThreadPerTaskExecutor(SocketThreads.factory())) {
       while (running) {
         SocketChannel client;
@@ -121,9 +128,9 @@ public final class MinecraftProxy implements AutoCloseable {
         }
         workers.submit(() -> handle(client));
       }
-    } finally {
-      runtime.events().fire(new ProxyShutdownEvent(runtime));
     }
+    // ProxyShutdownEvent is close()'s to fire, before it disables plugins. Fired here it raced
+    // that disable, and plugins were usually gone before they heard the proxy was stopping.
   }
   private void handle(SocketChannel channel) {
     ConnectionThrottle.LeaseHolder leaseHolder = new ConnectionThrottle.LeaseHolder();
@@ -207,7 +214,12 @@ public final class MinecraftProxy implements AutoCloseable {
           try { transport.write(LoginDisconnect.encode(protocol, runtime.maintenance().kickMessage())); } catch (IOException ignored) { }
           return;
         }
-        runtime.events().fire(new PlayerLoginEvent(player));
+        PlayerLoginEvent login = runtime.events().fire(new PlayerLoginEvent(player));
+        if (!login.allowed()) {
+          // Still in Login: the reason goes out as a login disconnect, and no backend is dialled.
+          player.disconnect(login.denyReason().orElseThrow());
+          return;
+        }
         if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
         // The session clears the timeout itself, once its own login exchange with the client and
         // the backend is over: everything read from the client before that point is part of a
@@ -289,7 +301,12 @@ public final class MinecraftProxy implements AutoCloseable {
     client.write(StatusResponder.response(protocol, client.read(configuration.maxFrameBytes()), description, versionName, advertised));
     client.write(StatusResponder.pong(protocol, client.read(configuration.maxFrameBytes())));
   }
-  @Override public void close() throws IOException {
+  /**
+   * Synchronized because ConduitProxy#shutdown closes from its own thread while the owner's
+   * try-with-resources closes too once serve() returns; the second waits for the first rather than
+   * disabling plugins under a graceful shutdown still moving players.
+   */
+  @Override public synchronized void close() throws IOException {
     if (running) {
       runtime.shutdownGracefully(() -> accepting = false);
     }

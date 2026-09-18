@@ -7,6 +7,7 @@ import gg.tame.conduit.api.event.plugin.PluginEnableEvent;
 import gg.tame.conduit.api.plugin.ConduitPlugin;
 import gg.tame.conduit.api.plugin.Plugin;
 import gg.tame.conduit.api.plugin.PluginDescription;
+import gg.tame.conduit.api.plugin.PluginLoader;
 import gg.tame.conduit.api.plugin.PluginManager;
 import gg.tame.conduit.command.CommandManager;
 import gg.tame.conduit.event.ConduitEventManager;
@@ -20,65 +21,84 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.jar.JarFile;
 import java.util.logging.Logger;
 
 public final class ConduitPluginManager implements PluginManager {
+  /** Enable order. Guarded by itself; plugin code is never called while holding it. */
   private final Map<String, LoadedPlugin> plugins = new LinkedHashMap<>();
   private final Path pluginsDirectory;
-  private final Path dataRoot;
   private final ConduitProxy proxy;
   private final ConduitEventManager events;
   private final ConduitScheduler scheduler;
   private final CommandManager commands;
-  private final List<ExternalJarHandler> extraHandlers = new ArrayList<>();
+  private final List<ExternalJarHandler> extraHandlers = new CopyOnWriteArrayList<>();
+  private final List<PluginLoader> loaders = new CopyOnWriteArrayList<>();
+  private volatile boolean loaded;
   public ConduitPluginManager(Path pluginsDirectory, ConduitProxy proxy, ConduitEventManager events, ConduitScheduler scheduler, CommandManager commands) {
     this.pluginsDirectory = pluginsDirectory;
-    this.dataRoot = pluginsDirectory;
     this.proxy = proxy;
     this.events = events;
     this.scheduler = scheduler;
     this.commands = commands;
   }
+  /** Older seam for a format that runs its own lifecycle. New formats use {@link #registerLoader}. */
   public void registerHandler(ExternalJarHandler handler) { extraHandlers.add(handler); }
-  public void loadAll() throws IOException {
+  @Override public void registerLoader(PluginLoader loader) {
+    if (loader == null) throw new IllegalArgumentException("loader is required");
+    if (loaded) throw new IllegalStateException("plugins are already loaded; register loaders from the proxy bootstrap");
+    loaders.add(loader);
+  }
+  /**
+   * Reads and enables every jar in the plugins directory. Runs once: serve() calls it, and so do
+   * tests and embedders that drive a runtime without serving. A second call enabled every plugin a
+   * second time over the first, whose listeners, commands and class loader nothing could then reach.
+   */
+  public synchronized void loadAll() throws IOException {
+    if (loaded) return;
+    loaded = true;
     Files.createDirectories(pluginsDirectory);
     List<Path> jars = new ArrayList<>();
     try (var stream = Files.list(pluginsDirectory)) {
-      stream.filter(path -> path.getFileName().toString().endsWith(".jar")).forEach(jars::add);
+      stream.filter(path -> path.getFileName().toString().endsWith(".jar")).sorted().forEach(jars::add);
     }
     List<Pending> pending = new ArrayList<>();
     for (Path jar : jars) {
       try {
-        if (tryExternal(jar)) continue;
-        pending.add(read(jar));
+        Path normalized = jar.toAbsolutePath().normalize();
+        if (!normalized.startsWith(pluginsDirectory.toAbsolutePath().normalize())) throw new IOException("plugin path escaped plugins directory");
+        Claim claim = claim(normalized);
+        if (claim.handler != null) { claim.handler.load(normalized); continue; }
+        pending.add(claim.loader != null ? foreign(claim.loader, normalized) : read(normalized));
       }
       // LinkageError too: a main class whose static initializer throws, or whose supertype is not in
       // the jar, comes out of Class.forName as an Error. One such jar used to abort startup.
       catch (Exception | LinkageError rejected) { ConduitLog.error("rejected plugin jar " + jar.getFileName() + ": " + rejected); }
     }
-    pending = resolve(pending);
-    for (Pending item : pending) enable(item);
+    for (Pending item : resolve(pending)) enable(item);
   }
-  private boolean tryExternal(Path jar) throws Exception {
-    Path normalized = jar.toAbsolutePath().normalize();
-    try (JarFile file = new JarFile(normalized.toFile())) {
-      for (ExternalJarHandler handler : extraHandlers) {
-        if (handler.accepts(file)) {
-          handler.load(normalized);
-          return true;
-        }
-      }
+  private record Claim(ExternalJarHandler handler, PluginLoader loader) {}
+  /** Decides who reads the jar, then lets go of it: a loader must not find it already open. */
+  private Claim claim(Path jar) throws IOException {
+    try (JarFile file = new JarFile(jar.toFile())) {
+      for (ExternalJarHandler handler : extraHandlers) if (handler.accepts(file)) return new Claim(handler, null);
+      for (PluginLoader loader : loaders) if (loader.accepts(file)) return new Claim(null, loader);
     }
-    return false;
+    return new Claim(null, null);
   }
-  private Pending read(Path jar) throws Exception {
-    Path normalized = jar.toAbsolutePath().normalize();
-    if (!normalized.startsWith(pluginsDirectory.toAbsolutePath().normalize())) throw new IOException("plugin path escaped plugins directory");
+  private Pending foreign(PluginLoader loader, Path jar) throws Exception {
+    PluginLoader.Loaded result = loader.load(jar);
+    if (result == null) throw new IOException(loader.format() + " loader returned nothing");
+    return new Pending(result.description(), result.plugin(), result.resources(), loader.format());
+  }
+  private Pending read(Path normalized) throws Exception {
     try (JarFile file = new JarFile(normalized.toFile())) {
       var entry = file.getEntry("conduit-plugin.yml");
       if (entry == null) throw new IOException("missing conduit-plugin.yml");
@@ -92,11 +112,11 @@ public final class ConduitPluginManager implements PluginManager {
         Class<?> type = Class.forName(description.mainClass(), true, loader);
         if (!ConduitPlugin.class.isAssignableFrom(type)) throw new IOException("main class must extend ConduitPlugin");
         ConduitPlugin plugin = (ConduitPlugin) type.getDeclaredConstructor().newInstance();
-        return new Pending(description, plugin, loader);
+        return new Pending(description, plugin, loader, PluginCatalog.NATIVE);
       } catch (Exception | LinkageError failed) {
         // The loader holds the jar open, so a rejected plugin that kept one left the file locked
         // on Windows: the operator could not delete or replace the jar without restarting.
-        closeLoader(loader);
+        close(loader);
         throw failed;
       }
     }
@@ -106,80 +126,118 @@ public final class ConduitPluginManager implements PluginManager {
     for (Pending item : pending) {
       if (byId.putIfAbsent(item.description.id(), item) != null) {
         ConduitLog.error("duplicate plugin id " + item.description.id());
-        closeLoader(item.loader);
+        close(item.resources);
       }
     }
     List<Pending> ordered = new ArrayList<>();
+    Set<String> placed = new HashSet<>();
     List<Pending> remaining = new ArrayList<>(byId.values());
     while (!remaining.isEmpty()) {
-      Pending next = null;
-      for (Pending item : remaining) {
-        if (item.description.dependencies().stream().allMatch(dep -> plugins.containsKey(dep) || ordered.stream().anyMatch(done -> done.description.id().equals(dep)))) {
-          next = item;
-          break;
-        }
-      }
+      Pending next = pick(remaining, placed, byId.keySet(), true);
+      // An optional dependency only orders. In a cycle through one it gives way, rather than
+      // leaving every plugin in the cycle unloaded.
+      if (next == null) next = pick(remaining, placed, byId.keySet(), false);
       if (next == null) {
         ConduitLog.error("unresolved plugin dependencies: " + remaining.stream().map(item -> item.description.id()).toList());
-        for (Pending dropped : remaining) closeLoader(dropped.loader);
+        for (Pending dropped : remaining) close(dropped.resources);
         break;
       }
       remaining.remove(next);
       ordered.add(next);
+      placed.add(next.description.id());
     }
     return ordered;
   }
+  private Pending pick(List<Pending> remaining, Set<String> placed, Set<String> present, boolean strict) {
+    for (Pending item : remaining) {
+      boolean hard = item.description.dependencies().stream().allMatch(dep -> placed.contains(dep) || enabled(dep));
+      boolean optional = !strict || item.description.optionalDependencies().stream()
+          .allMatch(dep -> placed.contains(dep) || !present.contains(dep));
+      if (hard && optional) return item;
+    }
+    return null;
+  }
+  private boolean enabled(String id) { synchronized (plugins) { return plugins.containsKey(id); } }
   private void enable(Pending pending) {
+    String id = pending.description.id();
     try {
+      // Ordering only promises a dependency was enabled before; it does not promise the enable
+      // worked. A plugin whose dependency threw in onEnable was enabled anyway, against nothing.
+      for (String dependency : pending.description.dependencies()) {
+        if (!enabled(dependency)) throw new IOException("dependency " + dependency + " is not enabled");
+      }
       Path root = pluginsDirectory.toAbsolutePath().normalize();
-      Path data = root.resolve(pending.description.id()).normalize();
+      Path data = root.resolve(id).normalize();
       if (!data.startsWith(root)) throw new IOException("plugin data path escaped plugins directory");
       Files.createDirectories(data);
-      Logger logger = Logger.getLogger("plugin." + pending.description.id());
+      Logger logger = Logger.getLogger("plugin." + id);
       pending.plugin.attach(pending.description, proxy, logger, data, scheduler);
       pending.plugin.onLoad();
       pending.plugin.onEnable();
-      plugins.put(pending.description.id(), new LoadedPlugin(pending.plugin, pending.loader));
+      synchronized (plugins) { plugins.put(id, new LoadedPlugin(pending.plugin, pending.resources)); }
       if (proxy instanceof ConduitRuntime runtime) {
-        runtime.pluginCatalog().put(new PluginCatalog.Entry(
-            pending.description.id(), pending.description.name(), pending.description.version(), PluginCatalog.Kind.CONDUIT));
+        runtime.pluginCatalog().put(new PluginCatalog.Entry(id, pending.description.name(), pending.description.version(), pending.format));
       }
       events.fire(new PluginEnableEvent(pending.plugin));
-      ConduitLog.info("Enabled plugin " + pending.description.id() + " " + pending.description.version());
+      ConduitLog.info("Enabled " + (pending.format.equals(PluginCatalog.NATIVE) ? "" : pending.format + " ") + "plugin " + id + " " + pending.description.version());
     } catch (Exception | LinkageError failure) {
-      ConduitLog.error("failed to enable plugin " + pending.description.id(), failure);
+      ConduitLog.error("failed to enable plugin " + id, failure);
       // It never reached the plugins map, so disable() will never run for it. Anything it managed
       // to register before it threw would otherwise stay live with no owner able to take it back.
-      plugins.remove(pending.description.id());
-      if (proxy instanceof ConduitRuntime runtime) runtime.pluginCatalog().remove(pending.description.id());
-      events.unregister(pending.plugin);
-      scheduler.cancel(pending.plugin);
-      commands.unregisterAll(pending.plugin);
-      closeLoader(pending.loader);
+      synchronized (plugins) { plugins.remove(id); }
+      if (proxy instanceof ConduitRuntime runtime) runtime.pluginCatalog().remove(id);
+      release(pending.plugin);
+      close(pending.resources);
     }
   }
-  @Override public Collection<Plugin> plugins() { return List.copyOf(plugins.values().stream().map(LoadedPlugin::plugin).toList()); }
-  @Override public Optional<Plugin> plugin(String id) { return Optional.ofNullable(plugins.get(id)).map(LoadedPlugin::plugin); }
+  @Override public Collection<Plugin> plugins() {
+    synchronized (plugins) { return plugins.values().stream().map(LoadedPlugin::plugin).toList(); }
+  }
+  @Override public Optional<Plugin> plugin(String id) {
+    synchronized (plugins) { return Optional.ofNullable(plugins.get(id)).map(LoadedPlugin::plugin); }
+  }
   @Override public void disable(Plugin plugin) {
-    LoadedPlugin loaded = plugins.remove(plugin.description().id());
-    if (loaded == null) return;
-    if (proxy instanceof ConduitRuntime runtime) {
-      runtime.pluginCatalog().remove(plugin.description().id());
+    if (plugin == null) return;
+    String id = plugin.description().id();
+    // Dependents first, latest-enabled first: they may still call into this one from onDisable.
+    List<Plugin> dependents;
+    synchronized (plugins) {
+      LoadedPlugin loaded = plugins.get(id);
+      if (loaded == null || loaded.plugin != plugin) return;
+      dependents = new ArrayList<>();
+      for (LoadedPlugin other : plugins.values()) {
+        if (other.plugin.description().dependencies().contains(id)) dependents.addFirst(other.plugin);
+      }
     }
-    try { events.fire(new PluginDisableEvent(plugin)); } catch (RuntimeException ignored) { }
-    try { plugin.onDisable(); } catch (RuntimeException exception) { ConduitLog.error("plugin disable failed: " + plugin.description().id(), exception); }
+    for (Plugin dependent : dependents) disable(dependent);
+    LoadedPlugin loaded;
+    synchronized (plugins) { loaded = plugins.remove(id); }
+    if (loaded == null) return;
+    if (proxy instanceof ConduitRuntime runtime) runtime.pluginCatalog().remove(id);
+    events.fire(new PluginDisableEvent(plugin));
+    try { plugin.onDisable(); } catch (Exception | LinkageError exception) { ConduitLog.error("plugin disable failed: " + id, exception); }
+    release(plugin);
+    close(loaded.resources);
+  }
+  /** Everything registered under the plugin's name, so none of it outlives the plugin. */
+  private void release(Plugin plugin) {
+    // Tasks first: a task still running is the likeliest thing to register something new.
+    scheduler.retire(plugin);
     events.unregister(plugin);
-    scheduler.cancel(plugin);
     commands.unregisterAll(plugin);
-    closeLoader(loaded.loader);
+    if (proxy instanceof ConduitRuntime runtime) runtime.pluginReleased(plugin);
   }
+  /** Disables every plugin, newest first, so each goes before anything it depends on. */
   public void disableAll() {
-    for (Plugin plugin : new ArrayList<>(plugins())) disable(plugin);
-    for (ExternalJarHandler handler : extraHandlers) handler.shutdown();
+    List<Plugin> enabled = new ArrayList<>(plugins());
+    for (Plugin plugin : enabled.reversed()) disable(plugin);
+    for (ExternalJarHandler handler : extraHandlers) {
+      try { handler.shutdown(); } catch (RuntimeException exception) { ConduitLog.error("plugin format shutdown failed", exception); }
+    }
   }
-  private static void closeLoader(URLClassLoader loader) {
-    try { loader.close(); } catch (IOException ignored) { }
+  private static void close(AutoCloseable resources) {
+    try { resources.close(); } catch (Exception exception) { ConduitLog.warn("could not release plugin resources: " + exception); }
   }
-  private record Pending(PluginDescription description, ConduitPlugin plugin, URLClassLoader loader) {}
-  private record LoadedPlugin(Plugin plugin, URLClassLoader loader) {}
+  private record Pending(PluginDescription description, ConduitPlugin plugin, AutoCloseable resources, String format) {}
+  private record LoadedPlugin(Plugin plugin, AutoCloseable resources) {}
 }

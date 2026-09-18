@@ -54,7 +54,14 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final ModdedService modded;
   private final ConduitEventManager events = new ConduitEventManager();
   private final ConduitScheduler scheduler = new ConduitScheduler();
-  private final PermissionProvider permissions = new PermissivePermissionProvider();
+  private static final PermissionProvider DEFAULT_PERMISSIONS = new PermissivePermissionProvider();
+  /** Provider and owner change together, so a disable can never reset another plugin's provider. */
+  private volatile PermissionGrant permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
+  private final gg.tame.conduit.command.ConsoleCommandSource console = new gg.tame.conduit.command.ConsoleCommandSource();
+  private volatile InetSocketAddress boundAddress;
+  private volatile Runnable shutdownHook;
+  private final java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+  private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
   private final ServerViews servers;
   private final PlayerViews playerViews;
   private final ConduitPluginManager plugins;
@@ -82,7 +89,8 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.modded = new ModdedService(configuration.modded());
     this.commands = new CommandManager();
     this.players = new PlayerManager();
-    this.servers = new ServerViews(selector.registry(), selector);
+    this.boundAddress = configuration.listener();
+    this.servers = new ServerViews(this, selector.registry(), selector);
     this.playerViews = new PlayerViews(players);
     this.plugins = new ConduitPluginManager(pluginsDirectory, this, events, scheduler, commands);
     health.start();
@@ -116,9 +124,47 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   @Override public ConduitEventManager events() { return events; }
   @Override public PluginManager plugins() { return plugins; }
   @Override public Scheduler scheduler() { return scheduler; }
-  @Override public PermissionProvider permissions() { return permissions; }
+  @Override public PermissionProvider permissions() { return permissions.provider(); }
+  @Override public synchronized void setPermissionProvider(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {
+    if (owner == null || provider == null) throw new IllegalArgumentException("owner and provider are required");
+    permissions = new PermissionGrant(owner, provider);
+  }
+  /** Whatever {@code plugin} installed stops answering, before its class loader closes under it. */
+  public void pluginReleased(gg.tame.conduit.api.plugin.Plugin plugin) {
+    synchronized (this) {
+      if (permissions.owner() == plugin) permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
+    }
+  }
+  private record PermissionGrant(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {}
   @Override public Optional<Player> player(UUID uniqueId) { return playerViews.get(uniqueId); }
   @Override public Optional<Player> player(String username) { return playerViews.getByUsername(username); }
+  @Override public gg.tame.conduit.api.command.CommandSource console() { return console; }
+  @Override public InetSocketAddress boundAddress() { return boundAddress; }
+  /** The listener's real address, which differs from the configured one when that asked for port 0. */
+  public void bindListener(InetSocketAddress address) { if (address != null) this.boundAddress = address; }
+  @Override public boolean onlineMode() {
+    return configuration.authentication().mode() == gg.tame.conduit.config.AuthenticationMode.ONLINE;
+  }
+  /** What {@link #shutdown()} runs: the owning listener's close, which kicks players before this closes. */
+  public void onShutdownRequest(Runnable hook) { this.shutdownHook = hook; }
+  @Override public void shutdown() {
+    Runnable hook = shutdownHook;
+    // Its own platform thread: the caller may be a listener on a player's connection, which the
+    // shutdown is about to close, or a scheduler task, whose pool the shutdown is about to stop.
+    Thread.ofPlatform().name("conduit-shutdown").start(() -> {
+      try {
+        if (hook != null) hook.run();
+        else close();
+      } catch (Exception | LinkageError failure) {
+        gg.tame.conduit.log.ConduitLog.error("proxy shutdown failed", failure);
+      }
+    });
+  }
+  @Override public boolean shuttingDown() { return closed.get() || gracefulShutdown.isShuttingDown(); }
+  /** Fires ProxyStartEvent, once; the matching ProxyShutdownEvent comes from {@link #close()}. */
+  public void started() {
+    if (started.compareAndSet(false, true)) events.fire(new gg.tame.conduit.api.event.proxy.ProxyStartEvent(this));
+  }
   public ConduitPluginManager pluginRuntime() { return plugins; }
   public Optional<RegisteredServer> registered(String name) { return servers.getServer(name); }
   public boolean isMaintenanceActive() { return maintenance.isActive(); }
@@ -184,7 +230,14 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     gracefulShutdown.run(stopAccepting, players, selector);
   }
 
+  /**
+   * Fires ProxyShutdownEvent and disables every plugin, once. The event used to fire from the
+   * serving thread's exit while close() disabled plugins on the closing thread, so a plugin was
+   * often gone before it heard the proxy was stopping.
+   */
   @Override public void close() {
+    if (!closed.compareAndSet(false, true)) return;
+    if (started.get()) events.fire(new gg.tame.conduit.api.event.proxy.ProxyShutdownEvent(this));
     plugins.disableAll();
     health.close();
     scheduler.close();
@@ -206,12 +259,20 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     }
   }
   static final class ServerViews implements ServerManager {
+    private final ConduitRuntime runtime;
     private final ServerRegistry registry;
     private final BackendSelector selector;
     private final ConcurrentHashMap<String, ApiServer> views = new ConcurrentHashMap<>();
-    ServerViews(ServerRegistry registry, BackendSelector selector) {
-      this.registry = registry; this.selector = selector;
-      for (BackendServer server : registry.all()) views.put(ServerRegistry.normalize(server.name()), new ApiServer(server, selector));
+    ServerViews(ConduitRuntime runtime, ServerRegistry registry, BackendSelector selector) {
+      this.runtime = runtime; this.registry = registry; this.selector = selector;
+      for (BackendServer server : registry.all()) views.put(ServerRegistry.normalize(server.name()), new ApiServer(server, selector, runtime));
+    }
+    @Override public List<RegisteredServer> initialServers() { return resolve(runtime.configuration().initialBackends()); }
+    @Override public List<RegisteredServer> fallbackServers() { return resolve(runtime.configuration().fallbackBackends()); }
+    private List<RegisteredServer> resolve(List<String> names) {
+      List<RegisteredServer> result = new ArrayList<>();
+      for (String name : names) getServer(name).ifPresent(result::add);
+      return List.copyOf(result);
     }
     @Override public Optional<RegisteredServer> getServer(String name) {
       return Optional.ofNullable(views.get(ServerRegistry.normalize(name)));
@@ -219,7 +280,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     @Override public Collection<RegisteredServer> getServers() { return List.copyOf(views.values()); }
     @Override public RegisteredServer register(String name, InetSocketAddress address) {
       BackendServer server = registry.register(new BackendServer(name, address));
-      ApiServer view = new ApiServer(server, selector);
+      ApiServer view = new ApiServer(server, selector, runtime);
       views.put(ServerRegistry.normalize(name), view);
       return view;
     }
@@ -231,7 +292,17 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   static final class ApiServer implements RegisteredServer {
     private final BackendServer server;
     private final BackendSelector selector;
-    ApiServer(BackendServer server, BackendSelector selector) { this.server = server; this.selector = selector; }
+    private final ConduitRuntime runtime;
+    ApiServer(BackendServer server, BackendSelector selector, ConduitRuntime runtime) {
+      this.server = server; this.selector = selector; this.runtime = runtime;
+    }
+    @Override public Collection<Player> players() {
+      List<Player> result = new ArrayList<>();
+      for (TrackedPlayer player : runtime.playerManager().all()) {
+        if (player instanceof Player api && server.name().equalsIgnoreCase(player.currentBackend())) result.add(api);
+      }
+      return List.copyOf(result);
+    }
     @Override public String getName() { return server.name(); }
     @Override public InetSocketAddress getAddress() { return server.address(); }
     @Override public boolean isOnline() { return selector.advertisement(server.name()).isPresent(); }

@@ -5,40 +5,67 @@ import gg.tame.conduit.api.event.EventManager;
 import gg.tame.conduit.api.event.Subscribe;
 import gg.tame.conduit.api.plugin.Plugin;
 import gg.tame.conduit.log.ConduitLog;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class ConduitEventManager implements EventManager {
+  private static final Comparator<Handler> ORDER = Comparator.comparing((Handler handler) -> handler.order).thenComparingLong(handler -> handler.sequence);
   private final Map<Class<?>, CopyOnWriteArrayList<Handler>> handlers = new ConcurrentHashMap<>();
+  private final AtomicLong sequence = new AtomicLong();
   @Override public void register(Plugin plugin, Object listener) {
+    List<Handler> found = new ArrayList<>();
     for (Method method : listener.getClass().getMethods()) {
-      if (method.getAnnotation(Subscribe.class) == null) continue;
+      Subscribe subscribe = method.getAnnotation(Subscribe.class);
+      if (subscribe == null) continue;
       if (method.getParameterCount() != 1) throw new IllegalArgumentException("@Subscribe methods must take one event");
       Class<?> type = method.getParameterTypes()[0];
       // Refused here rather than accepted and never called: nothing is ever fired that is not an
       // Event, so such a listener would sit in the map looking registered and never run.
       if (!Event.class.isAssignableFrom(type)) throw new IllegalArgumentException("@Subscribe parameter must be an Event: " + type.getName());
       method.setAccessible(true);
-      handlers.computeIfAbsent(type, ignored -> new CopyOnWriteArrayList<>()).add(new Handler(plugin, listener, method));
+      found.add(new Handler(plugin, listener, method, type, subscribe.order(), 0));
+    }
+    // All or nothing, as commands are: a bad method after a good one left half the listener live.
+    for (Handler handler : found) {
+      handlers.computeIfAbsent(handler.type, ignored -> new CopyOnWriteArrayList<>())
+          .add(new Handler(handler.plugin, handler.listener, handler.method, handler.type, handler.order, sequence.incrementAndGet()));
     }
   }
   @Override public void unregister(Plugin plugin) {
     for (CopyOnWriteArrayList<Handler> list : handlers.values()) list.removeIf(handler -> handler.plugin == plugin);
   }
   @Override public <E extends Event> E fire(E event) {
+    List<Handler> matching = new ArrayList<>();
     for (Map.Entry<Class<?>, CopyOnWriteArrayList<Handler>> entry : handlers.entrySet()) {
       // isInstance, not an exact key match: a listener declaring a supertype -- a shared base class,
       // or Event itself for a logger -- was registered under a class nothing is ever fired under,
       // so it silently never ran.
-      if (!entry.getKey().isInstance(event)) continue;
-      for (Handler handler : entry.getValue()) {
-        try { handler.method.invoke(handler.listener, event); }
-        catch (Exception exception) { ConduitLog.error("plugin event listener failed: " + handler.plugin.description().id(), exception); }
+      if (entry.getKey().isInstance(event)) matching.addAll(entry.getValue());
+    }
+    // One order across every matching type. Walked type by type, a listener on Event and one on the
+    // exact class ran in whatever order the map happened to hold them.
+    matching.sort(ORDER);
+    for (Handler handler : matching) {
+      try { handler.method.invoke(handler.listener, event); }
+      catch (InvocationTargetException thrown) {
+        Throwable cause = thrown.getCause();
+        if (cause instanceof VirtualMachineError fatal) throw fatal;
+        ConduitLog.error("plugin event listener failed: " + owner(handler) + " on " + event.getClass().getSimpleName(), cause);
+      } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+        ConduitLog.error("plugin event listener failed: " + owner(handler), failure);
       }
     }
     return event;
   }
-  private record Handler(Plugin plugin, Object listener, Method method) {}
+  private static String owner(Handler handler) {
+    try { return handler.plugin.description().id(); } catch (RuntimeException unnamed) { return String.valueOf(handler.plugin); }
+  }
+  private record Handler(Plugin plugin, Object listener, Method method, Class<?> type, Subscribe.Order order, long sequence) {}
 }

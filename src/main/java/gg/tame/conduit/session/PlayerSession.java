@@ -182,18 +182,93 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (current == null) return new OptionalServerView(null);
     return new OptionalServerView(runtime.registered(current.server().name()).orElse(null));
   }
+  @Override public int protocolVersion() { return clientProtocol; }
+  @Override public InetAddress remoteAddress() { return address; }
+  @Override public java.net.InetSocketAddress virtualHost() {
+    String host = handshake.requestedHost();
+    int marker = host.indexOf('\0');
+    return java.net.InetSocketAddress.createUnresolved(marker < 0 ? host : host.substring(0, marker), handshake.requestedPort());
+  }
   @Override public java.util.concurrent.CompletableFuture<Boolean> connect(gg.tame.conduit.api.server.RegisteredServer server) {
-    return java.util.concurrent.CompletableFuture.supplyAsync(() -> transferTo(server.getName()));
+    return connectWithResult(server).thenApply(gg.tame.conduit.api.player.ConnectResult::successful);
+  }
+  /**
+   * Silent, unlike transferTo: the plugin that asked decides what the player hears. It used to run
+   * on the common fork-join pool, whose few threads a handful of switches (each up to its whole
+   * budget on a slow backend) could hold between them; each switch now gets a socket thread.
+   */
+  @Override public java.util.concurrent.CompletableFuture<gg.tame.conduit.api.player.ConnectResult> connectWithResult(
+      gg.tame.conduit.api.server.RegisteredServer server) {
+    BackendServer target = server == null ? null : selector.registry().get(server.getName()).orElse(null);
+    if (target == null) {
+      return java.util.concurrent.CompletableFuture.completedFuture(new gg.tame.conduit.api.player.ConnectResult(
+          gg.tame.conduit.api.player.ConnectResult.Status.FAILED, "unknown server " + (server == null ? "" : server.getName())));
+    }
+    if (target.name().equalsIgnoreCase(currentBackend())) {
+      return java.util.concurrent.CompletableFuture.completedFuture(new gg.tame.conduit.api.player.ConnectResult(
+          gg.tame.conduit.api.player.ConnectResult.Status.ALREADY_CONNECTED, ""));
+    }
+    var result = new java.util.concurrent.CompletableFuture<gg.tame.conduit.api.player.ConnectResult>();
+    gg.tame.conduit.network.SocketThreads.start(() -> {
+      try { result.complete(runSwitch(target)); }
+      catch (RuntimeException | Error failure) {
+        result.complete(new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.FAILED, String.valueOf(failure)));
+        throw failure;
+      }
+    });
+    return result;
   }
   @Override public void disconnect(String reason) {
-    // In Configuration the Play chat packet's id is some other Configuration packet, so the reason
-    // never showed: a client refused there got bytes it could not read and a closed socket.
+    disconnect(Text.of(reason == null ? "" : reason));
+  }
+  /**
+   * Written as the disconnect packet of whatever state the client is in. In Play this used to be a
+   * system chat line followed by a closed socket, so a kicked player -- including every player a
+   * shutdown kicked -- saw "Connection lost" and the reason, if at all, scrolled past in chat. In
+   * Configuration the Play chat id was some other packet the client could not read; in Login, a
+   * plugin refusing a player got nothing it could show.
+   */
+  @Override public void disconnect(Text reason) {
     try {
-      writeClient(clientState.state() == ConnectionState.CONFIGURATION
-          ? PlayPackets.configurationDisconnect(protocol, reason)
-          : PlayPackets.systemChat(protocol, reason));
+      ConnectionState state = clientState.state();
+      PacketKind kind = switch (state) {
+        case LOGIN -> PacketKind.LOGIN_DISCONNECT;
+        case CONFIGURATION -> PacketKind.CONFIGURATION_DISCONNECT;
+        case PLAY -> PacketKind.PLAY_DISCONNECT;
+        default -> null;
+      };
+      if (kind != null && protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, kind)) {
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var output = new java.io.DataOutputStream(bytes)) {
+          gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(state, PacketDirection.SERVER_TO_CLIENT, kind));
+          // Login's reason is JSON text in every version; the other two became NBT with 1.20.3.
+          boolean nbt = state != ConnectionState.LOGIN && gg.tame.conduit.protocol.ProtocolEras.textComponentNbt(clientProtocol);
+          gg.tame.conduit.text.TextCodec.write(output, reason == null ? Text.empty() : reason, nbt);
+        }
+        writeClient(bytes.toByteArray());
+      }
     } catch (IOException ignored) { }
     close();
+  }
+  @Override public boolean sendPluginMessageToServer(String channel, byte[] data) {
+    BackendConnection current = backend;
+    ConnectionState state = clientState.state();
+    if (current == null || closed || lifecycle.get() != SessionLifecycle.CONNECTED) return false;
+    if (state != ConnectionState.PLAY && state != ConnectionState.CONFIGURATION) return false;
+    PacketKind kind = state == ConnectionState.CONFIGURATION ? PacketKind.CONFIGURATION_PLUGIN_MESSAGE : PacketKind.PLAY_PLUGIN_MESSAGE;
+    if (!protocol.defines(state, PacketDirection.CLIENT_TO_SERVER, kind)) return false;
+    try {
+      // Built in the client's dialect and sent the way the client's own packets go, so the
+      // translator, when there is one, gives the backend the packet in its own.
+      byte[] packet = new gg.tame.conduit.protocol.PluginMessage(channel, data).encode(protocol.id(state, PacketDirection.CLIENT_TO_SERVER, kind));
+      byte[] outbound = towardBackend(state, packet);
+      if (outbound == null) return false;
+      current.writeUncompressed(outbound);
+      flushTranslatorExtras(current);
+      return true;
+    } catch (IOException | RuntimeException failed) {
+      return false;
+    }
   }
   @Override public void sendPluginMessage(String channel, byte[] data) {
     try {
@@ -246,6 +321,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   public SessionLifecycle lifecycle() { return lifecycle.get(); }
   public BackendConnection backend() { return backend; }
   public void play() throws IOException {
+    // A login listener that kicked the player instead of denying the event closed the session, and
+    // the proxy went on to dial a backend for a client that was already gone.
+    if (closed) return;
     BackendConnection initial = connectInitial();
     // Login is over. Both links were read under a deadline until here, because a client or a
     // backend that stops halfway through a login parks this thread with two sockets, a connection
@@ -256,6 +334,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     players.add(this);
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
+    runtime.registered(initial.server().name()).ifPresent(first -> runtime.events().fire(
+        new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first)));
     Thread backendReader = gg.tame.conduit.network.SocketThreads.start(this::readBackend);
     try { readClient(); }
     finally {
@@ -280,8 +360,23 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
 
   private BackendConnection connectInitial() throws IOException {
+    List<BackendServer> candidates = new java.util.ArrayList<>(selector.candidatesFor(protocol.version().number(), modClassifier.family(), false));
+    var choice = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerInitialServerEvent(this,
+        candidates.isEmpty() ? null : runtime.registered(candidates.getFirst().name()).orElse(null)));
+    choice.initialServer().flatMap(chosen -> selector.registry().get(chosen.getName())).ifPresent(chosen -> {
+      candidates.removeIf(other -> other.name().equalsIgnoreCase(chosen.name()));
+      candidates.addFirst(chosen);
+    });
     IOException last = null;
-    for (BackendServer server : selector.candidatesFor(protocol.version().number(), modClassifier.family(), false)) {
+    for (BackendServer candidate : candidates) {
+      BackendServer server = candidate;
+      var targetView = runtime.registered(server.name()).orElse(null);
+      if (targetView != null) {
+        var connect = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectEvent(this, java.util.Optional.empty(), targetView));
+        if (connect.cancelled()) { last = new IOException("connection to " + server.name() + " was cancelled"); continue; }
+        server = selector.registry().get(connect.target().getName()).orElse(null);
+        if (server == null) { last = new IOException("redirected to unknown server " + connect.target().getName()); continue; }
+      }
       Socket socket = null;
       BackendConnection connection = null;
       try {
@@ -880,11 +975,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (protocol.capabilities().legacyPlayChat() && command.startsWith("/")) {
         command = command.substring(1);
       } else if (protocol.capabilities().legacyPlayChat() && !command.startsWith("/")) {
-        return false;
+        // Plain chat, on the one packet that carries it before 1.19. The event used to fire for
+        // commands instead, as "/name", and plain chat never raised it at all.
+        return runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerChatEvent(this, command)).cancelled();
       }
-      var chat = new gg.tame.conduit.api.event.player.PlayerChatEvent(this, "/" + command);
-      runtime.events().fire(chat);
-      if (chat.cancelled()) return true;
       var execute = new gg.tame.conduit.api.event.command.CommandExecuteEvent(this, command);
       runtime.events().fire(execute);
       if (execute.cancelled()) return true;
@@ -1182,7 +1276,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     int id = PlayPackets.packetId(packet);
     if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DECLARE_COMMANDS)) return packet;
     try {
-      byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names());
+      byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names(), commands.displacedBuiltIns());
       commandsDeclared = true;
       return merged;
     } catch (IOException exception) {
@@ -1329,12 +1423,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (server == null) return false;
     if (Thread.currentThread() == clientReader) {
       gg.tame.conduit.network.SocketThreads.start(() -> {
-        if (runSwitch(server)) Messages.connected(this, server.name());
+        if (runSwitch(server).successful()) Messages.connected(this, server.name());
         else Messages.unavailable(this, server.name());
       });
       return true;
     }
-    boolean ok = runSwitch(server);
+    boolean ok = runSwitch(server).successful();
     if (ok) Messages.connected(this, server.name());
     else Messages.unavailable(this, server.name());
     return ok;
@@ -1352,17 +1446,26 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * <p>The fallback path takes no part in this. It is entered from the backend reader with the
    * session already SWITCHING and is the only thing that can save a player whose server just died.
    */
-  private boolean runSwitch(BackendServer server) {
-    if (!switchInFlight.compareAndSet(false, true)) return false;
+  private gg.tame.conduit.api.player.ConnectResult runSwitch(BackendServer server) {
+    if (!switchInFlight.compareAndSet(false, true)) {
+      return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.IN_PROGRESS, "another switch is running");
+    }
     try {
       switchTo(server, false);
-      return true;
+      return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.CONNECTED, "");
+    } catch (SwitchCancelled cancelled) {
+      return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.CANCELLED, cancelled.getMessage());
     } catch (Exception exception) {
       ConduitMetrics.current().failedSwitch();
-      return false;
+      return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.FAILED,
+          exception.getMessage() == null ? "switch failed" : exception.getMessage());
     } finally {
       switchInFlight.set(false);
     }
+  }
+  /** A PlayerServerConnectEvent listener said no; nothing was opened. */
+  private static final class SwitchCancelled extends IOException {
+    private SwitchCancelled(String server) { super("connection to " + server + " was cancelled"); }
   }
   private static final int SWITCH_BUDGET_MS = 4_000;
   /**
@@ -1372,13 +1475,19 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * a real client loading a world it has just been handed.
    */
   private static final int RECONFIGURE_BUDGET_MS = 15_000;
-  private void switchTo(BackendServer server, boolean fallback) throws Exception {
+  private void switchTo(BackendServer requested, boolean fallback) throws Exception {
+    BackendServer server = requested;
     var targetView = runtime.registered(server.name()).orElse(null);
     var sourceView = backend == null ? java.util.Optional.<gg.tame.conduit.api.server.RegisteredServer>empty() : runtime.registered(backend.server().name());
     if (targetView != null) {
       var connect = new gg.tame.conduit.api.event.player.PlayerServerConnectEvent(this, sourceView, targetView);
       runtime.events().fire(connect);
-      if (connect.cancelled()) throw new IOException("connection cancelled");
+      if (connect.cancelled()) throw new SwitchCancelled(server.name());
+      if (connect.target() != targetView) {
+        String redirect = connect.target().getName();
+        server = selector.registry().get(redirect).orElseThrow(() -> new IOException("redirected to unknown server " + redirect));
+        targetView = runtime.registered(server.name()).orElse(connect.target());
+      }
     }
     long started = System.nanoTime();
     long deadline = started + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SWITCH_BUDGET_MS);
@@ -1780,7 +1889,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
   @Override public String username() { return profile().username(); }
   @Override public boolean hasPermission(String permission) {
-    return runtime.permissions().hasPermission(this, permission);
+    // A plugin's provider runs on this session's threads; one that throws denies rather than
+    // taking the command, or the join a maintenance check is part of, down with it.
+    try { return runtime.permissions().hasPermission(this, permission); }
+    catch (RuntimeException | LinkageError failure) {
+      gg.tame.conduit.log.ConduitLog.error("permission provider failed on " + permission, failure);
+      return false;
+    }
   }
   @Override public void sendMessage(String message) {
     sendMessage(gg.tame.conduit.api.text.Text.of(message == null ? "" : message));
