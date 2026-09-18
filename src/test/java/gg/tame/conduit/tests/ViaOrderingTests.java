@@ -37,7 +37,7 @@ public final class ViaOrderingTests {
 
   public static void run() throws Exception {
     if (!ConduitViaBootstrap.available()) {
-      ConduitViaBootstrap.start(Files.createTempDirectory("conduit-via-ordering"), "test",
+      ConduitViaBootstrap.start(TempFiles.dir("conduit-via-ordering"), "test",
           new TranslationSettings(true, TranslationSettings.TranslationEngine.VIA_PREFERRED, true, true, false, "via"));
     }
     try (ConduitViaTranslator via = ConduitViaTranslator.create(CLIENT, BACKEND, "127.0.0.1", 25565)) {

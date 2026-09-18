@@ -27,7 +27,7 @@ public final class Phase9Tests {
     loadVelocityApiPlugin();
   }
   private static void loadVelocityApiPlugin() throws Exception {
-    Path root = Files.createTempDirectory("conduit-velocity-plugin");
+    Path root = TempFiles.dir("conduit-velocity-plugin");
     Path classes = root.resolve("classes");
     Files.createDirectories(classes);
     Path src = root.resolve("SampleVelocityPlugin.java");

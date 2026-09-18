@@ -91,7 +91,7 @@ public final class Phase12SecurityTests {
   }
 
   private static void attackModeCommands() throws Exception {
-    Path config = Files.createTempFile("conduit-sec", ".toml");
+    Path config = TempFiles.file("conduit-sec", ".toml");
     Files.writeString(config, """
         [listener]
         host="127.0.0.1"
@@ -107,7 +107,7 @@ public final class Phase12SecurityTests {
         fallback=["lobby"]
         """);
     var loaded = ConfigurationLoader.load(config);
-    Path plugins = Files.createTempDirectory("conduit-plugins-sec");
+    Path plugins = TempFiles.dir("conduit-plugins-sec");
     ConduitRuntime runtime = new ConduitRuntime(loaded, plugins, config.getParent());
     runtime.bindConfigPath(config);
     CoreCommands.register(runtime);

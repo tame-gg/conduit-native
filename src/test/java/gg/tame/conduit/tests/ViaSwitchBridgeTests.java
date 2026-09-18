@@ -43,7 +43,7 @@ public final class ViaSwitchBridgeTests {
 
   public static void run() throws Exception {
     if (!ConduitViaBootstrap.available()) {
-      ConduitViaBootstrap.start(Files.createTempDirectory("conduit-via-switch-test"), "test",
+      ConduitViaBootstrap.start(TempFiles.dir("conduit-via-switch-test"), "test",
           new TranslationSettings(true, TranslationSettings.TranslationEngine.VIA_PREFERRED, true, true, false, "via"));
     }
     ProtocolDefinition client = ProtocolDefinition.forVersion(CLIENT_PROTOCOL);

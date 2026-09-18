@@ -20,7 +20,7 @@ public final class ViaIntegrationTests {
   }
 
   public static void run() throws Exception {
-    Path data = Files.createTempDirectory("conduit-via-test");
+    Path data = TempFiles.dir("conduit-via-test");
     ConduitViaBootstrap.start(data, "test",
         new TranslationSettings(true, TranslationSettings.TranslationEngine.VIA_PREFERRED, true, true, false, "via"));
     require(ConduitViaBootstrap.available(), "Via platform available");

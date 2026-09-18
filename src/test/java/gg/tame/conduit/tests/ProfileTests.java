@@ -101,7 +101,7 @@ final class ProfileTests {
     require(still.properties().equals(profile.properties()), "session profile object unchanged by login start encode");
   }
   private static void modernForwardingCarriesSignedTextures() throws Exception {
-    var secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
+    var secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
     ModernForwarder forwarder = new ModernForwarder(ForwardingSecret.load(secret));
     PlayerProfile profile = sample();
     byte[] payload = forwarder.payload(new ForwardingRequest(profile, InetAddress.getByName("127.0.0.1"), 776, 1));
@@ -233,7 +233,7 @@ final class ProfileTests {
     }
   }
   private static void forwardingPayloadIdenticalOnRepeatedSwitch() throws Exception {
-    var secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
+    var secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
     ModernForwarder forwarder = new ModernForwarder(ForwardingSecret.load(secret));
     PlayerProfile profile = sample();
     ForwardingRequest initial = new ForwardingRequest(profile, InetAddress.getByName("127.0.0.1"), 776, 1);

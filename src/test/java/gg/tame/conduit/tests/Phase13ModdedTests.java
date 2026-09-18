@@ -160,7 +160,7 @@ public final class Phase13ModdedTests {
     require(ModCompatibility.isEligible(ModLoaderFamily.UNKNOWN, fabricOnly, UnknownModdedPolicy.ALLOW), "unknown allow");
     require(!ModCompatibility.isEligible(ModLoaderFamily.UNKNOWN, fabricOnly, UnknownModdedPolicy.DENY), "unknown deny");
 
-    Path config = Files.createTempFile("conduit-mod", ".toml");
+    Path config = TempFiles.file("conduit-mod", ".toml");
     Files.writeString(config, """
         [listener]
         host="127.0.0.1"
@@ -211,7 +211,7 @@ public final class Phase13ModdedTests {
   }
 
   private static void doctorShowsModded() throws Exception {
-    Path config = Files.createTempFile("conduit-mod-doc", ".toml");
+    Path config = TempFiles.file("conduit-mod-doc", ".toml");
     Files.writeString(config, """
         [listener]
         host="127.0.0.1"
@@ -226,7 +226,7 @@ public final class Phase13ModdedTests {
         initial=["lobby"]
         fallback=["lobby"]
         """);
-    ConduitRuntime runtime = new ConduitRuntime(ConfigurationLoader.load(config), Files.createTempDirectory("plugins-mod"), config.getParent());
+    ConduitRuntime runtime = new ConduitRuntime(ConfigurationLoader.load(config), TempFiles.dir("plugins-mod"), config.getParent());
     runtime.bindConfigPath(config);
     CoreCommands.register(runtime);
     AdminSource admin = new AdminSource("Op", "lobby", Set.of(

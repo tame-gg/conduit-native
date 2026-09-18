@@ -332,7 +332,7 @@ public final class Phase6Tests {
     require(manager.tabComplete(source, "/al").equals(List.of("alpha")), "tab complete name");
     manager.unregister("alpha");
     require(!manager.dispatch(source, "alpha"), "unregistered");
-    Path config = Files.createTempFile("conduit", ".toml");
+    Path config = TempFiles.file("conduit", ".toml");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[servers.minigames]\nhost=\"127.0.0.1\"\nport=3\n[servers.minigames-2]\nhost=\"127.0.0.1\"\nport=4\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     ServerRegistry registry = new ServerRegistry(gg.tame.conduit.config.ConfigurationLoader.load(config));
     CommandManager core = new CommandManager();
@@ -363,7 +363,7 @@ public final class Phase6Tests {
     require(player.messages.stream().anyMatch(line -> line.contains("/server")), "conduit help");
   }
   private static void serverNameMatching() throws Exception {
-    Path config = Files.createTempFile("conduit", ".toml");
+    Path config = TempFiles.file("conduit", ".toml");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"survival\"]\n");
     ServerRegistry registry = new ServerRegistry(gg.tame.conduit.config.ConfigurationLoader.load(config));
     require(registry.resolve("surv").kind() == ServerMatch.Kind.UNIQUE, "partial");
@@ -382,7 +382,7 @@ public final class Phase6Tests {
     require(session.state() == ConnectionState.PLAY, "reconfigured play");
   }
   private static void switchBetweenMockBackends() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
     try (ServerSocket lobby = new ServerSocket(0); ServerSocket survival = new ServerSocket(0)) {
       AtomicReference<String> lobbyUuid = new AtomicReference<>();
       AtomicReference<String> survivalUuid = new AtomicReference<>();
@@ -428,7 +428,7 @@ public final class Phase6Tests {
     }
   }
   private static void failedSwitchKeepsCurrentBackend() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
     try (ServerSocket lobby = new ServerSocket(0)) {
       Thread lobbyThread = Thread.startVirtualThread(() -> serveBackend(lobby, "Paper", (byte) 1, new AtomicReference<>()));
       ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 4096,

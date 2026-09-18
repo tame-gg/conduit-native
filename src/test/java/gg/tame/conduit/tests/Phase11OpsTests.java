@@ -37,7 +37,7 @@ public final class Phase11OpsTests {
   }
 
   private static void maintenancePersistenceAndBypass() throws Exception {
-    Path dir = Files.createTempDirectory("conduit-maint");
+    Path dir = TempFiles.dir("conduit-maint");
     Path flag = dir.resolve("maintenance.flag");
     var settings = gg.tame.conduit.config.MaintenanceSettings.defaults().withAllowlist(List.of("Kyle"));
     MaintenanceService service = new MaintenanceService(dir, settings);
@@ -57,7 +57,7 @@ public final class Phase11OpsTests {
   }
 
   private static void healthHysteresis() throws Exception {
-    Path config = Files.createTempFile("conduit-health", ".toml");
+    Path config = TempFiles.file("conduit-health", ".toml");
     Files.writeString(config, baseToml());
     ServerRegistry registry = new ServerRegistry(ConfigurationLoader.load(config));
     BackendHealthService health = new BackendHealthService(registry, new HealthSettings(true, 10_000, 1_500, 3, 2));
@@ -74,7 +74,7 @@ public final class Phase11OpsTests {
   }
 
   private static void drainAndFallback() throws Exception {
-    Path config = Files.createTempFile("conduit-drain", ".toml");
+    Path config = TempFiles.file("conduit-drain", ".toml");
     Files.writeString(config, baseToml());
     var loaded = ConfigurationLoader.load(config);
     BackendHealthService health = new BackendHealthService(new ServerRegistry(loaded), HealthSettings.defaults());
@@ -110,14 +110,14 @@ public final class Phase11OpsTests {
   }
 
   private static void configMigrationAndReload() throws Exception {
-    Path config = Files.createTempFile("conduit-migrate", ".toml");
+    Path config = TempFiles.file("conduit-migrate", ".toml");
     Files.writeString(config, baseToml());
     var result = ConfigMigrator.migrate(config);
     require(result.changed(), "migration added keys");
     require(result.addedKeys().contains("ops.schema-version"), "schema key");
     var loaded = ConfigurationLoader.load(config);
     require(loaded.health().failureThreshold() == 3, "health defaults loaded");
-    Path plugins = Files.createTempDirectory("conduit-plugins-ops");
+    Path plugins = TempFiles.dir("conduit-plugins-ops");
     ConduitRuntime runtime = new ConduitRuntime(loaded, plugins, config.getParent());
     runtime.bindConfigPath(config);
     Files.writeString(config, Files.readString(config) + "\n[listener]\n# keep\n");
@@ -133,10 +133,10 @@ public final class Phase11OpsTests {
   }
 
   private static void doctorAndDiagnosticsCommands() throws Exception {
-    Path config = Files.createTempFile("conduit-doc", ".toml");
+    Path config = TempFiles.file("conduit-doc", ".toml");
     Files.writeString(config, baseToml());
     var loaded = ConfigurationLoader.load(config);
-    Path plugins = Files.createTempDirectory("conduit-plugins-doc");
+    Path plugins = TempFiles.dir("conduit-plugins-doc");
     ConduitRuntime runtime = new ConduitRuntime(loaded, plugins, config.getParent());
     runtime.bindConfigPath(config);
     CoreCommands.register(runtime);

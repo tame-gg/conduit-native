@@ -146,7 +146,7 @@ public final class AllTests {
     require(reconfigure.state() == ConnectionState.CONFIGURATION, "reconfiguration");
   }
   private static void validateIndependentConfiguration() throws Exception {
-    Path config = Files.createTempFile("conduit", ".toml");
+    Path config = TempFiles.file("conduit", ".toml");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=25566\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     require(ConfigurationLoader.load(config).maxFrameBytes() == 64, "configuration did not load");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.smp]\naddress=\"127.0.0.1:25921\"\n[routing]\ninitial=[\"smp\"]\nfallback=[\"smp\"]\n");
@@ -160,7 +160,7 @@ public final class AllTests {
     byte[] packet = new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2};
     Handshake handshake = Handshake.decode(packet);
     require(handshake.protocolVersion() == 765 && handshake.requestedHost().equals("local") && handshake.requestedPort() == 25565 && handshake.nextState() == 2, "handshake failed");
-    Path config = Files.createTempFile("conduit", ".toml"); Files.writeString(config, configuration("none"));
+    Path config = TempFiles.file("conduit", ".toml"); Files.writeString(config, configuration("none"));
     require(new BackendSelector(ConfigurationLoader.load(config)).candidates().getFirst().name().equals("lobby"), "backend selection failed");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.smp]\nhost=\"127.0.0.1\"\nport=2\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     require(new BackendSelector(ConfigurationLoader.load(config)).candidatesFor(776).getFirst().name().equals("lobby"), "26.2 must not skip routing.initial");
@@ -199,7 +199,7 @@ public final class AllTests {
     }
   }
   private static void createAuthenticatedModernForwardingPayload() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "do-not-log-me");
     ForwardingSecret loaded = ForwardingSecret.load(secret);
     require(loaded.toString().equals("ForwardingSecret[redacted]"), "secret toString must stay redacted");
     require(!loaded.fingerprint().contains("do-not-log-me"), "fingerprint leaked secret");
@@ -227,7 +227,7 @@ public final class AllTests {
     catch (IllegalArgumentException expected) { }
     byte[] lazy = forwarder.payload(new ForwardingRequest(player, InetAddress.getByName("127.0.0.1"), 765, 4));
     require(MinecraftInput.varInt(new DataInputStream(new ByteArrayInputStream(java.util.Arrays.copyOfRange(lazy, 32, lazy.length)))) == 4, "lazy-session version was not preserved");
-    Path empty = Files.createTempFile("conduit-empty", ".secret"); Files.writeString(empty, " \n");
+    Path empty = TempFiles.file("conduit-empty", ".secret"); Files.writeString(empty, " \n");
     try { ForwardingSecret.load(empty); throw new AssertionError("empty secret accepted"); }
     catch (IllegalArgumentException expected) { }
   }
@@ -239,7 +239,7 @@ public final class AllTests {
     require(pong[pong.length - 1] == 7, "status ping nonce was not echoed");
   }
   private static void completeModernBackendExchange() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
     BackendLoginPipeline pipeline = pipeline(secret);
     byte[] response = pipeline.onBackendPacket(modernRequest(17, 1), 1024);
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(response))) {
@@ -272,7 +272,7 @@ public final class AllTests {
     }
   }
   private static void keepSetCompressionOffTheClient() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
     BackendLoginPipeline pipeline = pipeline(secret);
     ByteArrayOutputStream setCompression = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(setCompression)) {
@@ -288,7 +288,7 @@ public final class AllTests {
     require(java.util.Arrays.equals(pipeline.compression().unwrap(wrapped), tiny), "unwrap round trip");
   }
   private static void rejectInvalidLoginPluginRequests() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "exchange-secret");
     byte[] valid = pipeline(secret).onBackendPacket(pluginRequest(3, "velocity:player_info", new byte[] {1}), 1024);
     require(valid != null && valid[1] == 3, "valid request id must be echoed");
     LoginPluginRequest negative = LoginPluginRequest.decode(pluginBody(-1, "velocity:player_info", new byte[] {1}), 1024);
@@ -310,7 +310,7 @@ public final class AllTests {
     expectIO(() -> pipeline(secret).onBackendPacket(new byte[] {1}, 1024), "encryption request accepted");
   }
   private static void mockBackendModernForwardingWireExchange() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
     try (ServerSocket backendListener = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
         try (Socket socket = backendListener.accept()) {
@@ -441,7 +441,7 @@ public final class AllTests {
     http.stop(0);
   }
   private static void onlineModeFeedsAuthenticatedIdentityToForwarding() throws Exception {
-    Path secret = Files.createTempFile("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
+    Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
     java.util.concurrent.atomic.AtomicReference<String> requestedHash = new java.util.concurrent.atomic.AtomicReference<>();
     com.sun.net.httpserver.HttpServer http = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     http.createContext("/session/minecraft/hasJoined", exchange -> {

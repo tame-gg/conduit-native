@@ -43,7 +43,7 @@ public final class Phase7Tests {
     require(manager.byServer("lobby").isEmpty(), "lobby empty after remove");
   }
   private static void sendCommands() throws Exception {
-    Path config = Files.createTempFile("conduit", ".toml");
+    Path config = TempFiles.file("conduit", ".toml");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[servers.minigames]\nhost=\"127.0.0.1\"\nport=3\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     ServerRegistry registry = new ServerRegistry(ConfigurationLoader.load(config));
     PlayerManager players = new PlayerManager();
@@ -96,10 +96,10 @@ public final class Phase7Tests {
     require(dests.contains("survival") && dests.contains("lobby"), "send server tab");
   }
   private static void pluginAndListCommands() throws Exception {
-    Path config = Files.createTempFile("conduit", ".toml");
+    Path config = TempFiles.file("conduit", ".toml");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");
     var loaded = ConfigurationLoader.load(config);
-    ConduitRuntime runtime = new ConduitRuntime(loaded, Files.createTempDirectory("conduit-plugins-cmd"));
+    ConduitRuntime runtime = new ConduitRuntime(loaded, TempFiles.dir("conduit-plugins-cmd"));
     CoreCommands.register(runtime);
     runtime.pluginCatalog().put(new gg.tame.conduit.plugin.PluginCatalog.Entry("demo", "Demo", "1.0", gg.tame.conduit.plugin.PluginCatalog.Kind.CONDUIT));
     runtime.pluginCatalog().put(new gg.tame.conduit.plugin.PluginCatalog.Entry("via", "ViaVersion", "5.11.0", gg.tame.conduit.plugin.PluginCatalog.Kind.VELOCITY));

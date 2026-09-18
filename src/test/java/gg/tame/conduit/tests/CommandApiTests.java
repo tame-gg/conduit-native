@@ -315,7 +315,7 @@ public final class CommandApiTests {
   }
 
   private static void pluginConfigurationSeedsDefaults() throws Exception {
-    Path file = Files.createTempDirectory("conduit-plugin-config").resolve("nested").resolve("config.properties");
+    Path file = TempFiles.dir("conduit-plugin-config").resolve("nested").resolve("config.properties");
     Map<String, String> defaults = new LinkedHashMap<>();
     defaults.put("greeting", "hello");
     defaults.put("limit", "5");
@@ -368,7 +368,7 @@ public final class CommandApiTests {
    * it writes is asserted here: counters and names in, everything the proxy is trusted with out.
    */
   private static void dumpCarriesNoSecrets() throws Exception {
-    Path root = Files.createTempDirectory("conduit-dump-audit");
+    Path root = TempFiles.dir("conduit-dump-audit");
     Path secretFile = root.resolve("forwarding.secret");
     Files.writeString(secretFile, SECRET);
     ConduitRuntime runtime = new ConduitRuntime(new gg.tame.conduit.config.ConduitConfiguration(
@@ -401,7 +401,7 @@ public final class CommandApiTests {
 
   /** Both dumps go beside the config, in a directory named dumps -- what .gitignore matches. */
   private static void dumpsLandInTheIgnoredDirectory() throws Exception {
-    Path root = Files.createTempDirectory("conduit-dump-path");
+    Path root = TempFiles.dir("conduit-dump-path");
     Path cwd = Path.of("").toAbsolutePath();
     ConduitRuntime runtime = runtimeAt(root);
     RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
@@ -438,7 +438,7 @@ public final class CommandApiTests {
    * told what the file is before it exists -- the .hprof this project once committed said nothing.
    */
   private static void heapIsGatedAndSaysWhatItHolds() throws Exception {
-    Path root = Files.createTempDirectory("conduit-heap-audit");
+    Path root = TempFiles.dir("conduit-heap-audit");
     ConduitRuntime runtime = runtimeAt(root);
     try {
       CoreCommands.register(runtime);
@@ -481,7 +481,7 @@ public final class CommandApiTests {
 
   /** The argument used to reach InetAddress.getByName, which resolves whatever it is handed. */
   private static void cacheInvalidateTakesLiteralAddressesOnly() throws Exception {
-    Path root = Files.createTempDirectory("conduit-cache-arg");
+    Path root = TempFiles.dir("conduit-cache-arg");
     ConduitRuntime runtime = runtimeAt(root);
     RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
     try {
@@ -558,7 +558,7 @@ public final class CommandApiTests {
 
   /** The whole native plugin path: a real jar through discover, enable, use, disable. */
   private static void pluginJarEndToEnd() throws Exception {
-    Path root = Files.createTempDirectory("conduit-plugin-e2e");
+    Path root = TempFiles.dir("conduit-plugin-e2e");
     Path plugins = Files.createDirectories(root.resolve("plugins"));
     Path jar = plugins.resolve("Demo.jar");
     buildPluginJar(jar, "demo", "demo.DemoPlugin", 1, DEMO_PLUGIN);
@@ -597,7 +597,7 @@ public final class CommandApiTests {
 
   /** Jars the manager must reject without taking the proxy, or the next plugin, down with them. */
   private static void badPluginJarsDoNotStopTheProxy() throws Exception {
-    Path root = Files.createTempDirectory("conduit-plugin-bad");
+    Path root = TempFiles.dir("conduit-plugin-bad");
     Path plugins = Files.createDirectories(root.resolve("plugins"));
     Path noDescriptor = plugins.resolve("NoDescriptor.jar");
     try (JarOutputStream jar = new JarOutputStream(Files.newOutputStream(noDescriptor))) {
@@ -661,7 +661,7 @@ public final class CommandApiTests {
 
   /** Compiles the source in-process and packs it with a descriptor. */
   private static void buildPluginJar(Path jar, String id, String mainClass, int apiVersion, String source) throws Exception {
-    Path work = Files.createTempDirectory("conduit-plugin-build");
+    Path work = TempFiles.dir("conduit-plugin-build");
     String pkg = mainClass.substring(0, mainClass.lastIndexOf('.'));
     String simple = mainClass.substring(mainClass.lastIndexOf('.') + 1);
     Path file = Files.createDirectories(work.resolve(pkg)).resolve(simple + ".java");
@@ -810,7 +810,7 @@ public final class CommandApiTests {
     private final PlayerManager players = new PlayerManager();
     private final CommandManager commands = new CommandManager();
     private Fixture() throws Exception {
-      Path config = Files.createTempFile("conduit-commands", ".toml");
+      Path config = TempFiles.file("conduit-commands", ".toml");
       Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n"
           + "[forwarding]\nmode=\"none\"\n[servers.lobby]\nhost=\"127.0.0.1\"\nport=1\n"
           + "[servers.survival]\nhost=\"127.0.0.1\"\nport=2\n[routing]\ninitial=[\"lobby\"]\nfallback=[\"lobby\"]\n");

@@ -133,9 +133,9 @@ public final class Phase8Tests {
     try { new Protocol765To776Translator().clientToBackend(gg.tame.conduit.protocol.ConnectionState.PLAY, new byte[] {0}); throw new AssertionError("fake translation"); }
     catch (UnsupportedOperationException expected) { }
   }
-  private static void velocityAdapter() {
+  private static void velocityAdapter() throws Exception {
     require(VelocityCompatibility.STATUS.contains("PARTIAL"), "compat status");
-    Path dir = Path.of(System.getProperty("java.io.tmpdir"), "conduit-plugins-empty-" + System.nanoTime());
+    Path dir = TempFiles.dir("conduit-plugins-empty");
     ConduitRuntime runtime = new ConduitRuntime(new ConduitConfiguration(new InetSocketAddress("127.0.0.1", 1), 64,
         ForwardingMode.NONE, Optional.empty(), List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", 2))), List.of("lobby"), List.of()), dir);
     VelocityProxyAdapter adapter = new VelocityProxyAdapter(runtime);

@@ -33,7 +33,7 @@ public final class CompatibilityProbeTests {
 
   public static void run() throws Exception {
     if (!ConduitViaBootstrap.available()) {
-      ConduitViaBootstrap.start(Files.createTempDirectory("conduit-probe-test"), "test",
+      ConduitViaBootstrap.start(TempFiles.dir("conduit-probe-test"), "test",
           new TranslationSettings(true, TranslationSettings.TranslationEngine.VIA_PREFERRED, true, true, false, "via"));
     }
 
