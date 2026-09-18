@@ -55,12 +55,30 @@ public interface CommandManager {
     List<String> complete(CommandSource source, List<String> arguments);
   }
 
-  /** A command to {@link #register}. An empty permission means everyone may run it. */
-  record Command(String name, List<String> aliases, String permission, Handler handler, Completer completer) {
+  /**
+   * Whether a command is there at all for {@code source} typing {@code arguments}. Asked on the
+   * thread running the command, before its permission and its handler, so it must answer quickly.
+   */
+  @FunctionalInterface
+  interface Requirement {
+    boolean test(CommandSource source, List<String> arguments);
+  }
+
+  /**
+   * A command to {@link #register}. An empty permission means everyone may run it; a source without
+   * it is told so. A {@code requirement} that answers false instead makes the proxy act as if it had
+   * no such command for that source: a player's command goes on to their backend, and
+   * {@link #execute} returns false. A requirement that throws answers false.
+   */
+  record Command(String name, List<String> aliases, String permission, Handler handler, Completer completer, Requirement requirement) {
     public Command {
       if (name == null || handler == null || completer == null) throw new IllegalArgumentException("name, handler and completer are required");
       aliases = List.copyOf(aliases == null ? List.of() : aliases);
       permission = permission == null ? "" : permission;
+    }
+    /** A command that is there for every source. */
+    public Command(String name, List<String> aliases, String permission, Handler handler, Completer completer) {
+      this(name, aliases, permission, handler, completer, null);
     }
     public static Builder builder(String name) { return new Builder(name); }
 
@@ -70,12 +88,14 @@ public interface CommandManager {
       private String permission = "";
       private Handler handler = (source, arguments) -> { };
       private Completer completer = (source, arguments) -> List.of();
+      private Requirement requirement;
       private Builder(String name) { this.name = name; }
       public Builder alias(String alias) { aliases.add(alias); return this; }
       public Builder permission(String permission) { this.permission = permission; return this; }
       public Builder handler(Handler handler) { this.handler = handler; return this; }
       public Builder completer(Completer completer) { this.completer = completer; return this; }
-      public Command build() { return new Command(name, aliases, permission, handler, completer); }
+      public Builder requires(Requirement requirement) { this.requirement = requirement; return this; }
+      public Command build() { return new Command(name, aliases, permission, handler, completer, requirement); }
     }
   }
 }

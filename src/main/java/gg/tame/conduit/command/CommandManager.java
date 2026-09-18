@@ -61,9 +61,11 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   /** Built-in names a plugin currently holds, so the client graph declares the plugin's shape for them. */
   public synchronized java.util.Set<String> displacedBuiltIns() { return java.util.Set.copyOf(displaced.keySet()); }
   @Override public void register(Plugin plugin, gg.tame.conduit.api.command.CommandManager.Command command) {
+    var requirement = command.requirement();
     register(plugin, new RegisteredCommand(command.name(), command.aliases(), command.permission(),
         (source, arguments) -> command.handler().execute(external(source), arguments),
-        (source, arguments) -> command.completer().complete(external(source), arguments)));
+        (source, arguments) -> command.completer().complete(external(source), arguments),
+        requirement == null ? null : (source, arguments) -> requirement.test(external(source), arguments)));
   }
   /** Removes a command by any of its names; returns it, or null when nothing matched. */
   public synchronized RegisteredCommand unregister(String name) {
@@ -107,13 +109,26 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     if (parsed.name().isEmpty()) return false;
     RegisteredCommand command;
     synchronized (this) { command = commands.get(parsed.name()); }
-    if (command == null) return false;
+    if (command == null || !there(source, command, parsed.arguments())) return false;
     if (!permitted(source, command)) {
       Messages.permission(source);
       return true;
     }
     command.executor().execute(source, parsed.arguments());
     return true;
+  }
+  /**
+   * Whether the command is there at all for this source. Velocity's plugins decide theirs in
+   * hasPermission, and one that said no was answered with "no permission" by the proxy, where
+   * Velocity passes the command on to the backend as if the proxy had none by that name.
+   */
+  private static boolean there(CommandSource source, RegisteredCommand command, List<String> arguments) {
+    if (command.requirement() == null) return true;
+    try { return command.requirement().test(source, arguments); }
+    catch (RuntimeException | LinkageError failed) {
+      gg.tame.conduit.log.ConduitLog.error("the requirement of /" + command.name() + " failed; treated as not there", failed);
+      return false;
+    }
   }
   public List<String> tabComplete(CommandSource source, String line) {
     ParsedCommand parsed = ParsedCommand.parseKeepEmpty(line);
@@ -126,7 +141,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     RegisteredCommand command;
     synchronized (this) { command = commands.get(parsed.name()); }
     if (command == null || command.completer() == null) return List.of();
-    if (!permitted(source, command)) return List.of();
+    if (!permitted(source, command) || !there(source, command, parsed.arguments())) return List.of();
     String prefix = parsed.arguments().isEmpty() ? "" : parsed.arguments().getLast();
     List<String> raw = command.completer().complete(source, parsed.arguments());
     if (prefix.isEmpty()) return raw;

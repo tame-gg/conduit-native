@@ -4,7 +4,12 @@ package gg.tame.conduit.command;
 import java.util.List;
 import java.util.Locale;
 
-public record RegisteredCommand(String name, List<String> aliases, String permission, CommandExecutor executor, TabCompleter completer) {
+/** {@code requirement}, when there is one, decides whether the command is there at all for a source; see the API's Command. */
+public record RegisteredCommand(String name, List<String> aliases, String permission, CommandExecutor executor, TabCompleter completer,
+                                java.util.function.BiPredicate<CommandSource, List<String>> requirement) {
+  public RegisteredCommand(String name, List<String> aliases, String permission, CommandExecutor executor, TabCompleter completer) {
+    this(name, aliases, permission, executor, completer, null);
+  }
   public RegisteredCommand {
     name = name.toLowerCase(Locale.ROOT);
     aliases = aliases.stream().map(alias -> alias.toLowerCase(Locale.ROOT)).toList();

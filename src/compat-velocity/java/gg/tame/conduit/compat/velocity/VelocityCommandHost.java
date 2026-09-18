@@ -79,6 +79,7 @@ final class VelocityCommandHost implements CommandManager {
         environment.conduit.commands().register(owner, gg.tame.conduit.api.command.CommandManager.Command.builder(alias)
             .handler((source, arguments) -> run(registration, alias, source, arguments))
             .completer((source, arguments) -> suggest(registration, alias, source, arguments))
+            .requires((source, arguments) -> available(registration, alias, source, arguments))
             .build());
         byAlias.put(alias, registration);
         done.add(alias);
@@ -179,10 +180,6 @@ final class VelocityCommandHost implements CommandManager {
       try {
         String[] split = arguments.toArray(String[]::new);
         String raw = String.join(" ", arguments);
-        if (!permitted(registration, alias, source, split, raw)) {
-          source.sendMessage(Component.text("You do not have permission to run this command.", NamedTextColor.RED));
-          return;
-        }
         switch (registration.command) {
           case SimpleCommand simple -> simple.execute(new SimpleInvocation(source, alias, split));
           case RawCommand rawCommand -> rawCommand.execute(new RawInvocation(source, alias, raw));
@@ -229,6 +226,19 @@ final class VelocityCommandHost implements CommandManager {
     }
   }
 
+  /**
+   * The command's hasPermission, as Conduit's requirement for it: one that says no leaves the
+   * command to the backend, as on Velocity. Plugin code, so it runs on the adapter's threads, and the
+   * connection thread waits for it as long as for any other plugin answer.
+   */
+  private boolean available(Registration registration, String alias, gg.tame.conduit.api.command.CommandSource conduitSource, List<String> arguments) {
+    CommandSource source = velocitySource(conduitSource);
+    String[] split = arguments.toArray(String[]::new);
+    String raw = String.join(" ", arguments);
+    if (INLINE.get()) return permitted(registration, alias, source, split, raw);
+    CompletableFuture<Boolean> answer = CompletableFuture.supplyAsync(() -> permitted(registration, alias, source, split, raw), environment.work);
+    return environment.await(answer, "hasPermission of /" + alias) && answer.join();
+  }
   private boolean permitted(Registration registration, String alias, CommandSource source, String[] split, String raw) {
     return switch (registration.command) {
       case SimpleCommand simple -> simple.hasPermission(new SimpleInvocation(source, alias, split));
