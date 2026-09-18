@@ -228,10 +228,11 @@ final class VelocityEventBridge {
     if (event.cancelled() || !listening(CommandExecuteEvent.class)) return;
     var source = event.source() instanceof gg.tame.conduit.api.player.Player player ? environment.player(player) : environment.console;
     CommandExecuteEvent command = environment.fireAndWait(new CommandExecuteEvent(source, event.command()));
-    if (!command.getResult().isAllowed()) event.setCancelled(true);
-    else if (command.getResult().getCommand().isPresent() || command.getResult().isForwardToServer()) {
-      environment.log.warning("A Velocity plugin rewrote or forwarded /" + event.command() + "; Conduit cannot, so it ran unchanged");
-    }
+    CommandExecuteEvent.CommandResult result = command.getResult();
+    // A forward is not "allowed" in Velocity's terms (the proxy is not to run it), so it is read first.
+    result.getCommand().ifPresent(event::setCommand);
+    if (result.isForwardToServer()) event.forwardToServer();
+    else if (!result.isAllowed()) event.setCancelled(true);
   }
   @Subscribe public void onPluginMessage(gg.tame.conduit.api.event.messaging.PluginMessageEvent event) {
     ChannelIdentifier channel = environment.channels.find(event.channel());

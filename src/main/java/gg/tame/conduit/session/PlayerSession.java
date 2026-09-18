@@ -296,6 +296,25 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return false;
     }
   }
+  /** A pre-1.19 chat line toward the backend, as if the client had typed it. */
+  private boolean sendCommandToServer(String line) {
+    BackendConnection current = backend;
+    if (current == null || closed || clientState.state() != ConnectionState.PLAY) return false;
+    try {
+      var bytes = new java.io.ByteArrayOutputStream();
+      try (var output = new java.io.DataOutputStream(bytes)) {
+        gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND));
+        gg.tame.conduit.protocol.MinecraftOutput.string(output, line);
+      }
+      byte[] outbound = towardBackend(ConnectionState.PLAY, bytes.toByteArray());
+      if (outbound == null) return false;
+      current.writeUncompressed(outbound);
+      flushTranslatorExtras(current);
+      return true;
+    } catch (IOException | RuntimeException failed) {
+      return false;
+    }
+  }
   @Override public void sendPluginMessage(String channel, byte[] data) {
     try {
       ConnectionState state = clientState.state();
@@ -1082,14 +1101,23 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       var execute = new gg.tame.conduit.api.event.command.CommandExecuteEvent(this, command);
       runtime.events().fire(execute);
       if (execute.cancelled()) return true;
-      // The client's own slash is gone already; dispatch strips one more, so it gets one back.
-      // Without it "//lpv" ran "lpv", where Velocity runs the command registered as "/lpv", and a
-      // backend's "//wand" was taken by any proxy command that happened to be called "wand".
-      try { return commands.dispatch(this, "/" + command); }
-      catch (RuntimeException exception) {
-        gg.tame.conduit.log.ConduitLog.error("command failed", exception);
-        return true;
+      String effective = execute.command();
+      if (!execute.forwardsToServer()) {
+        // The client's own slash is gone already; dispatch strips one more, so it gets one back.
+        // Without it "//lpv" ran "lpv", where Velocity runs the command registered as "/lpv", and a
+        // backend's "//wand" was taken by any proxy command that happened to be called "wand".
+        try { if (commands.dispatch(this, "/" + effective)) return true; }
+        catch (RuntimeException exception) {
+          gg.tame.conduit.log.ConduitLog.error("command failed", exception);
+          return true;
+        }
       }
+      if (effective.equals(command)) return false;
+      // Rewritten, and on its way to the backend. Before 1.19 the packet is the line alone; after,
+      // the command may carry signatures over its arguments, which a rewrite would break.
+      if (protocol.capabilities().legacyPlayChat() && sendCommandToServer("/" + effective)) return true;
+      gg.tame.conduit.log.ConduitLog.warn("A plugin rewrote /" + command + " for a client whose commands may be signed; the backend got it unchanged");
+      return false;
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
       PlayPackets.TabRequest request = PlayPackets.tabRequest(protocol, packet);
