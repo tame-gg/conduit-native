@@ -36,7 +36,7 @@ public record LoginStart(String username, UUID clientUuid) {
       return decode(packetWithoutId, protocol.capabilities().loginStartUuid());
     }
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packetWithoutId))) {
-      String username = MinecraftInput.string(input, 16);
+      String username = username(input);
       if (ProtocolEras.loginStartSignature(number) && input.readBoolean()) {
         input.readLong();                                  // key expiry
         skipBytes(input, MAX_PUBLIC_KEY_BYTES);            // public key
@@ -51,6 +51,21 @@ public record LoginStart(String username, UUID clientUuid) {
     }
   }
 
+  /**
+   * The name the client asks for, which nothing has vouched for yet: in offline mode it is the name
+   * the player keeps. Any 16 bytes used to pass, so a name could carry a line break into the log, a
+   * section sign into every message that names the player, or a space that no command argument can
+   * match. A name is 1 to 16 characters from '!' to '~', the rule a vanilla server applies to it too.
+   * The refusal does not repeat the name.
+   */
+  private static String username(DataInputStream input) throws IOException {
+    String name = MinecraftInput.string(input, 16);
+    if (name.isEmpty() || name.length() > 16 || !name.chars().allMatch(c -> c > ' ' && c < 0x7f)) {
+      throw new IOException("Login Start carries an invalid username");
+    }
+    return name;
+  }
+
   private static final int MAX_PUBLIC_KEY_BYTES = 512;
   private static final int MAX_KEY_SIGNATURE_BYTES = 4096;
 
@@ -62,7 +77,7 @@ public record LoginStart(String username, UUID clientUuid) {
 
   public static LoginStart decode(byte[] packetWithoutId, boolean expectsUuid) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packetWithoutId))) {
-      String username = MinecraftInput.string(input, 16);
+      String username = username(input);
       UUID uuid;
       if (expectsUuid) {
         uuid = new UUID(input.readLong(), input.readLong());
