@@ -38,7 +38,7 @@ public final class GracefulShutdown {
     Semaphore permits = new Semaphore(16);
     List<Thread> workers = new ArrayList<>();
     for (TrackedPlayer player : snapshot) {
-      workers.add(Thread.startVirtualThread(() -> {
+      workers.add(gg.tame.conduit.network.SocketThreads.start(() -> {
         try {
           permits.acquire();
           if (System.nanoTime() > deadline) {

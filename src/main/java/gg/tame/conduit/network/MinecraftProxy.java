@@ -91,7 +91,7 @@ public final class MinecraftProxy implements AutoCloseable {
     accepting = true;
     try { runtime.pluginRuntime().loadAll(); } catch (Exception exception) { ConduitLog.error("plugin load failed", exception); }
     runtime.events().fire(new ProxyStartEvent(runtime));
-    try (var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+    try (var workers = Executors.newThreadPerTaskExecutor(SocketThreads.factory())) {
       while (running) {
         SocketChannel client;
         try {

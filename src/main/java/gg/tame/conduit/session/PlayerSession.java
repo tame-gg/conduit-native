@@ -243,7 +243,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     players.add(this);
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
-    Thread backendReader = Thread.startVirtualThread(this::readBackend);
+    Thread backendReader = gg.tame.conduit.network.SocketThreads.start(this::readBackend);
     try { readClient(); }
     finally {
       closed = true;
@@ -1191,7 +1191,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     BackendServer server = selector.registry().get(name).orElse(null);
     if (server == null) return false;
     if (Thread.currentThread() == clientReader) {
-      Thread.startVirtualThread(() -> {
+      gg.tame.conduit.network.SocketThreads.start(() -> {
         if (runSwitch(server)) Messages.connected(this, server.name());
         else Messages.unavailable(this, server.name());
       });

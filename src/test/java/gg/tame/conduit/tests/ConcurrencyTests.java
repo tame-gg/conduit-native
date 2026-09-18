@@ -51,6 +51,7 @@ public final class ConcurrencyTests {
     reconnectKeepsTheLivePlayerIndexed();
     closingTheTransportClosesTheSocket();
     aProxyEndedSessionClosesTheClientSocket();
+    sessionThreadsStayOffTheWindowsPoller();
     aStalledLoginIsTimedOut();
     aBackendThatNeverFinishesLoginReleasesBothSockets();
     rapidServerCommandsOpenOneBackendConnection();
@@ -712,6 +713,47 @@ public final class ConcurrencyTests {
           MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
           require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
           require(reachesEndOfStream(client, 15_000), "the proxy must close a client whose session it ended");
+        }
+        serving.interrupt();
+      }
+      backend.interrupt();
+    }
+  }
+
+  /**
+   * On Windows the JDK parks a virtual thread's socket read and socket write through two wepoll
+   * handles, and a readiness event can land on the wrong one and be dropped (JDK-8334574). A
+   * session reads each socket on one thread and writes it from another, and a real NeoForge join
+   * stalled on exactly that: the backend reader parked for good in a write to the client. There,
+   * every thread a session blocks on a socket must be a platform thread.
+   */
+  private static void sessionThreadsStayOffTheWindowsPoller() throws Exception {
+    boolean windows = System.getProperty("os.name", "").startsWith("Windows");
+    try (ServerSocket lobby = new ServerSocket(0)) {
+      Thread backend = Thread.startVirtualThread(() -> {
+        try (Socket socket = lobby.accept()) {
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
+          MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
+          socket.getInputStream().read(); // holds the session in Play until the client leaves
+        } catch (Exception ignored) { }
+      });
+      ConduitConfiguration configuration = configuration(
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort()))),
+          List.of("lobby"), List.of(), SecuritySettings.defaults());
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(15_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+          require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
+          MinecraftFrames.read(client.getInputStream(), 4096); // Join Game: both of the session's readers are up
+          long platform = Thread.getAllStackTraces().keySet().stream()
+              .filter(thread -> thread.getName().startsWith("conduit-io-")).count();
+          if (windows) require(platform >= 2, "a Windows session must read and write its sockets on platform threads, found " + platform);
+          else require(platform == 0, "elsewhere a session stays on virtual threads, found " + platform);
         }
         serving.interrupt();
       }

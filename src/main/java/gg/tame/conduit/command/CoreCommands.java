@@ -817,7 +817,7 @@ public final class CoreCommands {
     List<Thread> workers = new ArrayList<>();
     for (TrackedPlayer target : targets) {
       if (dest.equalsIgnoreCase(target.currentBackend())) continue;
-      workers.add(Thread.startVirtualThread(() -> {
+      workers.add(gg.tame.conduit.network.SocketThreads.start(() -> {
         try {
           permits.acquire();
           if (target.transferTo(dest)) moved.incrementAndGet();
