@@ -154,7 +154,7 @@ public final class Phase20_393_404_TranslationTests {
     int metaId = ProtocolDefinition.forVersion(404)
         .id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ENTITY_METADATA);
     byte[] packet404 = PlayPackets.withId(metaId, full.toByteArray());
-    byte[] packet393 = Translators.forPair(393, 404).backendToClient(ConnectionState.PLAY, packet404);
+    byte[] packet393 = AllTests.nativePair(393, 404).backendToClient(ConnectionState.PLAY, packet404);
     require(packet393 != null, "metadata packet through translator");
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet393)))) {
       require(MinecraftInput.varInt(in) == 222, "entity id preserved");
@@ -179,7 +179,7 @@ public final class Phase20_393_404_TranslationTests {
         .id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_CONTAINER_SLOT);
     byte[] packet404 = PlayPackets.withId(id, slotBody.toByteArray());
     // Client 393, backend 404: backend→client rematerialises Slot to short-id form.
-    byte[] packet393 = Translators.forPair(393, 404).backendToClient(ConnectionState.PLAY, packet404);
+    byte[] packet393 = AllTests.nativePair(393, 404).backendToClient(ConnectionState.PLAY, packet404);
     require(packet393 != null, "translator emits");
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(PlayPackets.body(packet393)))) {
       in.readByte();
@@ -194,7 +194,7 @@ public final class Phase20_393_404_TranslationTests {
     int keepId = ProtocolDefinition.forVersion(393)
         .id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE);
     byte[] keep393 = PlayPackets.withId(keepId, keep.toByteArray());
-    byte[] keep404 = Translators.forPair(393, 404).clientToBackend(ConnectionState.PLAY, keep393);
+    byte[] keep404 = AllTests.nativePair(393, 404).clientToBackend(ConnectionState.PLAY, keep393);
     require(PlayPackets.packetId(keep404) == ProtocolDefinition.forVersion(404)
             .id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE),
         "keepalive id on 404");

@@ -43,7 +43,7 @@ public final class Phase14ProtocolTranslationTests {
     require(ProtocolCompatibility.between(765, 765) == TranslationSupport.DIRECT, "direct 765");
     require(ProtocolCompatibility.between(766, 766) == TranslationSupport.DIRECT, "direct 766");
     require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "translated");
-    require(ProtocolCompatibility.between(765, 776) == TranslationSupport.UNSUPPORTED, "no 765-776");
+    require(ProtocolCompatibility.between(765, 776) == AllTests.viaCarried(), "765-776 is carried by Via or by nothing");
     require(ProtocolDefinition.forVersion(766).knownPacks(), "766 known packs");
     require(!ProtocolDefinition.forVersion(765).knownPacks(), "765 no known packs");
     require(ProtocolDefinition.forVersion(766).capabilities().cookiePackets(), "766 cookies");
@@ -59,7 +59,7 @@ public final class Phase14ProtocolTranslationTests {
   }
 
   private static void translateFinishConfiguration() throws Exception {
-    ProtocolTranslator pair = Translators.forPair(765, 766);
+    ProtocolTranslator pair = AllTests.nativePair(765, 766);
     ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
     ProtocolDefinition v766 = ProtocolDefinition.forVersion(766);
     byte[] from766 = PlayPackets.withId(v766.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH), new byte[0]);
@@ -71,7 +71,7 @@ public final class Phase14ProtocolTranslationTests {
   }
 
   private static void translatePluginMessage() throws Exception {
-    ProtocolTranslator pair = Translators.forPair(765, 766);
+    ProtocolTranslator pair = AllTests.nativePair(765, 766);
     byte[] brand766 = new PluginMessage("minecraft:brand", PluginMessage.brandPayload("vanilla")).encode(
         ProtocolDefinition.forVersion(766).id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_PLUGIN_MESSAGE));
     byte[] toClient = pair.backendToClient(ConnectionState.CONFIGURATION, brand766);
@@ -82,7 +82,7 @@ public final class Phase14ProtocolTranslationTests {
   }
 
   private static void translateKeepAlive() throws Exception {
-    ProtocolTranslator pair = Translators.forPair(765, 766);
+    ProtocolTranslator pair = AllTests.nativePair(765, 766);
     KeepAlivePacket keep = new KeepAlivePacket(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, 42L);
     byte[] source = new SemanticCodec(ProtocolDefinition.forVersion(766), 64).encode(keep);
     byte[] target = pair.backendToClient(ConnectionState.CONFIGURATION, source);
@@ -92,7 +92,7 @@ public final class Phase14ProtocolTranslationTests {
   }
 
   private static void unknownPacketFails() {
-    ProtocolTranslator translator = Translators.forPair(765, 766);
+    ProtocolTranslator translator = AllTests.nativePair(765, 766);
     try {
       translator.clientToBackend(ConnectionState.PLAY, new byte[] {0x7F, 0x01, 0x02});
       throw new AssertionError("unknown accepted");
@@ -102,7 +102,7 @@ public final class Phase14ProtocolTranslationTests {
   }
 
   private static void joinGameUnsupported() throws Exception {
-    ProtocolTranslator translator = Translators.forPair(765, 766);
+    ProtocolTranslator translator = AllTests.nativePair(765, 766);
     byte[] join = PlayPackets.withId(
         ProtocolDefinition.forVersion(766).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN),
         new byte[] {0, 0, 0, 1});

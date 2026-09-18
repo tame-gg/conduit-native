@@ -24,9 +24,12 @@ public record TranslationSettings(
   }
 
   public static TranslationSettings defaults() {
-    // Disabled until operators opt in. ViaLegacy stays off by default — it pulls
-    // extra transitive deps and is only required for backends ≤1.7.10.
-    return new TranslationSettings(false, TranslationEngine.VIA_PREFERRED, true, true, false, "via");
+    // On by default: without it a cross-version player loses every packet the native
+    // pair drops -- sounds, particles, scoreboards, titles and boss bars among them --
+    // and Via carries all of those today. VIA_PREFERRED still falls back to the native
+    // translators for any pair Via has no path for. ViaLegacy stays off by default: it
+    // pulls extra transitive deps and is only required for backends ≤1.7.10.
+    return new TranslationSettings(true, TranslationEngine.VIA_PREFERRED, true, true, false, "via");
   }
 
   public enum TranslationEngine {

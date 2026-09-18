@@ -95,8 +95,7 @@ public final class Phase8Tests {
     require(ConduitMetrics.current().snapshot().toString().contains("players="), "metrics");
     try (ServerSocket backendListener = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 2048);
+        try (Socket socket = AllTests.acceptLogin(backendListener).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 2048);
           // Conduit completes the backend login itself, in every forwarding mode, before relaying.
           MinecraftFrames.write(socket.getOutputStream(), loginSuccess());
@@ -126,7 +125,7 @@ public final class Phase8Tests {
   }
   private static void translationFoundation() {
     require(TranslationPipeline.support(765, 765) == TranslationSupport.DIRECT, "direct");
-    require(ProtocolCompatibility.between(765, 776) == TranslationSupport.UNSUPPORTED, "no fake 765-776");
+    require(ProtocolCompatibility.between(765, 776) == AllTests.viaCarried(), "765-776 is carried by Via or by nothing");
     require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "765-766 translated");
     try { new Protocol765To776Translator().clientToBackend(gg.tame.conduit.protocol.ConnectionState.PLAY, new byte[] {0}); throw new AssertionError("fake translation"); }
     catch (UnsupportedOperationException expected) { }

@@ -394,7 +394,7 @@ public final class Phase19_393_765_ItemTests {
   // ------------------------------------------------- the transaction handshake
 
   private static void transactionAckIsSynthesised() throws Exception {
-    ProtocolTranslator translator = Translators.forPair(393, 765);
+    ProtocolTranslator translator = AllTests.nativePair(393, 765);
     ProtocolDefinition v393 = ProtocolDefinition.forVersion(393);
 
     ByteArrayOutputStream body = new ByteArrayOutputStream();

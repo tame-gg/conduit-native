@@ -51,10 +51,9 @@ public final class DirectLoginCompressionTests {
     try (ServerSocket backendListener = new ServerSocket(0)) {
       AtomicReference<Throwable> backendFailure = new AtomicReference<>();
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
+        try (Socket socket = AllTests.acceptLogin(backendListener, 765).getKey()) {
           InputStream in = socket.getInputStream();
           OutputStream out = socket.getOutputStream();
-          MinecraftFrames.read(in, 4096);
           MinecraftFrames.read(in, 4096);
           MinecraftFrames.write(out, new byte[] {0x03, THRESHOLD});
           MinecraftFrames.write(out, compress(loginSuccess()));
@@ -113,10 +112,9 @@ public final class DirectLoginCompressionTests {
     try (ServerSocket backendListener = new ServerSocket(0)) {
       AtomicReference<Throwable> backendFailure = new AtomicReference<>();
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
+        try (Socket socket = AllTests.acceptLogin(backendListener, 765).getKey()) {
           InputStream in = socket.getInputStream();
           OutputStream out = socket.getOutputStream();
-          MinecraftFrames.read(in, 4096);
           MinecraftFrames.read(in, 4096);
           MinecraftFrames.write(out, loginSuccess(backendUuid));
           MinecraftFrames.read(in, 4096);

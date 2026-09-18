@@ -34,11 +34,16 @@ doubtful value is one `WARN` instead: a server host that does not resolve (Condu
 start), or `versions.enabled = true` with nothing to gate. `#` starts a comment anywhere outside a quoted
 string. `run.ps1` needs the file to exist: copy `config/conduit.toml` to `run/` first.
 
-### Optional ViaVersion translation
+### ViaVersion translation (on by default)
 
-Set `[translation] enabled = true` to use ViaVersion / ViaBackwards / ViaRewind as the
-preferred cross-version engine. See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`.
-Native translators are kept as fallback. **Minecraft 26.3 is not supported by Via 5.11.0.**
+`[translation] enabled = true` is the default, with `engine = "via-preferred"`: ViaVersion /
+ViaBackwards / ViaRewind are the cross-version engine and Conduit's native translators are the
+fallback for any ordered pair Via has no path for. This is what gives a cross-version player
+sounds, particles, scoreboards, titles and boss bars, which the native pairs below drop.
+
+Set `enabled = false` for native-only translation, and read the completeness column before you do.
+See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`. **Minecraft 26.3 is not supported by Via
+5.11.0.**
 
 ## Supported Minecraft versions
 
@@ -78,17 +83,23 @@ Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 
 ### Translation matrix
 
-| Client → Backend | Support | Completeness |
+**This table is about Conduit's own translators, which run when `[translation] enabled = false`
+or when Via has no path for the pair. It is not a list of what a version supports.** On a DIRECT
+path — client and backend on the same codec — nothing is translated and nothing is dropped, and
+with the default `via-preferred` engine Via carries the cross-version pairs instead. No Minecraft
+version loses sounds because of anything in this table.
+
+| Client → Backend | Native support | Completeness of the native path |
 |---|---|---|
 | same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
-| **393 ↔ 765** | **TRANSLATED** | **CORE GAMEPLAY VERIFIED (bidirectional)** — login, world, movement, blocks, entities, health, chat, items, inventory, containers (including chest open/click/close), equipment, metadata and attributes against real vanilla clients/servers via scripted probes. Sounds, particles, scoreboards, titles, boss bars, block-entity data, recipes and advancements remain deliberately unsupported. Not equivalent to a human gameplay session. See `docs/VALIDATION_393_765.md`. |
+| **393 ↔ 765** | **TRANSLATED** | **CORE GAMEPLAY VERIFIED (bidirectional)** — login, world, movement, blocks, entities, health, chat, items, inventory, containers (including chest open/click/close), equipment, metadata and attributes against real vanilla clients/servers via scripted probes. Sounds, particles, scoreboards, titles, boss bars, block-entity data, recipes and advancements are dropped on purpose by *this translator*; Via carries them. Not equivalent to a human gameplay session. See `docs/VALIDATION_393_765.md`. |
 | 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
-| 765 → 776 | UNSUPPORTED | intentional until a real translator exists |
+| 765 → 776 | none | no native translator; carried by Via under the default engine |
 
 **393 ↔ 765 is CORE GAMEPLAY VERIFIED, not FULL.** Ordinary survival play crosses
 the pair in both directions under scripted real-client/server probes, but the
-unsupported list above is intentional and human mouse/keyboard play was not
-exercised here.
+dropped list above is intentional for the native translator and human
+mouse/keyboard play was not exercised here.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 

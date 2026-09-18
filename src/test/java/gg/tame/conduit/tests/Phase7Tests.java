@@ -123,11 +123,17 @@ public final class Phase7Tests {
     runtime.close();
   }
   private static void protocolCompatibility() {
+    // Translation is on by default, so the Via ecosystem is normally loaded and carries pairs
+    // Conduit has no native table for. The claim still has to follow an engine that can actually
+    // make the packets: with Via absent these pairs must go back to UNSUPPORTED rather than be
+    // asserted as supported either way, which is the regression this test exists to catch.
+    boolean via = gg.tame.conduit.viaversion.ConduitViaBootstrap.available();
+    TranslationSupport viaOnly = via ? TranslationSupport.TRANSLATED : TranslationSupport.UNSUPPORTED;
     require(ProtocolCompatibility.between(765, 765) == TranslationSupport.DIRECT, "1.20.4 direct");
     require(ProtocolCompatibility.between(763, 763) == TranslationSupport.DIRECT, "1.20.1 direct");
-    require(ProtocolCompatibility.between(765, 763) == TranslationSupport.UNSUPPORTED, "no fake translation");
+    require(ProtocolCompatibility.between(765, 763) == viaOnly, "765→763 is carried by Via or by nothing");
     require(ProtocolCompatibility.between(776, 776) == TranslationSupport.DIRECT, "26.2 direct");
-    require(ProtocolCompatibility.between(765, 776) == TranslationSupport.UNSUPPORTED, "no fake translation");
+    require(ProtocolCompatibility.between(765, 776) == viaOnly, "765→776 is carried by Via or by nothing");
     require(ProtocolCompatibility.between(766, 766) == TranslationSupport.DIRECT, "1.20.5 direct");
     require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "765↔766 translated");
     require(ProtocolCompatibility.between(766, 765) == TranslationSupport.TRANSLATED, "766↔765 translated");
@@ -135,8 +141,14 @@ public final class Phase7Tests {
     require(Translators.forPair(765, 766) != IdentityTranslator.INSTANCE, "pair translator");
     byte[] packet = {1, 2, 3};
     require(IdentityTranslator.INSTANCE.clientToBackend(ConnectionState.PLAY, packet) == packet, "no copy identity");
-    try { Translators.forPair(5, 765); throw new AssertionError("translator claimed"); }
-    catch (IllegalArgumentException expected) { }
+    // 1.7.6-1.7.10: Via reaches back this far, so it is a translator when Via is loaded and a
+    // refusal when it is not. Conduit has never had a native table for the pair.
+    if (via) {
+      require(Translators.forPair(5, 765) != IdentityTranslator.INSTANCE, "Via carries 1.7.6→1.20.4");
+    } else {
+      try { Translators.forPair(5, 765); throw new AssertionError("translator claimed"); }
+      catch (IllegalArgumentException expected) { }
+    }
     // 1.7.6-1.7.10 has a table so the client can be admitted at all, and it is deliberately
     // partial: it carries what Conduit acts on itself and nothing else. Asserting both halves,
     // because a table that quietly grew into a support claim would be the real regression.

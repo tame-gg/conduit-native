@@ -6,11 +6,12 @@ Regenerate after any protocol change. The *translation* program targets
 1.13-26.2; 1.7.6, 1.8.9 and 1.12.2 have declared codecs of their own and are
 carried DIRECT and through Via, which the DIRECT matrix below covers.
 
-## ViaVersion ecosystem (optional)
+## ViaVersion ecosystem (on by default)
 
-When `[translation] enabled = true`, Conduit prefers the ViaVersion graph for
-TRANSLATED pairs (see `docs/VIAVERSION.md`). Native translators remain as
-fallback/experimental.
+`[translation] enabled = true` is the default, so Conduit prefers the ViaVersion
+graph for TRANSLATED pairs (see `docs/VIAVERSION.md`). Native translators remain
+as fallback/experimental, used for an ordered pair Via has no path for. The rows
+below marked "Via enabled" are therefore the default behaviour, not an opt-in.
 
 | Client → Backend | Mode | Verification |
 |---|---|---|

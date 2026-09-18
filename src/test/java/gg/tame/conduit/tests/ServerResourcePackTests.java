@@ -291,10 +291,9 @@ public final class ServerResourcePackTests {
     private volatile OutputStream out;
     PackServer(int protocol, List<byte[]> configuration) throws java.io.IOException {
       Thread.ofPlatform().daemon().start(() -> {
-        try (Socket socket = listener.accept()) {
+        try (Socket socket = AllTests.acceptLogin(listener, protocol).getKey()) {
           InputStream in = socket.getInputStream();
           OutputStream output = socket.getOutputStream();
-          MinecraftFrames.read(in, 8192);
           byte[] start = MinecraftFrames.read(in, 8192);
           String name = MinecraftInput.string(new DataInputStream(new ByteArrayInputStream(start, 1, start.length - 1)), 16);
           ProtocolDefinition p = ProtocolDefinition.forVersion(protocol);

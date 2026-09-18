@@ -99,7 +99,7 @@ public final class Phase18_393_765_WorldTests {
         List.of(new SemanticPlayerInfo.Entry(id, Optional.of("Alex"), List.of(),
             Optional.of(0), Optional.of(10), Optional.empty(), Optional.of(true))));
     byte[] modern = PlayerInfoCodec.encode(v765, info);
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     require(PlayPackets.packetId(legacy) == 0x30, "393 player_info id");
     SemanticPlayerInfo decoded = PlayerInfoCodec.decode(ProtocolDefinition.forVersion(393), legacy);
@@ -146,7 +146,7 @@ public final class Phase18_393_765_WorldTests {
     byte[] packet765 = PlayPackets.withId(
         ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHUNK_DATA),
         body765);
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] packet393 = t.backendToClient(ConnectionState.PLAY, packet765);
     require(PlayPackets.packetId(packet393) == 0x22, "393 chunk id");
     SemanticChunk decoded = ChunkCodec393.decode(PlayPackets.body(packet393));
@@ -155,7 +155,7 @@ public final class Phase18_393_765_WorldTests {
   }
 
   private static void updateLightDropped() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] light = PlayPackets.withId(
         ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_LIGHT),
         new byte[] {0, 0, 0, 0, 0, 0, 0, 0});
@@ -165,7 +165,7 @@ public final class Phase18_393_765_WorldTests {
 
   /** Regression: real 1.13 client failed when Paper Set Compression was forwarded (commit 764468b). */
   private static void setCompressionDroppedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] compression = PlayPackets.withId(
         ProtocolDefinition.forVersion(765).id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SET_COMPRESSION),
         new byte[] {(byte) 0x80, 0x02}); // VarInt 256 threshold
@@ -175,7 +175,7 @@ public final class Phase18_393_765_WorldTests {
 
   /** Regression: real Paper 1.20.4 sent held_item_slot (0x51) immediately after Join Game. */
   private static void heldItemTranslated() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] modern = PlayPackets.withId(0x51, new byte[] {0});
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     require(legacy != null && PlayPackets.packetId(legacy) == 0x3D, "held item id 393");
@@ -184,7 +184,7 @@ public final class Phase18_393_765_WorldTests {
 
   /** Regression: Paper 1.20.4 sends declare_recipes (0x73) before chunks; schema incompatible with 393. */
   private static void declareRecipesDroppedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x73, new byte[] {0})) == null, "recipes dropped");
     require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x74, new byte[] {0})) == null, "tags dropped");
     require(t.backendToClient(ConnectionState.PLAY, PlayPackets.withId(0x52, new byte[] {0, 0})) == null, "view pos dropped");
@@ -193,7 +193,7 @@ public final class Phase18_393_765_WorldTests {
 
   /** Regression: 765 difficulty includes locked bool; 393 is difficulty byte only. */
   private static void difficultyTrimmedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] modern = PlayPackets.withId(0x0B, new byte[] {2, 1}); // normal + locked
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     require(legacy != null && PlayPackets.packetId(legacy) == 0x0D, "393 difficulty id");
@@ -202,7 +202,7 @@ public final class Phase18_393_765_WorldTests {
 
   /** Regression: Paper sent entity_status (0x1d) during world entry; body matches 393 0x1c. */
   private static void entityStatusRemapped() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] modern = PlayPackets.withId(0x1D, new byte[] {0, 0, 0, 1, 24});
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     require(legacy != null && PlayPackets.packetId(legacy) == 0x1C, "393 entity_status id");
@@ -214,7 +214,7 @@ public final class Phase18_393_765_WorldTests {
    * 393 has no server_data (added in 1.19), so it must be dropped rather than reach the client.
    */
   private static void serverDataDroppedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] motd = "Conduit 765 backend".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     body.write(0x08);                       // NBT TAG_String
@@ -236,7 +236,7 @@ public final class Phase18_393_765_WorldTests {
    * warningBlocks, so a byte-for-byte forward would silently swap 5 and 15.
    */
   private static void worldBorderInitTranslatedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeDouble(0.0);                    // center X
@@ -273,7 +273,7 @@ public final class Phase18_393_765_WorldTests {
    * longs on both eras, so only the id changes — but the values must survive intact.
    */
   private static void updateTimeRemappedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeLong(47391L);  // world age, as captured
@@ -292,7 +292,7 @@ public final class Phase18_393_765_WorldTests {
    * tick rate 20.0f + frozen false. Added in 1.20.3, so 393 must never see it.
    */
   private static void setTickingStateDroppedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeFloat(20.0f);  // tick rate, as captured
@@ -306,7 +306,7 @@ public final class Phase18_393_765_WorldTests {
    * Set Ticking State. Added in 1.20.3 alongside it; 393 has no equivalent.
    */
   private static void stepTickDroppedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] modern = PlayPackets.withId(0x6F, new byte[] {0});
     require(t.backendToClient(ConnectionState.PLAY, modern) == null, "step tick dropped");
   }
@@ -320,7 +320,7 @@ public final class Phase18_393_765_WorldTests {
    * are dropped, so the body must end exactly after the 46 slots.
    */
   private static void containerContentTranslatedTo393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     body.write(0x00);        // window id: player inventory
     body.write(0x01);        // state id
@@ -342,7 +342,7 @@ public final class Phase18_393_765_WorldTests {
    * state id stripped and the slot number carried through unchanged.
    */
   private static void containerSlotTranslatedTo393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] modern = PlayPackets.withId(0x15, new byte[] {0x00, 0x02, 0x00, 0x2D, 0x00});
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     require(legacy != null, "container slot must now reach the 1.13 client");
@@ -358,7 +358,7 @@ public final class Phase18_393_765_WorldTests {
    * must drop the packet rather than raise and tear down the session.
    */
   private static void declareCommandsWithheldFrom393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     // Minimal tree: one node, root index 0.
     byte[] modern = PlayPackets.withId(0x11, new byte[] {0x01, 0x00, 0x00, 0x00});
     require(t.backendToClient(ConnectionState.PLAY, modern) == null, "command tree withheld");
@@ -374,7 +374,7 @@ public final class Phase18_393_765_WorldTests {
    * shifted from 9 to 7, not that the bytes came through.
    */
   private static void entityMetadataTranslatedTo393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     MinecraftOutput.varInt(out, 1083); // entity id, as captured
@@ -403,7 +403,7 @@ public final class Phase18_393_765_WorldTests {
    * changes from a VarInt to the fixed Int that 1.13 reads.
    */
   private static void entityAttributesTranslatedTo393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     MinecraftOutput.varInt(out, 1084);  // entity id, as captured
@@ -433,7 +433,7 @@ public final class Phase18_393_765_WorldTests {
    * required to enter or render the world.
    */
   private static void advancementsDroppedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeBoolean(true);          // reset/clear
@@ -449,7 +449,7 @@ public final class Phase18_393_765_WorldTests {
    * health 20.0, food 20, saturation 5.0. Layout is identical on 393, so only the id changes.
    */
   private static void updateHealthRemappedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeFloat(20.0f);          // health
@@ -470,7 +470,7 @@ public final class Phase18_393_765_WorldTests {
    * zeros (bar 0.0, level 0, total 0). Identical layout on 393, so only the id changes.
    */
   private static void setExperienceRemappedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeFloat(0.0f);           // experience bar
@@ -507,7 +507,7 @@ public final class Phase18_393_765_WorldTests {
    * position (-38, 70, 28) packed modern, state 10.
    */
   private static void blockUpdateTranslatedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     out.writeLong(0xFFFFF6800001C046L);
@@ -527,7 +527,7 @@ public final class Phase18_393_765_WorldTests {
    * 1.13 client's compass to the wrong place. It must be repacked like any other position.
    */
   private static void spawnPositionRepackedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
     long modern = BlockPositionCodec.pack(v765, new BlockPositionCodec.BlockPosition(-38, 70, 28));
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
@@ -551,7 +551,7 @@ public final class Phase18_393_765_WorldTests {
    * enableTextFiltering and allowServerListings. The 393 body must be extended, not copied.
    */
   private static void clientInformationExtendedToward765() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     MinecraftOutput.string(out, "en_us");
@@ -584,7 +584,7 @@ public final class Phase18_393_765_WorldTests {
    * expects a signing envelope (timestamp, salt, signatures, acknowledgements) after the text.
    */
   private static void chatEnvelopeSynthesizedToward765() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
 
     // Plain chat -> 765 Chat Message (0x05), unsigned.
     java.io.ByteArrayOutputStream chat = new java.io.ByteArrayOutputStream();
@@ -622,7 +622,7 @@ public final class Phase18_393_765_WorldTests {
    * sequence synthesized.
    */
   private static void playerDiggingTranslatedToward765() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     long legacyPacked = 0xFFFFF1819FFFFFFBL;
     BlockPositionCodec.BlockPosition expected =
         BlockPositionCodec.unpack(ProtocolDefinition.forVersion(393), legacyPacked);
@@ -655,7 +655,7 @@ public final class Phase18_393_765_WorldTests {
    * horizontal nibble-pair byte, an absolute Y byte and a VarInt state. Translated semantically.
    */
   private static void multiBlockChangeTranslatedToward393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     java.io.ByteArrayOutputStream body = new java.io.ByteArrayOutputStream();
     java.io.DataOutputStream out = new java.io.DataOutputStream(body);
     long section = ((long) (-5 & 0x3FFFFF) << 42) | ((long) (6 & 0x3FFFFF) << 20) | 1L;
@@ -691,7 +691,7 @@ public final class Phase18_393_765_WorldTests {
    * act in the world. Single Hand VarInt on both eras, so only the id changes.
    */
   private static void swingArmRemappedToward765() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] modern = t.clientToBackend(ConnectionState.PLAY, PlayPackets.withId(0x27, new byte[] {0}));
     require(modern != null && PlayPackets.packetId(modern) == 0x33, "765 swing_arm id");
     require(PlayPackets.body(modern).length == 1, "hand preserved");

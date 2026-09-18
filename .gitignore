@@ -19,3 +19,7 @@ logs/
 dumps/
 tools/__pycache__/
 config/via/
+
+# Via's own data folder, written beside whatever config started the proxy. Translation is on
+# by default, so a run from the repo root creates this one.
+/via/

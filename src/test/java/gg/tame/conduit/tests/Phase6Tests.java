@@ -63,8 +63,7 @@ public final class Phase6Tests {
     try (ServerSocket backendListener = new ServerSocket(0)) {
       AtomicReference<String> forwarded = new AtomicReference<>("");
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(backendListener, 762).getKey()) {
           byte[] loginStart = MinecraftFrames.read(socket.getInputStream(), 4096);
           require(gg.tame.conduit.login.LoginStart.decode(PlayPackets.body(loginStart), v1194).username().equals("playr"), "1.19.4 Login Start reaches the backend in its layout");
           ByteArrayOutputStream success = new ByteArrayOutputStream();
@@ -134,8 +133,7 @@ public final class Phase6Tests {
     byte[] settings = legacySettings();
     try (ServerSocket lobby = new ServerSocket(0); ServerSocket survival = new ServerSocket(0)) {
       Thread lobbyThread = Thread.startVirtualThread(() -> {
-        try (Socket socket = lobby.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(lobby, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
           MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame(1));
@@ -145,8 +143,7 @@ public final class Phase6Tests {
       AtomicReference<String> early = new AtomicReference<>("");
       java.util.concurrent.CountDownLatch replayed = new java.util.concurrent.CountDownLatch(1);
       Thread survivalThread = Thread.startVirtualThread(() -> {
-        try (Socket socket = survival.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(survival, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
           socket.setSoTimeout(700);
@@ -222,8 +219,7 @@ public final class Phase6Tests {
     try (ServerSocket backendListener = new ServerSocket(0)) {
       AtomicReference<String> chat = new AtomicReference<>();
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(backendListener, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyPacket(2, "00000000-0000-0000-0000-000000000000", "playr"));
           while (chat.get() == null) {
@@ -465,7 +461,14 @@ public final class Phase6Tests {
   private static void serveBackend(ServerSocket listener, String brand, byte marker, AtomicReference<String> uuidSink) {
     while (!Thread.currentThread().isInterrupted()) {
       try (Socket socket = listener.accept()) {
-        MinecraftFrames.read(socket.getInputStream(), 4096);
+        byte[] handshake = MinecraftFrames.read(socket.getInputStream(), 4096);
+        // Routing status-pings a backend whose protocol it has not learned yet before it routes a
+        // player there. Left unanswered, that ping timed out on the join path and the backend was
+        // reported unavailable, so it is answered here as a real one would.
+        if (gg.tame.conduit.protocol.Handshake.decode(handshake).nextState() != 2) {
+          AllTests.answerStatus(socket, 765);
+          continue;
+        }
         MinecraftFrames.read(socket.getInputStream(), 4096);
         MinecraftFrames.write(socket.getOutputStream(), modernRequest(9, 1));
         MinecraftFrames.read(socket.getInputStream(), 4096);

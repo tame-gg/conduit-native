@@ -219,7 +219,7 @@ public final class ConfigurationLoader {
 
   private static TranslationSettings translation(Map<String, String> values) {
     return new TranslationSettings(
-        optionalBoolean(values, "translation.enabled", false),
+        optionalBoolean(values, "translation.enabled", true),
         TranslationSettings.TranslationEngine.parse(
             optionalString(values, "translation.engine", "via-preferred")),
         optionalBoolean(values, "translation.via-backwards", true),

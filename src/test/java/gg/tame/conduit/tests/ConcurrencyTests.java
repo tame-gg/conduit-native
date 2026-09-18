@@ -292,8 +292,7 @@ public final class ConcurrencyTests {
   private static void oneFailedAcceptDoesNotEndTheListener() throws Exception {
     try (ServerSocket lobby = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = lobby.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(lobby, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
           MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
@@ -703,8 +702,7 @@ public final class ConcurrencyTests {
   private static void aProxyEndedSessionClosesTheClientSocket() throws Exception {
     try (ServerSocket lobby = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = lobby.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(lobby, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
           MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
@@ -812,8 +810,7 @@ public final class ConcurrencyTests {
    * server times out a player that has stopped answering.
    */
   private static void serveStreamingBackend(ServerSocket listener, int hangUpAfterMillis) {
-    try (Socket socket = listener.accept()) {
-      MinecraftFrames.read(socket.getInputStream(), 4096);
+    try (Socket socket = AllTests.acceptLogin(listener, 47).getKey()) {
       MinecraftFrames.read(socket.getInputStream(), 4096);
       MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
       MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
@@ -838,8 +835,7 @@ public final class ConcurrencyTests {
     boolean windows = System.getProperty("os.name", "").startsWith("Windows");
     try (ServerSocket lobby = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = lobby.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(lobby, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
           MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
@@ -908,8 +904,7 @@ public final class ConcurrencyTests {
     try (ServerSocket lobby = new ServerSocket(0)) {
       java.util.concurrent.CountDownLatch backendClosed = new java.util.concurrent.CountDownLatch(1);
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = lobby.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(lobby, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           // Never answers. The proxy is the only thing that can end this.
           while (socket.getInputStream().read() >= 0) { }
@@ -1010,8 +1005,7 @@ public final class ConcurrencyTests {
     AtomicInteger logins = new AtomicInteger();
     try (ServerSocket lobby = new ServerSocket(0); ServerSocket survival = new ServerSocket(0)) {
       Thread lobbyThread = Thread.startVirtualThread(() -> {
-        try (Socket socket = lobby.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 4096);
+        try (Socket socket = AllTests.acceptLogin(lobby, 47).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 4096);
           MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
           MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());

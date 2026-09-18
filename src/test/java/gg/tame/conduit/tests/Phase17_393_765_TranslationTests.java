@@ -52,8 +52,8 @@ public final class Phase17_393_765_TranslationTests {
   private static void compatibility() {
     require(ProtocolCompatibility.between(393, 765) == TranslationSupport.TRANSLATED, "translated");
     require(CompatibilityRegistry.resolve(393, 765).completeness() == CompatibilityCompleteness.PARTIAL, "partial");
-    require(CompatibilityRegistry.resolve(765, 776).support() == TranslationSupport.UNSUPPORTED, "765-776 unchanged");
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    require(CompatibilityRegistry.resolve(765, 776).support() == AllTests.viaCarried(), "765-776 is carried by Via or by nothing");
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     require(t != null, "translator registered");
   }
 
@@ -62,7 +62,7 @@ public final class Phase17_393_765_TranslationTests {
     ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
     PlayerProfile profile = new PlayerProfile(UUID.randomUUID(), "Steve", List.of(), true);
     byte[] from393 = LoginStart.encode(profile, v393);
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] to765 = t.clientToBackend(ConnectionState.LOGIN, from393);
     require(PlayPackets.packetId(to765) == 0, "login start id");
     require(PlayPackets.body(to765).length > PlayPackets.body(from393).length, "765 adds uuid");
@@ -77,7 +77,7 @@ public final class Phase17_393_765_TranslationTests {
     LoginSuccessPacket semantic = new LoginSuccessPacket(PacketDirection.SERVER_TO_CLIENT,
         UUID.fromString("11111111-1111-1111-1111-111111111111"), "Alex", List.of());
     byte[] from765 = JoinGameCodec.encodeLoginSuccess(v765, semantic);
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] to393 = t.backendToClient(ConnectionState.LOGIN, from765);
     LoginSuccessPacket back = JoinGameCodec.decodeLoginSuccess(v393, to393);
     require(back.uniqueId().equals(semantic.uniqueId()), "uuid");
@@ -91,7 +91,7 @@ public final class Phase17_393_765_TranslationTests {
     ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
     ProtocolDefinition v393 = ProtocolDefinition.forVersion(393);
     byte[] modern = JoinGameCodec.encode(v765, join);
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] legacy = t.backendToClient(ConnectionState.PLAY, modern);
     JoinGamePacket decoded = JoinGameCodec.decode(v393, legacy);
     require(decoded.entityId() == 42, "entity");
@@ -101,7 +101,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void keepAlive() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     KeepAlivePacket keep = new KeepAlivePacket(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, 0x7fff_ffff_ffff_ffffL);
     byte[] from765 = new gg.tame.conduit.protocol.codec.SemanticCodec(ProtocolDefinition.forVersion(765), 64).encode(keep);
     byte[] to393 = t.backendToClient(ConnectionState.PLAY, from765);
@@ -111,7 +111,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void pluginMessage() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] brand = new PluginMessage("minecraft:brand", PluginMessage.brandPayload("Paper")).encode(
         ProtocolDefinition.forVersion(765).id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE));
     byte[] to393 = t.backendToClient(ConnectionState.PLAY, brand);
@@ -119,7 +119,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void movement() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     MovementPacket move = MovementPacket.positionLook(1.5, 64.0, -3.25, 90f, 0f, true);
     byte[] from393 = JoinGameCodec.encodeMovement(ProtocolDefinition.forVersion(393), move);
     byte[] to765 = t.clientToBackend(ConnectionState.PLAY, from393);
@@ -129,7 +129,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void playerPosition() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     PlayerPositionPacket pos = new PlayerPositionPacket(PacketDirection.SERVER_TO_CLIENT, 0, 70, 0, 0, 0, (byte) 0, 7);
     byte[] from765 = JoinGameCodec.encodePlayerPosition(ProtocolDefinition.forVersion(765), pos);
     byte[] to393 = t.backendToClient(ConnectionState.PLAY, from765);
@@ -139,7 +139,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void configurationDroppedTo393() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] finish = PlayPackets.withId(
         ProtocolDefinition.forVersion(765).id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH),
         new byte[0]);
@@ -190,7 +190,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void disconnect() throws Exception {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     byte[] kick = JoinGameCodec.encodeDisconnect(ProtocolDefinition.forVersion(765),
         new gg.tame.conduit.protocol.semantic.DisconnectPacket(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT,
             PacketKind.PLAY_DISCONNECT, "bye"));
@@ -199,7 +199,7 @@ public final class Phase17_393_765_TranslationTests {
   }
 
   private static void unsupportedChunksFailClosed() {
-    ProtocolTranslator t = Translators.forPair(393, 765);
+    ProtocolTranslator t = AllTests.nativePair(393, 765);
     try {
       t.backendToClient(ConnectionState.PLAY, new byte[] {(byte) 0x22, 0x01}); // 393 map_chunk id toward wrong codec path
       // Using 765 unknown play id

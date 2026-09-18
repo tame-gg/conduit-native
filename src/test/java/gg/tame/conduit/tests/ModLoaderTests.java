@@ -153,10 +153,11 @@ public final class ModLoaderTests {
     try (ServerSocket backendListener = new ServerSocket(0)) {
       AtomicReference<Throwable> backendFailure = new AtomicReference<>();
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
+        var login = AllTests.acceptLoginUnchecked(backendListener, PROTOCOL);
+        try (Socket socket = login.getKey()) {
           InputStream in = socket.getInputStream();
           OutputStream out = socket.getOutputStream();
-          seenHost.set(Handshake.decode(MinecraftFrames.read(in, 4096)).requestedHost());
+          seenHost.set(Handshake.decode(login.getValue()).requestedHost());
           MinecraftFrames.read(in, 4096);
           MinecraftFrames.write(out, loginSuccess());
           MinecraftFrames.read(in, 4096);
@@ -479,11 +480,12 @@ public final class ModLoaderTests {
     }
 
     @Override public void run() {
-      try (Socket socket = listener.accept()) {
+      var login = AllTests.acceptLoginUnchecked(listener, PROTOCOL);
+      try (Socket socket = login.getKey()) {
         socket.setSoTimeout(15_000);
         InputStream in = socket.getInputStream();
         OutputStream out = socket.getOutputStream();
-        host.set(Handshake.decode(MinecraftFrames.read(in, 8192)).requestedHost());
+        host.set(Handshake.decode(login.getValue()).requestedHost());
         MinecraftFrames.read(in, 8192);
         MinecraftFrames.write(out, loginSuccess());
         MinecraftFrames.read(in, 8192);
@@ -802,11 +804,10 @@ public final class ModLoaderTests {
       AtomicReference<Throwable> backendFailure = new AtomicReference<>();
       AtomicReference<byte[]> backendGot = new AtomicReference<>();
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
+        try (Socket socket = AllTests.acceptLogin(backendListener, v121).getKey()) {
           socket.setSoTimeout(5_000);
           InputStream in = socket.getInputStream();
           OutputStream out = socket.getOutputStream();
-          MinecraftFrames.read(in, 1 << 20);
           MinecraftFrames.read(in, 1 << 20);
           ByteArrayOutputStream success = new ByteArrayOutputStream();
           try (DataOutputStream body = new DataOutputStream(success)) {
@@ -875,11 +876,10 @@ public final class ModLoaderTests {
       AtomicReference<Throwable> backendFailure = new AtomicReference<>();
       AtomicReference<byte[]> afterAck = new AtomicReference<>();
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
+        try (Socket socket = AllTests.acceptLogin(backendListener, 764).getKey()) {
           socket.setSoTimeout(5_000);
           InputStream in = socket.getInputStream();
           OutputStream out = socket.getOutputStream();
-          MinecraftFrames.read(in, 1 << 20);
           MinecraftFrames.read(in, 1 << 20);
           // A query, then Login Success without waiting for its answer.
           MinecraftFrames.write(out, loginPluginRequest(v1202, 0, "fml:loginwrapper", new byte[] {1}));

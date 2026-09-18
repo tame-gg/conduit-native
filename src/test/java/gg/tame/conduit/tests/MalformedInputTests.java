@@ -208,7 +208,7 @@ public final class MalformedInputTests {
 
     // A 1.13 client's creative-mode item toward a 1.20.4 backend: an item the translator cannot read ends
     // the session with a TranslationException, as before.
-    ProtocolTranslator translator = Translators.forPair(393, 765);
+    ProtocolTranslator translator = AllTests.nativePair(393, 765);
     int creative = v393.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CREATIVE_SLOT);
     try {
       translator.clientToBackend(ConnectionState.PLAY, packet(creative, out -> {

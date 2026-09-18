@@ -123,8 +123,8 @@ public final class Phase16ModernProtocolTests {
 
     // Having a codec on both sides never by itself implies a translation path.
     require(ProtocolDefinition.hasCodec(401) && ProtocolDefinition.hasCodec(765), "both have codecs");
-    require(ProtocolCompatibility.between(401, 765) == TranslationSupport.UNSUPPORTED,
-        "401->765 has codecs but no translator");
+    require(ProtocolCompatibility.between(401, 765) == AllTests.viaCarried(),
+        "401->765 has codecs but no native translator: Via carries it or nothing does");
   }
 
   private static void capabilities113() {

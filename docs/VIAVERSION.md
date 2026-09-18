@@ -16,7 +16,22 @@ via-legacy = true          # needed for backends ≤ 1.7.10 (incl. 1.7.6)
 data-folder = "via"
 ```
 
-Default is **disabled** so existing native paths stay unchanged until operators opt in.
+Default is **enabled**, with `engine = "via-preferred"`. Without it a cross-version player loses
+every packet the native pair drops: sounds, particles, scoreboards, titles, boss bars,
+block-entity data, recipes and advancements (see `docs/VALIDATION_393_765.md`). Via carries all of
+those, and `via-preferred` still falls back to a native translator for any ordered pair Via has no
+path for, so turning it on costs no native coverage.
+
+Set `enabled = false` for native-only translation and accept those drops, or `engine = "native"` to
+keep the setting on for a pair Via cannot carry while never loading the Via platform.
+
+Two consequences of the default worth knowing:
+
+- Routing status-pings a backend whose protocol it has not learned yet before it routes a player
+  there, so a cold cache costs one extra short-lived connection per join. `probeBackends()` at
+  start and the periodic health probe normally fill that cache first.
+- Pairs Conduit has no native table for now report `TRANSLATED` rather than `UNSUPPORTED`, because
+  an engine really does carry them. With Via absent they go back to `UNSUPPORTED`.
 
 ## Roles
 

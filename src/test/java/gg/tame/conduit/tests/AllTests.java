@@ -174,7 +174,7 @@ public final class AllTests {
     require(current.knownPacks() && current.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KNOWN_PACKS) == 0x0E, "26.2 known packs");
     require(current.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION) == 0x76, "26.2 start configuration");
     require(gg.tame.conduit.protocol.ProtocolCompatibility.between(776, 776) == gg.tame.conduit.protocol.TranslationSupport.DIRECT, "26.2 direct");
-    require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 776) == gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED, "no native 1.20.4 to 26.2 translation");
+    require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 776) == viaCarried(), "1.20.4 to 26.2 is carried by Via or by nothing");
     require(gg.tame.conduit.protocol.ProtocolDefinition.hasCodec(766), "1.20.5 codec");
     require(gg.tame.conduit.protocol.ProtocolCompatibility.between(765, 766) == gg.tame.conduit.protocol.TranslationSupport.TRANSLATED, "765↔766 translated");
     var parsed = gg.tame.conduit.protocol.BackendStatusProbe.parse("{\"version\":{\"name\":\"Paper 26.2\",\"protocol\":776}}");
@@ -209,9 +209,7 @@ public final class AllTests {
   private static void proxyRelaysHandshakeAndBackendData() throws Exception {
     try (ServerSocket backendListener = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
-          byte[] handshake = MinecraftFrames.read(socket.getInputStream(), 128);
-          require(Handshake.decode(handshake).nextState() == 2, "proxy did not forward handshake");
+        try (Socket socket = acceptLogin(backendListener).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 128);
           // Conduit completes the backend login itself, in every forwarding mode, before relaying.
           MinecraftFrames.write(socket.getOutputStream(), loginSuccess());
@@ -352,8 +350,7 @@ public final class AllTests {
     Path secret = TempFiles.file("conduit-forwarding", ".secret"); Files.writeString(secret, "wire-secret");
     try (ServerSocket backendListener = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 2048);
+        try (Socket socket = acceptLogin(backendListener).getKey()) {
           byte[] login = MinecraftFrames.read(socket.getInputStream(), 2048);
           require(login[0] == 0, "mock backend did not receive Login Start");
           MinecraftFrames.write(socket.getOutputStream(), modernRequest(9, 1));
@@ -490,8 +487,7 @@ public final class AllTests {
     http.start();
     try (ServerSocket backendListener = new ServerSocket(0)) {
       Thread backend = Thread.startVirtualThread(() -> {
-        try (Socket socket = backendListener.accept()) {
-          MinecraftFrames.read(socket.getInputStream(), 2048);
+        try (Socket socket = acceptLogin(backendListener).getKey()) {
           MinecraftFrames.read(socket.getInputStream(), 2048);
           MinecraftFrames.write(socket.getOutputStream(), modernRequest(9, 1));
           byte[] response = MinecraftFrames.read(socket.getInputStream(), 2048);
@@ -580,6 +576,86 @@ public final class AllTests {
     try { action.run(); throw new AssertionError(message); }
     catch (AssertionError error) { throw error; }
     catch (Exception expected) { if (!(expected instanceof java.io.IOException)) throw new AssertionError(message + ": " + expected); }
+  }
+  /**
+   * Conduit's own translator for an ordered pair, asked for by name.
+   *
+   * <p>The suites that read packet fields are about what Conduit's translators do. Translation is
+   * on by default and {@code engine = "via-preferred"}, so {@code Translators.forPair} answers with
+   * Via for every pair Via covers, and those suites would be reading Via's output instead of the
+   * output they were written for. Tests that mean the engine's choice still call {@code forPair}.
+   */
+  static gg.tame.conduit.protocol.ProtocolTranslator nativePair(int clientProtocol, int backendProtocol) {
+    return gg.tame.conduit.protocol.TranslatorRegistry.find(clientProtocol, backendProtocol)
+        .orElseThrow(() -> new AssertionError(
+            "no native translator registered for " + clientProtocol + " -> " + backendProtocol));
+  }
+
+  /**
+   * What a pair Conduit has no native table for must report: TRANSLATED while the Via ecosystem is
+   * loaded, UNSUPPORTED without it. Translation is on by default, so these pairs are normally
+   * carried; asserting one fixed answer would either deny support Conduit has or claim support it
+   * does not, and it is the claim with no engine behind it that these tests guard against.
+   */
+  static gg.tame.conduit.protocol.TranslationSupport viaCarried() {
+    return gg.tame.conduit.viaversion.ConduitViaBootstrap.available()
+        ? gg.tame.conduit.protocol.TranslationSupport.TRANSLATED
+        : gg.tame.conduit.protocol.TranslationSupport.UNSUPPORTED;
+  }
+
+  /**
+   * The next connection that is a login, with its handshake already read.
+   *
+   * <p>A backend listener here is a real one: with translation on, routing status-pings a backend
+   * whose protocol it has not learned yet before it routes a player to it, so the login is not
+   * always the first connection. A stub that accepted exactly one saw the ping instead and read a
+   * handshake with {@code nextState} 1. Status connections are answered by closing them, which
+   * leaves routing its own fallback, and the login is returned.
+   */
+  static java.util.Map.Entry<java.net.Socket, byte[]> acceptLogin(ServerSocket listener) throws Exception {
+    return acceptLogin(listener, 765);
+  }
+
+  /** As above, advertising {@code protocol} to a status ping so routing learns it without waiting. */
+  static java.util.Map.Entry<java.net.Socket, byte[]> acceptLogin(ServerSocket listener, int protocol)
+      throws Exception {
+    while (true) {
+      java.net.Socket socket = listener.accept();
+      byte[] handshake = MinecraftFrames.read(socket.getInputStream(), 4096);
+      if (Handshake.decode(handshake).nextState() == 2) return java.util.Map.entry(socket, handshake);
+      try (socket) { answerStatus(socket, protocol); }
+    }
+  }
+
+  /**
+   * {@link #acceptLogin(ServerSocket, int)} for a caller that cannot declare a checked exception,
+   * such as a {@code Runnable}. The failure still arrives at the surrounding {@code catch}.
+   */
+  static java.util.Map.Entry<java.net.Socket, byte[]> acceptLoginUnchecked(ServerSocket listener, int protocol) {
+    try { return acceptLogin(listener, protocol); }
+    catch (RuntimeException already) { throw already; }
+    catch (Exception failure) { throw new RuntimeException(failure); }
+  }
+
+  /**
+   * Answers a status ping the way a backend does, so the prober does not wait out its timeout.
+   * Closing the socket unanswered instead left routing to time out on the join path, which showed
+   * up as a backend that was reachable being reported unavailable.
+   */
+  static void answerStatus(java.net.Socket socket, int protocol) throws Exception {
+    java.io.InputStream in = socket.getInputStream();
+    MinecraftFrames.read(in, 4096);                       // Status Request
+    ByteArrayOutputStream response = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(response)) {
+      MinecraftOutput.varInt(output, 0);
+      MinecraftOutput.string(output, "{\"version\":{\"name\":\"Conduit test backend\",\"protocol\":"
+          + protocol + "},\"players\":{\"online\":0,\"max\":0},\"description\":{\"text\":\"\"}}");
+    }
+    MinecraftFrames.write(socket.getOutputStream(), response.toByteArray());
+    try {                                                  // Ping, echoed back when one is sent.
+      byte[] ping = MinecraftFrames.read(in, 4096);
+      MinecraftFrames.write(socket.getOutputStream(), ping);
+    } catch (Exception noPing) { }
   }
   private static void drain(java.net.Socket socket) {
     try {

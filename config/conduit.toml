@@ -35,10 +35,13 @@ motd = "Conduit"
 display-max-players = 100
 # favicon = "server-icon.png"
 
-# Optional ViaVersion ecosystem translation (disabled by default).
+# ViaVersion ecosystem translation (on by default). It is what gives a cross-version
+# player sounds, particles, scoreboards, titles and boss bars: the native translators
+# drop those. engine = "via-preferred" still falls back to the native pair when Via has
+# no path. Set enabled = false for native-only translation and accept those drops.
 # See docs/VIAVERSION.md and docs/LICENSING_VIA.md (GPLv3 Via* artifacts).
 [translation]
-enabled = false
+enabled = true
 engine = "via-preferred"
 via-backwards = true
 via-rewind = true
