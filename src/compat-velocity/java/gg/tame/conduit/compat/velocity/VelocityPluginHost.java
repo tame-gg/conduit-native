@@ -32,6 +32,12 @@ final class VelocityPluginHost implements PluginManager {
     for (Container container : byId.values()) if (container.instance == plugin) return Optional.of(container);
     return Optional.empty();
   }
+  /** The plugin whose jar a class with this loader came from, or null. */
+  Container loadedBy(ClassLoader loader) {
+    if (loader == null) return null;
+    for (Container container : byId.values()) if (container.loader == loader) return container;
+    return null;
+  }
   /** The plugin whose jar {@code code}'s class came from, or null. */
   Container owning(Object code) {
     if (code == null) return null;

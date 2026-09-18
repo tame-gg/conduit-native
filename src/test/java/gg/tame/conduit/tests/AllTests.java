@@ -97,6 +97,7 @@ public final class AllTests {
     BackendPingTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
+    VelocityLifecycleTests.run();
     System.out.println("All Conduit foundation tests passed.");
     // Release Via's non-daemon platform executors so this JVM can exit on its own.
     gg.tame.conduit.viaversion.ConduitViaBootstrap.stop();

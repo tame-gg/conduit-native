@@ -34,7 +34,7 @@ final class VelocityEnvironment {
   final Set<VelocityClassLoader> loaders = VelocityClassLoader.newRegistry();
   final VelocityPluginHost plugins = new VelocityPluginHost();
   final VelocityEventBus events = new VelocityEventBus(this);
-  final VelocityChannelRegistrar channels = new VelocityChannelRegistrar();
+  final VelocityChannelRegistrar channels = new VelocityChannelRegistrar(plugins);
   final VelocityCommandHost commands = new VelocityCommandHost(this);
   final VelocitySchedulerHost scheduler = new VelocitySchedulerHost(this);
   final VelocityPermissions permissions = new VelocityPermissions(this);

@@ -89,6 +89,7 @@ final class VelocityPluginHandle extends ConduitPlugin {
     environment.commands.forget(current);
     environment.scheduler.forget(current);
     environment.permissions.release(current);
+    environment.channels.release(current);
     environment.plugins.remove(current);
     current.shutdownExecutor();
     synchronized (this) { injector = null; }

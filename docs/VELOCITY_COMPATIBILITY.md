@@ -9,8 +9,9 @@ Where these marks come from: **VCT** is `VelocityCompatTests`, which compiles pu
 against the real velocity-api (its annotation processor writes their `velocity-plugin.json`), loads
 them from jars into a real `MinecraftProxy`, and drives them with a scripted 1.8 client and two
 scripted backends. **P9** is `Phase9Tests`. **BPT** is `BackendPingTests`, which pings scripted
-backends through the native API and through a compiled Velocity plugin. The **real plugins** are
-listed at the end.
+backends through the native API and through a compiled Velocity plugin. **VLT** is
+`VelocityLifecycleTests`: what a disabled Velocity plugin leaves behind, seen from the plugins that
+stay. The **real plugins** are listed at the end.
 
 The adapter is a clean-room implementation. It was written from velocity-api's public interfaces,
 its Javadoc, the public documentation and observable behaviour. No code from Velocity's proxy,
@@ -200,7 +201,7 @@ plugin's own events. Verified by VCT: priority order, `EventTask.async`, `Contin
 | API | Status | Verified by |
 |---|---|---|
 | `Scheduler.buildTask` (Runnable or Consumer), `delay`, `repeat`, `clearDelay`, `clearRepeat`, `schedule`, `ScheduledTask.cancel`, `status`, `tasksByPlugin`. Conduit's scheduler keeps the time, so tasks die with the plugin; bodies run on adapter threads, and a repeating task skips a run instead of overlapping itself. | Supported | VCT |
-| `ChannelRegistrar.register/unregister` (`MinecraftChannelIdentifier`, `LegacyChannelIdentifier`) | Supported | VCT |
+| `ChannelRegistrar.register/unregister` (`MinecraftChannelIdentifier`, `LegacyChannelIdentifier`). The registering plugin is found from its code on the calling stack, and when Conduit disables it its channels are unregistered, unless another enabled plugin registered them too. | Supported | VCT, VLT |
 | `PluginManager`: `fromInstance`, `getPlugin`, `getPlugins` (Velocity plugins only), `isLoaded`, `addToClasspath` | Supported | VCT |
 | `PluginContainer`: `getDescription`, `getInstance`, `getExecutorService` (shut down at disable) | Supported | VCT |
 | `ConsoleCommandSource`: has every permission; messages go to Conduit's console | Supported | VCT (runs a command as the console) |
