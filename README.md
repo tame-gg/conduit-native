@@ -20,7 +20,7 @@ builds one that includes its Corresponding Source.
 Requires a JDK capable of compiling Java 21 source. On Windows:
 
 ```powershell
-./scripts/fetch-via.ps1   # optional ViaVersion ecosystem jars
+./scripts/fetch-via.ps1   # ViaVersion ecosystem jars: required to compile and start, downloaded, never committed
 ./scripts/test.ps1
 ./scripts/run.ps1 -ConfigPath run/conduit.toml
 ```
