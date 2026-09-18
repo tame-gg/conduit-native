@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import net.kyori.adventure.bossbar.BossBar;
 import net.kyori.adventure.dialog.DialogLike;
 import net.kyori.adventure.identity.Identity;
 import net.kyori.adventure.inventory.Book;
@@ -34,6 +35,8 @@ import net.kyori.adventure.key.Key;
 import net.kyori.adventure.sound.Sound;
 import net.kyori.adventure.sound.SoundStop;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.title.Title;
+import net.kyori.adventure.title.TitlePart;
 
 /** A Conduit player as a Velocity Player. What Conduit does not track throws rather than guesses. */
 final class VelocityPlayer implements Player, Unsupported.ChatOnly {
@@ -112,10 +115,42 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
   @Override public List<GameProfile.Property> getGameProfileProperties() { throw Unsupported.api("Player.getGameProfileProperties"); }
   @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { throw Unsupported.api("Player.setGameProfileProperties"); }
-  @Override public void clearPlayerListHeaderAndFooter() { throw Unsupported.api("Player.clearPlayerListHeaderAndFooter"); }
-  @Override public Component getPlayerListHeader() { throw Unsupported.api("Player.getPlayerListHeader"); }
-  @Override public Component getPlayerListFooter() { throw Unsupported.api("Player.getPlayerListFooter"); }
-  @Override public TabList getTabList() { throw Unsupported.api("Player.getTabList"); }
+  // Titles, action bar, boss bars and the tab-list header, through Conduit's own display.
+  @Override public void sendActionBar(Component message) { player.sendActionBar(Texts.toConduit(message)); }
+  @Override public void showTitle(Title title) {
+    player.showTitle(Texts.toConduit(title.title()), Texts.toConduit(title.subtitle()), title.times() == null ? null : times(title.times()));
+  }
+  @Override public <T> void sendTitlePart(TitlePart<T> part, T value) {
+    if (part == TitlePart.TITLE) player.sendTitle(Texts.toConduit((Component) value));
+    else if (part == TitlePart.SUBTITLE) player.sendSubtitle(Texts.toConduit((Component) value));
+    else if (part == TitlePart.TIMES) player.sendTitleTimes(times((Title.Times) value));
+    else throw new IllegalArgumentException("Unknown TitlePart '" + part + "'");
+  }
+  /** The client counts title times in ticks, so a duration is rounded down to a whole one. */
+  private static gg.tame.conduit.api.player.TitleTimes times(Title.Times times) {
+    return new gg.tame.conduit.api.player.TitleTimes(ticks(times.fadeIn()), ticks(times.stay()), ticks(times.fadeOut()));
+  }
+  private static int ticks(java.time.Duration duration) { return (int) Math.min(Integer.MAX_VALUE, duration.toMillis() / 50); }
+  @Override public void clearTitle() { player.clearTitle(); }
+  @Override public void resetTitle() { player.resetTitle(); }
+  @Override public void showBossBar(BossBar bar) { environment.bossBars.show(player, bar); }
+  @Override public void hideBossBar(BossBar bar) { environment.bossBars.hide(player, bar); }
+  @Override public void sendPlayerListHeaderAndFooter(Component header, Component footer) {
+    player.sendPlayerListHeaderAndFooter(Texts.toConduit(header), Texts.toConduit(footer));
+  }
+  @Override public void sendPlayerListHeader(Component header) {
+    player.sendPlayerListHeaderAndFooter(Texts.toConduit(header), player.playerListFooter());
+  }
+  @Override public void sendPlayerListFooter(Component footer) {
+    player.sendPlayerListHeaderAndFooter(player.playerListHeader(), Texts.toConduit(footer));
+  }
+  @Override public void clearPlayerListHeaderAndFooter() {
+    player.sendPlayerListHeaderAndFooter(gg.tame.conduit.api.text.Text.empty(), gg.tame.conduit.api.text.Text.empty());
+  }
+  /** What a plugin set through the proxy; a header the backend sent is not seen. */
+  @Override public Component getPlayerListHeader() { return Texts.toAdventure(player.playerListHeader()); }
+  @Override public Component getPlayerListFooter() { return Texts.toAdventure(player.playerListFooter()); }
+  @Override public TabList getTabList() { return new VelocityTabList(this); }
   @Override public void spoofChatInput(String input) { throw Unsupported.api("Player.spoofChatInput"); }
   @Override public void sendResourcePack(String url) { throw Unsupported.api("Player.sendResourcePack"); }
   @Override public void sendResourcePack(String url, byte[] hash) { throw Unsupported.api("Player.sendResourcePack"); }

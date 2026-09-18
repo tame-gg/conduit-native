@@ -38,6 +38,7 @@ final class VelocityEnvironment {
   final VelocityCommandHost commands = new VelocityCommandHost(this);
   final VelocitySchedulerHost scheduler = new VelocitySchedulerHost(this);
   final VelocityPermissions permissions = new VelocityPermissions(this);
+  final VelocityBossBars bossBars = new VelocityBossBars();
   final VelocityConsole console;
   final VelocityProxyServer proxy;
   /** Owns the adapter's one native listener; the adapter is not itself a plugin in /plugins. */
@@ -74,6 +75,7 @@ final class VelocityEnvironment {
   void forget(gg.tame.conduit.api.player.Player player) {
     players.remove(player);
     permissions.forget(player);
+    bossBars.forget(player);
   }
 
   /** One wrapper per server name while its address stays the same, so plugins can compare them. */

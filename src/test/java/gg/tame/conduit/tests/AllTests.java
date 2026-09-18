@@ -104,6 +104,7 @@ public final class AllTests {
     DisplayApiTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
+    VelocityDisplayTests.run();
     VelocityLifecycleTests.run();
     LoginLifecycleTests.run();
     System.out.println("All Conduit foundation tests passed.");

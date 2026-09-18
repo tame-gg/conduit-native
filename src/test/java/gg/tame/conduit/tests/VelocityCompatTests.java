@@ -69,7 +69,7 @@ public final class VelocityCompatTests {
   // ---------------------------------------------------------------- the plugins
 
   /** Shared by every test plugin: how it reports what happened. */
-  private static final String SIGNAL_METHOD = """
+  static final String SIGNAL_METHOD = """
         @SuppressWarnings("unchecked")
         static void signal(String value) { ((java.util.Queue<String>) System.getProperties().get("velocity.test.signals")).add(value); }
       """;
@@ -310,7 +310,7 @@ public final class VelocityCompatTests {
               case "kick" -> player.disconnect(Component.text("bye from velocity"));
               case "unsupported" -> {
                 try {
-                  player.sendActionBar(Component.text("x"));
+                  player.stopSound(net.kyori.adventure.sound.SoundStop.all());
                   source.sendMessage(Component.text("silently accepted"));
                 } catch (UnsupportedOperationException expected) {
                   source.sendMessage(Component.text("uoe: " + expected.getMessage()));
@@ -649,7 +649,7 @@ public final class VelocityCompatTests {
 
           // Unsupported calls say so; Conduit's internals are out of reach.
           alice.chat("/vtest unsupported");
-          alice.awaitText("uoe: Audience.sendActionBar is not supported");
+          alice.awaitText("uoe: Player.stopSound is not supported");
           alice.chat("/vtest internals");
           alice.awaitText("internals hidden");
           alice.chat("/vtest rich");
@@ -1088,8 +1088,8 @@ public final class VelocityCompatTests {
     }
     throw new AssertionError("never saw " + expected + (times > 1 ? " x" + times : "") + " in " + queue + "; signals " + signals);
   }
-  private static void awaitCount(String expected, int times) throws InterruptedException { awaitIn(signals, expected, times); }
-  private static int count(String value) { return (int) signals.stream().filter(value::equals).count(); }
+  static void awaitCount(String expected, int times) throws InterruptedException { awaitIn(signals, expected, times); }
+  static int count(String value) { return (int) signals.stream().filter(value::equals).count(); }
   private static boolean before(String first, String second) {
     List<String> order = List.copyOf(signals);
     return order.contains(first) && order.contains(second) && order.indexOf(first) < order.indexOf(second);

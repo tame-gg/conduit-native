@@ -9,10 +9,15 @@ Where these marks come from: **VCT** is `VelocityCompatTests`, which compiles pu
 against the real velocity-api (its annotation processor writes their `velocity-plugin.json`), loads
 them from jars into a real `MinecraftProxy`, and drives them with a scripted 1.8 client and two
 scripted backends. **LLT** is `LoginLifecycleTests`, which does the same for the login lifecycle with
-a plugin shaped like LuckPerms. **P9** is `Phase9Tests`. **BPT** is `BackendPingTests`, which pings
-scripted backends through the native API and through a compiled Velocity plugin. **VLT** is
-`VelocityLifecycleTests`: what a disabled Velocity plugin leaves behind, seen from the plugins that
-stay. The **real plugins** are listed at the end.
+a plugin shaped like LuckPerms. **VDT** is `VelocityDisplayTests`: a plugin compiled the same way
+drives titles, the action bar, boss bars, the player-list header and tab-list entries for scripted
+1.12.2 clients on two scripted 1.12.2 backends, and every packet the clients get is checked. **DAT** is
+`DisplayApiTests`, the native API underneath: every display packet byte for byte for each protocol
+family, and scripted 1.8, 1.20.4 and Via-translated 1.8-on-1.12.2 sessions, each through a server
+switch. **P9** is `Phase9Tests`. **BPT** is `BackendPingTests`, which pings scripted backends through
+the native API and through a compiled Velocity plugin. **VLT** is `VelocityLifecycleTests`: what a
+disabled Velocity plugin leaves behind, seen from the plugins that stay. The **real plugins** are
+listed at the end.
 
 The adapter is a clean-room implementation. It was written from velocity-api's public interfaces,
 its Javadoc, the public documentation and observable behaviour. No code from Velocity's proxy,
@@ -135,7 +140,44 @@ logger named after the class it is injected into, not the plugin's Conduit logge
 | `RegisteredServer`: `getServerInfo`, `getPlayersConnected`, `sendMessage` | Supported | VCT |
 | `RegisteredServer.ping()`: Conduit asks the backend for its status now. The `ServerPing` has the backend's version name and protocol, online and maximum counts, player sample, description and favicon; `getModinfo()` is empty, as Conduit does not read a backend's mod list. The description keeps what Conduit Text carries, so colours outside the sixteen named ones, fonts and translation arguments are dropped. The handshake announces protocol `-1` (no client version, so the backend answers with its own) and the host of the server's configured address; `[health] timeout-ms` bounds the whole ping. A backend that cannot be reached, does not answer in time, or sends something that is not a status answer (malformed or oversized JSON, a connection closed mid-answer) fails the future with an `IOException`. Pings run on a bounded pool of socket threads, 32 at once; up to 1024 more wait their turn inside their own timeout, and beyond that a ping fails at once. Callbacks run on the adapter's threads. | Partial | VCT (`backend-ping`, `dead-ping`), BPT |
 | `RegisteredServer.ping(PingOptions)`: the answer is as for `ping()`, and every option is honoured: the protocol version is announced in the handshake (`UNKNOWN` announces `-1`), the virtual host is the host the handshake names (none: the configured address's host), and a timeout replaces `[health] timeout-ms` (zero: that default) | Supported | BPT |
-| Titles, action bar, boss bars, sounds, books, dialogs, signed-message chat, resource packs, tab list and its header/footer, cookies, transfer, server links, custom chat completions, `spoofChatInput`, `getClientBrand`, `getModInfo`, `getIdentifiedKey`, `getHandshakeIntent`, game profile properties | Unsupported: every one throws `UnsupportedOperationException` naming the API, including Adventure methods that are silent no-ops by default | VCT (`sendActionBar`) |
+| On a player: `showTitle`, `sendTitlePart` (`TITLE`, `SUBTITLE`, `TIMES`), `clearTitle`, `resetTitle`, `sendActionBar` | Supported, as far as the client's release has them (see [Display by client release](#display-by-client-release)). Text keeps what chat keeps (see `sendMessage`). Title times become whole ticks, rounded down. Anything sent while the client has no world to show it in (before its first Join Game, or while a 1.20.2+ client is reconfigured by a switch) is held, the last 16, and shown once it has one. | VDT, DAT |
+| On a player: `showBossBar`, `hideBossBar` (and Adventure's `BossBar.addViewer`/`removeViewer`, which call them). Name, progress, colour, overlay and all three flags; every change a plugin makes to the bar reaches every player viewing it. The bar is shown again after each server switch. The adapter holds one listener on the plugin's bar while anyone views it, and removes it when the last viewer hides the bar or disconnects. | Supported for 1.9+ clients. A 1.7 or 1.8 client has no boss bar: it is sent nothing, though it still counts as a viewer. | VDT, DAT |
+| On a player: `sendPlayerListHeaderAndFooter`, `sendPlayerListHeader`, `sendPlayerListFooter`, `clearPlayerListHeaderAndFooter`, `getPlayerListHeader`, `getPlayerListFooter`, and `TabList.setHeaderAndFooter` / `clearHeaderAndFooter`. The pair is sent again after each server switch. A backend that sends its own replaces the proxy's on the client until the proxy's next send or switch: the last writer wins. The getters return what plugins set through the proxy, never a backend's. | Supported for 1.8+ clients; a 1.7 client has no header and is sent nothing | VDT, DAT |
+| `Player.getTabList()` entries: `buildEntry` / `TabListEntry.builder()`, `addEntry`, `addEntries`, `getEntry`, `getEntries`, `containsEntry`, `removeEntry`, `clearAll`, and an entry's `setDisplayName`, `setLatency`, `setGameMode`, `setListed`, `setListOrder`, `setShowHat` | Partial: the proxy's own entries only. The backend's entries are not tracked, so `getEntries` and `containsEntry` see only entries plugins added and `clearAll` removes only those; the backend's list is never touched. Entries stay across server switches and are sent again. An entry with a chat session throws. Which clients are sent them, and which fields, is under [Display by client release](#display-by-client-release). | VDT (1.12.2), DAT |
+| Sounds, books, dialogs, signed-message chat, resource packs, cookies, transfer, server links, custom chat completions, `spoofChatInput`, `getClientBrand`, `getModInfo`, `getIdentifiedKey`, `getHandshakeIntent`, game profile properties; and titles, the action bar, boss bars and the header on `ProxyServer`, a `RegisteredServer` or the console as audiences (only a player's are supported) | Unsupported: every one throws `UnsupportedOperationException` naming the API, including Adventure methods that are silent no-ops by default | VCT (`stopSound`) |
+
+### Display by client release
+
+What the proxy shows a player is written in the client's own protocol, beside whatever the backend
+shows it, straight to the client even when Via translates the session. Every packet id comes from
+the published PrismarineJS minecraft-data tables for that release (26.2, which that data does not
+have yet, from the minecraft.wiki packet list for protocol 776). DAT checks the bytes for releases
+across every family below (1.8, 1.12.2, 1.13, 1.14, 1.15, 1.16, 1.16.5, 1.17, 1.19, 1.19.2, 1.19.3,
+1.20.1, 1.20.2, 1.20.4, 1.20.5, 1.21, 1.21.2, 1.21.4, 1.21.5, 1.21.9, 26.1 and 26.2, as each feature
+applies). No real Minecraft client has been shown any of it.
+
+- **1.7 (protocol 5)**: nothing. It has no titles, action bar, boss bar or header, and its player
+  list names entries by string. Title and action-bar calls send nothing (the action bar is not turned
+  into chat, which would flood it for plugins that refresh it every tick); boss bars and entries are
+  only remembered.
+- **Titles**: 1.8 through 1.16.5 get the one Title packet, in 1.8's action numbering for 1.8 and
+  1.11's (which added the action bar and moved times, hide and reset up by one) from 1.12.2; 1.17 and
+  later get a packet per action. Text is JSON through 1.20.2 and network NBT from 1.20.3.
+- **Action bar**: on 1.8 it is a game-info (position 2) chat line, which that client shows as plain
+  text, so colour, bold and italic are written into the text as section codes and clicks and hovers
+  are dropped. 1.12.2 through 1.16.5 get Title action 2; 1.17 and later Set Action Bar Text.
+- **Boss bars**: 1.9 and later (so 1.12.2 onwards among Conduit's tables). A bar's id is a random
+  version-8 UUID, which cannot collide with the version-4 UUIDs vanilla and common servers give theirs.
+- **Header and footer**: 1.8 and later.
+- **Tab-list entries**: 1.8 through 1.19.2 get one Player Info packet per action (1.19 to 1.19.2 with
+  no profile key), where every entry is listed, so `setListed` has no effect. 1.19.3, 1.19.4 and
+  1.20.2 onwards get Player Info Update and Remove; list order is sent from 1.21.2 and the hat from
+  1.21.4. **1.20.1 is not sent entries**: Conduit's 1.20.1 table has no Player Info ids, and adding
+  them would also change how Conduit treats 1.20.1's own player entry, which is out of this change's
+  scope. There, as on 1.7, entries are only remembered.
+- **After a server switch** a client is sent the proxy's boss bars, header and entries again after
+  the new backend's Join Game, whether or not it dropped them, and for a client with no
+  Configuration phase after every Respawn as well.
 
 ## Permissions
 
@@ -230,11 +272,13 @@ bStats reporting was disabled for these runs. Real Minecraft clients were not us
 The two extra plugins were picked from Modrinth's most-downloaded Velocity plugins, skipping those
 whose core is something the adapter does not support: Simple Voice Chat and Plasmo Voice (voice
 chat), ViaVersion, ViaBackwards and ViaRewind (they hook Velocity's network pipeline; Conduit
-translates with Via itself), SkinsRestorer (game profile properties), Geyser (Bedrock), TAB (tab
-list), PacketEvents (packet injection) and Raknetify (transport).
+translates with Via itself), SkinsRestorer (game profile properties), Geyser (Bedrock), TAB (it reads
+and rewrites the backend's tab list and scoreboard teams, which Conduit does not track), PacketEvents
+(packet injection) and Raknetify (transport).
 
 ## Build
 
 ```powershell
 ./scripts/test.ps1 -Only gg.tame.conduit.tests.VelocityCompatTests
+./scripts/test.ps1 -Only gg.tame.conduit.tests.VelocityDisplayTests
 ```

@@ -667,6 +667,11 @@ backend for its status now instead of reading the cached `status()`: version, co
 description and favicon. It never blocks the caller, and a backend that does not answer gives an offline
 status rather than a failed future.
 
+A `Player` can be shown titles, the action bar, proxy-owned `BossBar`s, a tab-list header and footer
+and tab-list entries of the proxy's own, each written in that client's protocol. Boss bars, the header
+and entries are sent again after a server switch; what a client's release cannot show is documented
+on each method (see also "Display by client release" in `docs/VELOCITY_COMPATIBILITY.md`).
+
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins
 then go through the same lifecycle as native ones.
@@ -678,7 +683,9 @@ then go through the same lifecycle as native ones.
 Maintenance 5.1.0, Server Redirect 1.4.3, mclo.gs 3.3.3 and velocity-hub 1.10-SNAPSHOT.** Each
 one's result and its remaining gaps are in `docs/VELOCITY_COMPATIBILITY.md`.
 
-This is not full Velocity compatibility. Plugins built around tab lists, boss bars, titles, resource
+This is not full Velocity compatibility. Titles, the action bar, boss bars, the player-list header and
+footer and a player's tab-list entries work through the adapter (only the proxy's own entries: the
+backend's are not tracked). Plugins built around the backend's tab list or scoreboard teams, resource
 packs, voice chat, Bedrock players, packet injection or Velocity's own network pipeline (ViaVersion
 and its relatives) are not expected to work.
 
