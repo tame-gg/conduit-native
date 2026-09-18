@@ -161,13 +161,57 @@ with no counterpart are dropped individually rather than failing the packet.
 In the final run: 637 metadata and 382 attribute packets translated toward the
 1.20.4 client, 219 and 54 toward the 1.13 client, no failures.
 
+## Sounds
+
+Translated, in both directions, through generated registry tables.
+
+A sound travels as a registry index, and the registries disagree: 1.13 has 662
+sound events, 1.20.4 has 1539, and the additions are spread through the list
+rather than appended, so the same index is a different sound on each side. That
+is why sounds were dropped here at first — dropping beat playing the wrong one.
+
+`tools/gen_sounds.py` resolves every sound by name. 1.20.4's registry comes from
+the server's own `--reports` dump. 1.13's cannot: its reports predate the
+registry dump, so `tools/DumpRegistry.java` reads the registry out of the 1.13
+jar instead, which is the same provenance the block and item tables already have.
+
+**The 1.13 dump is verified, not trusted.** Its ids come from the declaration
+order of the jar's sound-event holder, which is an inference about how the
+registry was filled, so the generator checks it against a third official
+registry — a later version that still has every one of those names. If the order
+is real, those names appear there in the same relative order. All 662 appear in
+1.14's registry in exactly this order. The check is fatal; a dump that fails it
+is not used.
+
+| | |
+|---|---|
+| 1.13 sound events | 662 |
+| 1.20.4 sound events | 1539 |
+| mapped both ways | 658 |
+| renamed by Mojang | 5 (`zombie_pigman.*` → `zombified_piglin.*`, `music.nether` → `music.nether.nether_wastes`) |
+| removed after 1.13 | 4 parrot imitations (`enderman`, `polar_bear`, `wolf`, `zombie_pigman`) |
+
+Named Sound Effect is translated too. 1.19.3 removed that packet and folded it
+into Sound Effect's inline form, so toward 1.20.4 a 1.13 Named Sound Effect
+becomes an inline Sound Effect, and toward 1.13 a sound whose name 1.13's
+registry does not have — a plugin's own sound, or anything added since 1.13 —
+is sent as Named Sound Effect rather than dropped. Only a sound that is neither
+in the target registry nor expressible as a name is lost.
+
+Entity Sound Effect stays unsupported: 1.13 has no packet that plays a sound on
+an entity.
+
+Not verified by a human listening. The tables and the packet translation are
+covered by `SoundTranslationTests`; no real-client audio check was run.
+
 ## Deliberately unsupported
 
 Each of these is recognised and dropped on purpose, so the drop is a decision
 and not a fatal unknown:
 
-- **Sounds and particles** — registry ids are version-specific and unmapped; a
-  wrong id plays an unrelated sound. This is the single largest drop count.
+- **Particles** — registry ids are version-specific and unmapped; a wrong id
+  draws an unrelated particle. Their payloads (block states, item stacks, dust
+  colours) and wire layout differ too, so a table alone would not be enough.
 - **Scoreboards, teams, titles, boss bars, the tab list, statistics, maps and
   trade lists** — display only.
 - **Block-entity data and block actions** — these name block-entity and block
@@ -198,8 +242,8 @@ and not a fatal unknown:
 vanilla 1.13 / 1.20.4 servers (login, configuration bridge, world entry, chunks,
 movement, block place/break, chest open/click/close, inventory, equipment,
 metadata, attributes, health, chat, keepalive). Not FULL Minecraft compatibility:
-sounds, particles, scoreboards, titles, boss bars, block-entity NBT, recipes and
-advancements remain intentionally unsupported.
+particles, scoreboards, titles, boss bars, block-entity NBT, recipes and
+advancements remain intentionally unsupported. Sounds are supported: see below.
 
 ## Reproducing
 

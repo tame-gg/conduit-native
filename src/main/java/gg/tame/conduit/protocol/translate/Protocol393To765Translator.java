@@ -742,19 +742,59 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       case PLAY_SOUND_EFFECT -> {
         // 1.20.4 carries the sound as a registry holder (id+1, or an inline
         // resource location) plus a seed; 1.13 carries a bare registry id with no
-        // seed. The numeric sound ids belong to each version's own registry and
-        // are NOT interchangeable -- hundreds of sounds were added between the
-        // two, so passing the id through would play an unrelated sound. Conduit
-        // has no verified 1.13<->1.20.4 sound table, so this fails closed: the
-        // player hears silence rather than the wrong sound. Purely cosmetic; no
-        // state desync. Revisit by generating a sound-name mapping.
-        if (target.defines(ConnectionState.PLAY, direction, kind)
-            && source.version().number() == target.version().number()) {
+        // seed. The numeric ids belong to each version's own registry and are NOT
+        // interchangeable -- 1.13 has 662 sound events and 1.20.4 has 1539, with
+        // the additions spread through the list -- so passing the id through plays
+        // an unrelated sound. SoundCodec resolves the id to a name on the sending
+        // side and back to an index on the receiving one, through the generated
+        // tables; a sound the far side does not have is still dropped.
+        if (!target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Dropped("sound effect not defined on target");
+        }
+        if (source.version().number() == target.version().number()) {
           yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
               kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
         }
-        yield new TranslationResult.Dropped(
-            "sound registry ids are version-specific and unmapped; dropping beats playing a wrong sound");
+        var heard = gg.tame.conduit.protocol.sound.SoundCodec.read(
+            source.version().number(), PlayPackets.body(packet));
+        if (heard == null) yield new TranslationResult.Dropped("not a sound effect body");
+        byte[] sound = gg.tame.conduit.protocol.sound.SoundCodec.write(
+            target.version().number(), heard);
+        if (sound != null) {
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, sound));
+        }
+        // Only 1.20.4 can name a sound inline; 1.13 needs Named Sound Effect for
+        // one its registry does not have, which is how a plugin's own sound
+        // reaches a 1.13 client at all.
+        if (target.defines(ConnectionState.PLAY, direction, PacketKind.PLAY_NAMED_SOUND_EFFECT)) {
+          byte[] named = gg.tame.conduit.protocol.sound.SoundCodec.writeNamed(heard);
+          if (named != null) {
+            yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+                PacketKind.PLAY_NAMED_SOUND_EFFECT, ConnectionState.PLAY, direction, named));
+          }
+        }
+        yield new TranslationResult.Dropped("sound has no counterpart in the target registry");
+      }
+
+      case PLAY_NAMED_SOUND_EFFECT -> {
+        // 1.19.3 removed this packet and folded it into Sound Effect's inline
+        // form, so toward 1.20.4 it becomes one. Both sides name the sound, so
+        // nothing has to be looked up and no sound is lost here.
+        if (target.defines(ConnectionState.PLAY, direction, kind)) {
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+        }
+        if (!target.defines(ConnectionState.PLAY, direction, PacketKind.PLAY_SOUND_EFFECT)) {
+          yield new TranslationResult.Dropped("neither sound packet is defined on target");
+        }
+        var named = gg.tame.conduit.protocol.sound.SoundCodec.readNamed(PlayPackets.body(packet));
+        if (named == null) yield new TranslationResult.Dropped("not a named sound effect body");
+        byte[] asSound = gg.tame.conduit.protocol.sound.SoundCodec.write(
+            target.version().number(), named);
+        if (asSound == null) yield new TranslationResult.Dropped("named sound not expressible on target");
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            PacketKind.PLAY_SOUND_EFFECT, ConnectionState.PLAY, direction, asSound));
       }
 
       case PLAY_WORLD_PARTICLES -> {
@@ -1116,7 +1156,7 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
             kind, ConnectionState.PLAY, direction, rebuilt));
       }
-      case PLAY_STATISTICS, PLAY_BOSS_BAR, PLAY_NAMED_SOUND_EFFECT, PLAY_ENTITY_SOUND_EFFECT, PLAY_NBT_QUERY_RESPONSE,
+      case PLAY_STATISTICS, PLAY_BOSS_BAR, PLAY_ENTITY_SOUND_EFFECT, PLAY_NBT_QUERY_RESPONSE,
            PLAY_SPAWN_PAINTING, PLAY_SPAWN_GLOBAL_ENTITY, PLAY_BLOCK_ENTITY_DATA, PLAY_BLOCK_ACTION,
            PLAY_SCOREBOARD_OBJECTIVE, PLAY_TEAMS, PLAY_UPDATE_SCORE, PLAY_DISPLAY_SCOREBOARD,
            PLAY_TITLE, PLAY_STOP_SOUND, PLAY_CAMERA, PLAY_USE_BED, PLAY_FACE_PLAYER,
@@ -1125,9 +1165,13 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         // Recognised and dropped on purpose. Each of these is either display-only
         // (scoreboards, titles, boss bars, the tab list, statistics) or names
         // something from the sending era's own registry that this pair has no
-        // verified mapping for (block-entity types, paintings, sounds, map and
+        // verified mapping for (block-entity types, paintings, particles, map and
         // trade payloads). Dropping costs the feature; forwarding the bytes would
         // desynchronise the stream, and a fail-closed proxy would end the session.
+        //
+        // Sounds are no longer among them: Sound Effect and Named Sound Effect are
+        // translated through the generated registry tables. Entity Sound Effect
+        // stays here because 1.13 has no packet that plays a sound on an entity.
         // These are the deliberately-unsupported set for 393 <-> 765, not an
         // oversight, and none of them gates world entry or movement.
         yield new TranslationResult.Dropped(
