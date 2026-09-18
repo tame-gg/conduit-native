@@ -22,7 +22,7 @@ public final class PacketTransport {
     this.socket = socket;
     socket.setTcpNoDelay(true);
     this.input = socket.getInputStream();
-    this.output = new BufferedOutputStream(socket.getOutputStream(), 8192);
+    this.output = new BufferedOutputStream(DeadlineOutputStream.of(socket), 8192);
   }
   public PacketTransport(InputStream input, OutputStream output) { this.socket = null; this.input = input; this.output = output; }
   /** Bounds a read that would otherwise park forever; 0 waits indefinitely. */

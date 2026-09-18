@@ -133,6 +133,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private volatile boolean configurationFinishSynthesized;
   private final List<byte[]> deferredPlay = new java.util.ArrayList<>();
   private boolean playLoginSent;
+  /** Guarded by {@code lock}: a flush of {@link #deferredPlay} is writing to the client. */
+  private boolean flushingDeferredPlay;
   private boolean needSelfPlayerInfo = true;
   /** The UUID the client was told is its own, by the Login Success that reached it. */
   private volatile java.util.UUID clientUuid;
@@ -1235,6 +1237,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (!protocol.hasConfiguration()) return false;
     if (isFinishConfiguration(original)) return false;
     synchronized (lock) {
+      awaitDeferredFlush();
       if (backendState != ConnectionState.PLAY) return false;
       if (playLoginSent && clientState.state() == ConnectionState.PLAY) return false;
       if (deferredPlay.size() >= MAX_DEFERRED_PLAY) throw new IOException("deferred play queue exceeded");
@@ -1242,21 +1245,47 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return true;
     }
   }
+  /**
+   * Writes the Play packets held back until Join Game, Join Game first.
+   *
+   * <p>The writes happen outside {@code lock}. This used to write while holding it, so a client
+   * that stopped reading also blocked every thread that needed the lock, including a
+   * {@code close()} from a kick. Order is kept another way. Until the flush ends, anything that
+   * would defer, flush or reset deferred Play waits in {@link #awaitDeferredFlush}, with the lock
+   * released. Nothing can overtake the held packets, and the backend reader is still held back the
+   * way the lock used to hold it.
+   */
   private void flushDeferredPlay() throws IOException {
+    List<byte[]> logins = new java.util.ArrayList<>();
+    List<byte[]> rest = new java.util.ArrayList<>();
     synchronized (lock) {
+      awaitDeferredFlush();
       if (clientState.state() != ConnectionState.PLAY) return;
-      List<byte[]> logins = new java.util.ArrayList<>();
-      List<byte[]> rest = new java.util.ArrayList<>();
       for (byte[] packet : deferredPlay) {
         if (isPlayLogin(packet)) logins.add(packet);
         else rest.add(packet);
       }
       if (!playLoginSent && logins.isEmpty()) return;
       deferredPlay.clear();
-      for (byte[] packet : logins) writeClient(packet);
       playLoginSent = true;
+      flushingDeferredPlay = true;
+    }
+    try {
+      for (byte[] packet : logins) writeClient(packet);
       emitSelfPlayerInfoIfNeeded();
       for (byte[] packet : rest) writeClient(maybeMergeCommands(packet));
+    } finally {
+      synchronized (lock) { flushingDeferredPlay = false; lock.notifyAll(); }
+    }
+  }
+  /** Called holding {@code lock}. Waits, with the lock released, for a flush of deferred Play to finish writing. */
+  private void awaitDeferredFlush() throws IOException {
+    while (flushingDeferredPlay) {
+      if (closed) throw new IOException("session closed");
+      try { lock.wait(); } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        throw new java.io.InterruptedIOException("interrupted waiting for deferred Play");
+      }
     }
   }
   private void flushSwitchQueue(BackendConnection target) throws IOException {
@@ -1399,10 +1428,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       switchingTarget = next;
       if (!protocol.hasConfiguration() && backendDefinition.hasConfiguration()) {
         // 393-style client: Configuration already absorbed during completeBackendLogin.
-        synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
+        synchronized (lock) { awaitDeferredFlush(); deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
       } else if (protocol.hasConfiguration()) {
         configurationAck.clear();
-        synchronized (lock) { deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
+        synchronized (lock) { awaitDeferredFlush(); deferredPlay.clear(); playLoginSent = false; needSelfPlayerInfo = true; }
         // Who reconfigures the client depends on who can. A backend with its own Configuration
         // phase supplies the packets and Conduit relays them. A backend without one supplies
         // nothing, and on the Via engine the translator builds that phase itself out of the

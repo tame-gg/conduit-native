@@ -51,6 +51,8 @@ public final class ConcurrencyTests {
     reconnectKeepsTheLivePlayerIndexed();
     closingTheTransportClosesTheSocket();
     aProxyEndedSessionClosesTheClientSocket();
+    aClientThatStopsReadingIsCutOff();
+    aSlowButReadingClientIsNotCutOff();
     sessionThreadsStayOffTheWindowsPoller();
     aStalledLoginIsTimedOut();
     aBackendThatNeverFinishesLoginReleasesBothSockets();
@@ -721,6 +723,105 @@ public final class ConcurrencyTests {
   }
 
   /**
+   * A client that keeps its connection open but stops reading used to hold its session forever.
+   * The backend reader parked in a client write that never completed. The backend then timed the
+   * player out and hung up, but nothing woke that write. The client reader sat in a read the
+   * client never answered, so the session's threads, its connection slot and its throttle lease
+   * were all held until the client went away on its own.
+   */
+  private static void aClientThatStopsReadingIsCutOff() throws Exception {
+    String previous = System.setProperty("conduit.writeDeadlineMillis", "1000");
+    try (ServerSocket lobby = new ServerSocket(0)) {
+      Thread backend = Thread.startVirtualThread(() -> serveStreamingBackend(lobby, 1_500));
+      ConduitConfiguration configuration = configuration(
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort()))),
+          List.of("lobby"), List.of(), SecuritySettings.defaults());
+      int basePlayers = ConduitMetrics.current().activePlayers();
+      int baseBackends = ConduitMetrics.current().activeBackends();
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration); Socket client = new Socket()) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        client.setReceiveBufferSize(1024);
+        client.connect(new InetSocketAddress("127.0.0.1", proxy.port()));
+        client.setSoTimeout(15_000);
+        MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+        MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+        require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
+        // From here the client reads nothing, and it does not hang up.
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (System.currentTimeMillis() < deadline && !quiet(proxy, basePlayers, baseBackends)) Thread.sleep(50);
+        require(proxy.activeConnections() == 0, "a client that stopped reading must lose its session: "
+            + proxy.activeConnections() + " connection(s) still held");
+        require(ConduitMetrics.current().activePlayers() == basePlayers, "its player slot is released");
+        require(ConduitMetrics.current().activeBackends() == baseBackends, "its backend connection is released");
+        require(proxy.runtime().security().throttle().inFlight() == 0, "its throttle lease is released");
+        serving.interrupt();
+      }
+      backend.interrupt();
+    } finally {
+      if (previous == null) System.clearProperty("conduit.writeDeadlineMillis");
+      else System.setProperty("conduit.writeDeadlineMillis", previous);
+    }
+  }
+
+  /** The deadline is for a write that makes no progress, not a slow one: a client reading behind the stream keeps its session. */
+  private static void aSlowButReadingClientIsNotCutOff() throws Exception {
+    String previous = System.setProperty("conduit.writeDeadlineMillis", "1000");
+    try (ServerSocket lobby = new ServerSocket(0)) {
+      Thread backend = Thread.startVirtualThread(() -> serveStreamingBackend(lobby, 0));
+      ConduitConfiguration configuration = configuration(
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort()))),
+          List.of("lobby"), List.of(), SecuritySettings.defaults());
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration); Socket client = new Socket()) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        client.setReceiveBufferSize(1024);
+        client.connect(new InetSocketAddress("127.0.0.1", proxy.port()));
+        client.setSoTimeout(15_000);
+        MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+        MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+        require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
+        // Three deadlines' worth of reading well behind the stream: 4 KiB every 100 ms.
+        byte[] scratch = new byte[4096];
+        long received = 0;
+        long end = System.currentTimeMillis() + 3_000;
+        while (System.currentTimeMillis() < end) {
+          int read = client.getInputStream().read(scratch);
+          require(read >= 0, "a slow reader must not be cut off (after " + received + " bytes)");
+          received += read;
+          Thread.sleep(100);
+        }
+        require(proxy.activeConnections() == 1, "the slow reader still has its session");
+        require(received > 16 * 1024, "the stream kept moving: " + received + " bytes");
+        serving.interrupt();
+      }
+      backend.interrupt();
+    } finally {
+      if (previous == null) System.clearProperty("conduit.writeDeadlineMillis");
+      else System.setProperty("conduit.writeDeadlineMillis", previous);
+    }
+  }
+
+  /**
+   * A 1.8 backend that logs a player in and then streams chat as fast as it can be written. With
+   * {@code hangUpAfterMillis} above zero it hangs up once that long has passed, the way a real
+   * server times out a player that has stopped answering.
+   */
+  private static void serveStreamingBackend(ServerSocket listener, int hangUpAfterMillis) {
+    try (Socket socket = listener.accept()) {
+      MinecraftFrames.read(socket.getInputStream(), 4096);
+      MinecraftFrames.read(socket.getInputStream(), 4096);
+      MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
+      MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
+      if (hangUpAfterMillis > 0) {
+        Thread.startVirtualThread(() -> {
+          try { Thread.sleep(hangUpAfterMillis); socket.close(); } catch (Exception ignored) { }
+        });
+      }
+      byte[] chat = legacyServerChat("x".repeat(1000));
+      while (true) MinecraftFrames.write(socket.getOutputStream(), chat);
+    } catch (Exception ended) { }
+  }
+
+  /**
    * On Windows the JDK parks a virtual thread's socket read and socket write through two wepoll
    * handles, and a readiness event can land on the wrong one and be dropped (JDK-8334574). A
    * session reads each socket on one thread and writes it from another, and a real NeoForge join
@@ -827,12 +928,6 @@ public final class ConcurrencyTests {
     }
   }
 
-  /**
-   * A client can send {@code /server} as fast as it can type. Each one used to open its own backend
-   * socket and run its own login before finding out another switch had already won the commit, so
-   * one player could hold a configured backend open once per packet — and two that both reached the
-   * commit left the loser's connection installed and the winner's leaked.
-   */
   private static void rapidServerCommandsOpenOneBackendConnection() throws Exception {
     List<Socket> held = new ArrayList<>();
     AtomicInteger logins = new AtomicInteger();
@@ -941,6 +1036,15 @@ public final class ConcurrencyTests {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, 0x01); MinecraftOutput.string(output, message);
+    }
+    return bytes.toByteArray();
+  }
+
+  /** 1.8 clientbound Chat (0x02): a JSON text component and a position byte. */
+  private static byte[] legacyServerChat(String text) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, 0x02); MinecraftOutput.string(output, "{\"text\":\"" + text + "\"}"); output.writeByte(0);
     }
     return bytes.toByteArray();
   }

@@ -22,7 +22,6 @@ import java.net.InetAddress;
 import java.net.Socket;
 
 public final class BackendConnection implements AutoCloseable {
-  private static final int WRITE_QUEUE_LIMIT = 2048;
   private final BackendServer server;
   private final Socket socket;
   private final BackendLoginPipeline login;
@@ -31,14 +30,13 @@ public final class BackendConnection implements AutoCloseable {
   private final Object writeLock = new Object();
   private final OutputStream output;
   private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
-  private int queuedWrites;
   private boolean brandSeen;
   public BackendConnection(BackendServer server, Socket socket, ProtocolDefinition protocol, PlayerInfoForwarder forwarder,
       PlayerProfile player, InetAddress address, ConduitConfiguration configuration, boolean hideLoginSuccess) throws IOException {
     this.server = server; this.socket = socket; this.protocol = protocol; this.maxFrameBytes = configuration.maxFrameBytes();
     this.login = new BackendLoginPipeline(protocol, forwarder, player, address, configuration.maxFrameBytes(), hideLoginSuccess);
     socket.setTcpNoDelay(true);
-    this.output = new BufferedOutputStream(socket.getOutputStream(), 8192);
+    this.output = new BufferedOutputStream(gg.tame.conduit.network.DeadlineOutputStream.of(socket), 8192);
     ConduitMetrics.current().backendOpened();
   }
   public static Socket open(BackendServer server) throws IOException {
@@ -96,10 +94,6 @@ public final class BackendConnection implements AutoCloseable {
   }
   public void writeUncompressed(byte[] packet) throws IOException {
     synchronized (writeLock) {
-      if (queuedWrites >= WRITE_QUEUE_LIMIT && !writable()) {
-        throw new IOException("backend write backpressure exceeded for " + server.name());
-      }
-      queuedWrites++;
       if (gg.tame.conduit.protocol.ProtocolTrace.bodies()) {
         // Which backend a packet went to, and in what state, is the difference between a correct
         // switch and one that writes the client's dialect at the wrong server.
@@ -108,7 +102,6 @@ public final class BackendConnection implements AutoCloseable {
             + " len=" + packet.length + " " + gg.tame.conduit.protocol.ProtocolTrace.hex(packet, 24));
       }
       MinecraftFrames.writeUnflushed(output, login.compression().wrap(packet));
-      queuedWrites--;
       ConduitMetrics.current().outbound(packet.length);
       output.flush();
     }
@@ -116,7 +109,6 @@ public final class BackendConnection implements AutoCloseable {
   public void flush() throws IOException {
     synchronized (writeLock) { output.flush(); }
   }
-  public boolean writable() { return !socket.isClosed() && queuedWrites < WRITE_QUEUE_LIMIT / 2; }
   public byte[] rewriteBrand(ConnectionState state, byte[] packet) throws IOException {
     var rewritten = BrandRewriter.rewrite(protocol, state, packet, maxFrameBytes);
     if (rewritten.isPresent()) { brandSeen = true; return rewritten.get(); }
