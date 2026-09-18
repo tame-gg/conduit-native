@@ -54,9 +54,15 @@ public final class ResourcePackPackets {
 
   /** The Play packet offering {@code pack}, or empty when this release has none. */
   public static Optional<byte[]> offer(ProtocolDefinition protocol, ResourcePack pack) throws IOException {
+    return offer(protocol, ConnectionState.PLAY, pack);
+  }
+  /** The packet offering {@code pack} in {@code state}, Play or Configuration, or empty when this release has none there. */
+  public static Optional<byte[]> offer(ProtocolDefinition protocol, ConnectionState state, ResourcePack pack) throws IOException {
     int number = protocol.version().number();
-    if (named(protocol)) {
-      return Optional.of(packet(protocol, PacketKind.PLAY_RESOURCE_PACK_PUSH, output -> {
+    PacketKind push = kind(state, PacketKind.PLAY_RESOURCE_PACK_PUSH, PacketKind.CONFIGURATION_RESOURCE_PACK_PUSH);
+    PacketKind send = kind(state, PacketKind.PLAY_RESOURCE_PACK_SEND, PacketKind.CONFIGURATION_RESOURCE_PACK_SEND);
+    if (push != null && protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, push)) {
+      return Optional.of(packet(protocol, state, push, output -> {
         uuid(output, pack.id());
         MinecraftOutput.string(output, pack.url());
         MinecraftOutput.string(output, pack.hash());
@@ -64,8 +70,8 @@ public final class ResourcePackPackets {
         prompt(output, pack.prompt(), number);
       }));
     }
-    if (!supported(protocol)) return Optional.empty();
-    return Optional.of(packet(protocol, PacketKind.PLAY_RESOURCE_PACK_SEND, output -> {
+    if (send == null || !protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, send)) return Optional.empty();
+    return Optional.of(packet(protocol, state, send, output -> {
       MinecraftOutput.string(output, pack.url());
       MinecraftOutput.string(output, pack.hash());
       if (ProtocolEras.resourcePackPrompt(number)) {
@@ -77,8 +83,13 @@ public final class ResourcePackPackets {
 
   /** The Play packet dropping the pack {@code id}, or every pack when it is null; empty before 1.20.3. */
   public static Optional<byte[]> remove(ProtocolDefinition protocol, UUID id) throws IOException {
-    if (!protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_POP)) return Optional.empty();
-    return Optional.of(packet(protocol, PacketKind.PLAY_RESOURCE_PACK_POP, output -> {
+    return remove(protocol, ConnectionState.PLAY, id);
+  }
+  /** As {@link #remove(ProtocolDefinition, UUID)}, in {@code state}, Play or Configuration. */
+  public static Optional<byte[]> remove(ProtocolDefinition protocol, ConnectionState state, UUID id) throws IOException {
+    PacketKind pop = kind(state, PacketKind.PLAY_RESOURCE_PACK_POP, PacketKind.CONFIGURATION_RESOURCE_PACK_POP);
+    if (pop == null || !protocol.defines(state, PacketDirection.SERVER_TO_CLIENT, pop)) return Optional.empty();
+    return Optional.of(packet(protocol, state, pop, output -> {
       output.writeBoolean(id != null);
       if (id != null) uuid(output, id);
     }));
@@ -212,10 +223,10 @@ public final class ResourcePackPackets {
 
   private interface Body { void write(DataOutputStream output) throws IOException; }
 
-  private static byte[] packet(ProtocolDefinition protocol, PacketKind kind, Body body) throws IOException {
+  private static byte[] packet(ProtocolDefinition protocol, ConnectionState state, PacketKind kind, Body body) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
-      MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, kind));
+      MinecraftOutput.varInt(output, protocol.id(state, PacketDirection.SERVER_TO_CLIENT, kind));
       body.write(output);
     }
     return bytes.toByteArray();

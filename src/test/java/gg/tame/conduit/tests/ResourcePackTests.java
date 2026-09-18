@@ -252,7 +252,7 @@ public final class ResourcePackTests {
     require(!old.fromClient(ConnectionState.PLAY, loaded), "an answer with nothing left to answer goes on to the server");
   }
 
-  private static byte[] status765(UUID id, int result) throws IOException {
+  static byte[] status765(UUID id, int result) throws IOException {
     return bytes(0x28, out -> { out.writeLong(id.getMostSignificantBits()); out.writeLong(id.getLeastSignificantBits()); MinecraftOutput.varInt(out, result); });
   }
 
@@ -387,7 +387,7 @@ public final class ResourcePackTests {
     }
   }
 
-  private static List<byte[]> readUntil(java.io.InputStream in, java.util.function.Predicate<byte[]> last) throws IOException {
+  static List<byte[]> readUntil(java.io.InputStream in, java.util.function.Predicate<byte[]> last) throws IOException {
     List<byte[]> read = new java.util.ArrayList<>();
     while (true) {
       byte[] packet = gg.tame.conduit.protocol.MinecraftFrames.read(in, 1 << 20);
@@ -499,9 +499,9 @@ public final class ResourcePackTests {
     return bytes.size();
   }
 
-  private interface Body { void write(DataOutputStream output) throws IOException; }
+  interface Body { void write(DataOutputStream output) throws IOException; }
 
-  private static byte[] bytes(int id, Body body) throws IOException {
+  static byte[] bytes(int id, Body body) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream out = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(out, id);

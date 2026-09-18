@@ -711,7 +711,10 @@ connected/switch/switch-failed (switch-failed also for each first-server candida
 source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason and a result of
 `Disconnect`, `Redirect` or `Notify`, for a kick while playing and for a login refused during a switch,
 a first connection or a fallback, including a 1.20.2+ server's refusal in its configuration phase, which
-always ends the session), post-login, disconnect (exactly once for every player set up, whether they
+always ends the session), configuration (`PlayerConfigurationEvent`: a 1.20.2+ client's Configuration
+phase at its first join and on each switch, where Conduit relays it without Via; a listener can hold the
+phase open with `holdFinish`, and packs offered meanwhile go to the client as Configuration packets),
+post-login, disconnect (exactly once for every player set up, whether they
 played, were let in but taken by no server, were refused, or left during the login; `loginStatus()` says
 which), chat (cancellable; clients before 1.19 only), tab completion (`PlayerTabCompleteEvent`: change the
 backend's answer to a Tab press; clients before 1.13 only),

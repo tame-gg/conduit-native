@@ -15,6 +15,11 @@ import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.player.TabCompleteEvent;
+import com.velocitypowered.api.event.player.configuration.PlayerConfigurationEvent;
+import com.velocitypowered.api.event.player.configuration.PlayerEnterConfigurationEvent;
+import com.velocitypowered.api.event.player.configuration.PlayerEnteredConfigurationEvent;
+import com.velocitypowered.api.event.player.configuration.PlayerFinishConfigurationEvent;
+import com.velocitypowered.api.event.player.configuration.PlayerFinishedConfigurationEvent;
 import com.velocitypowered.api.event.proxy.ListenerBoundEvent;
 import com.velocitypowered.api.event.proxy.ListenerCloseEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -48,6 +53,7 @@ import gg.tame.conduit.api.event.proxy.ServerUnregisteredEvent;
 import gg.tame.conduit.api.text.Text;
 import java.net.InetSocketAddress;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import net.kyori.adventure.text.Component;
 
@@ -142,6 +148,43 @@ final class VelocityEventBridge {
     // After every connection, the first one included (no previous server): plugins such as resource
     // pack senders wait for it to act on a player who just joined. Nothing depends on its outcome.
     if (listening(ServerPostConnectEvent.class)) environment.events.fire(new ServerPostConnectEvent(player, previous));
+  }
+
+  /**
+   * The Configuration phase, as Velocity's five events. Enter (switches only) and Finish are waited
+   * for before the client is asked to enter or finish. Entered, then PlayerConfigurationEvent, run
+   * while the phase goes on, and it does not finish before both are done: that is where a plugin
+   * sends packs, which go to the client as Configuration packets. Finished is not waited for.
+   */
+  @Subscribe public void onConfiguration(gg.tame.conduit.api.event.player.PlayerConfigurationEvent event) {
+    VelocityPlayer player = environment.player(event.player());
+    VelocityRegisteredServer server = environment.server(event.server());
+    // On a switch the player is still on the server they are leaving.
+    VelocityRegisteredServer on = environment.server(event.player().currentServer().orElse(null));
+    var connection = new VelocityServerConnection(server, player, on != null && !on.equals(server) ? on : player.previousServer);
+    switch (event.stage()) {
+      case ENTERING -> {
+        if (listening(PlayerEnterConfigurationEvent.class)) environment.fireAndWait(new PlayerEnterConfigurationEvent(player, connection));
+      }
+      case ENTERED -> {
+        if (!listening(PlayerEnteredConfigurationEvent.class) && !listening(PlayerConfigurationEvent.class)) return;
+        event.holdFinish(environment.events.fire(new PlayerEnteredConfigurationEvent(player, connection))
+            .thenCompose(entered -> environment.events.fire(new PlayerConfigurationEvent(player, connection)))
+            .orTimeout(VelocityEnvironment.WAIT_MS, TimeUnit.MILLISECONDS)
+            .exceptionally(slow -> {
+              // A player who left meanwhile has no configuration left to finish.
+              if (player.isActive()) environment.log.warning("Velocity plugins took over " + VelocityEnvironment.WAIT_MS + " ms to handle "
+                  + player.getUsername() + "'s PlayerConfigurationEvent; finishing the configuration without them");
+              return null;
+            }));
+      }
+      case FINISHING -> {
+        if (listening(PlayerFinishConfigurationEvent.class)) environment.fireAndWait(new PlayerFinishConfigurationEvent(player, connection));
+      }
+      case FINISHED -> {
+        if (listening(PlayerFinishedConfigurationEvent.class)) environment.events.fire(new PlayerFinishedConfigurationEvent(player, connection));
+      }
+    }
   }
 
   /**

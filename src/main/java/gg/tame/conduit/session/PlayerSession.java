@@ -2,6 +2,7 @@
 package gg.tame.conduit.session;
 
 import gg.tame.conduit.brand.BrandRewriter;
+import gg.tame.conduit.api.event.player.PlayerConfigurationEvent;
 import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent.KickResult;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.api.text.TextColor;
@@ -566,8 +567,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     long joined = System.nanoTime();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
-    runtime.registered(initial.server().name()).ifPresent(first -> runtime.events().fire(
-        new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first)));
+    // The client is in Configuration from its Login Success on; the reader below relays the server's
+    // phase, up to the Finish Configuration that waits for what plugins start here. A phase plugins
+    // hear about ends before the player counts as on the server, as the Velocity events have it.
+    if (expectClientLoginAck) enteredConfiguration(initial);
+    firstConnected = runtime.registered(initial.server().name()).orElse(null);
+    if (configurationEntered == null) connectedToFirst();
     Thread backendReader = gg.tame.conduit.network.SocketThreads.start(this::readBackend);
     try { readClient(); }
     finally {
@@ -1436,6 +1441,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       flushTranslatorExtras(target);
       configurationAck.offer(Boolean.TRUE);
       flushDeferredPlay();
+      finishedConfiguration();
       return true;
     }
     return false;
@@ -1608,6 +1614,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         } else {
           outbound = translated;
         }
+        if (clientState.state() == ConnectionState.CONFIGURATION && isFinishConfiguration(translated)) finishingConfiguration();
         if (clientState.state() == ConnectionState.CONFIGURATION && isFinishConfiguration(translated) && !current.brandSeen()) {
           writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""), true);
           current.markBrandSeen();
@@ -1987,6 +1994,80 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * a real client loading a world it has just been handed.
    */
   private static final int RECONFIGURE_BUDGET_MS = 15_000;
+
+  // ---- PlayerConfigurationEvent: plugins' view of a Configuration phase Conduit relays itself ----
+  /** The ENTERED event of the phase in progress, whose holds its finish waits for; null outside one or when none was fired. */
+  private volatile PlayerConfigurationEvent configurationEntered;
+  /**
+   * Only for a phase this session relays packet by packet between two ends that both have one. Via
+   * builds or translates its own, including the Finish Configuration, which is not Conduit's to hold.
+   */
+  private boolean configurationEvents() {
+    return protocol.hasConfiguration() && backendDefinition.hasConfiguration() && !viaEngine();
+  }
+  private gg.tame.conduit.api.server.RegisteredServer registered(BackendConnection target) {
+    return target == null ? null : runtime.registered(target.server().name()).orElse(null);
+  }
+  /** A switch, before the client is asked to reconfigure. Returns the nanoseconds listeners took. */
+  private long enteringConfiguration(BackendConnection target) {
+    var server = registered(target);
+    if (server == null || !configurationEvents()) return 0;
+    long started = System.nanoTime();
+    runtime.events().fire(new PlayerConfigurationEvent(this, server, PlayerConfigurationEvent.Stage.ENTERING));
+    return System.nanoTime() - started;
+  }
+  /** The client is in Configuration: until it is told to finish, the proxy's packs go to it at once. */
+  private void enteredConfiguration(BackendConnection target) {
+    var server = registered(target);
+    if (server == null || !configurationEvents()) return;
+    resourcePacks.configuring(true);
+    configurationEntered = runtime.events().fire(new PlayerConfigurationEvent(this, server, PlayerConfigurationEvent.Stage.ENTERED));
+  }
+  /**
+   * Just before Finish Configuration goes to the client: waits for the holds, bounded, then fires
+   * FINISHING. Returns the nanoseconds it took. The backend meanwhile waits for the client's answer.
+   */
+  private long finishingConfiguration() {
+    PlayerConfigurationEvent entered = configurationEntered;
+    if (entered == null) return 0;
+    long started = System.nanoTime();
+    // A hold that failed is over as much as one that completed.
+    var holds = entered.holds().stream().map(hold -> {
+      var over = new java.util.concurrent.CompletableFuture<Void>();
+      hold.whenComplete((result, failure) -> over.complete(null));
+      return over;
+    }).toArray(java.util.concurrent.CompletableFuture[]::new);
+    try {
+      java.util.concurrent.CompletableFuture.allOf(holds).get(PlayerConfigurationEvent.MAX_HOLD_MILLIS, TimeUnit.MILLISECONDS);
+    } catch (java.util.concurrent.TimeoutException slow) {
+      gg.tame.conduit.log.ConduitLog.warn("Plugins held " + username() + "'s configuration for "
+          + PlayerConfigurationEvent.MAX_HOLD_MILLIS + " ms; finishing it without them");
+    } catch (java.util.concurrent.ExecutionException impossible) {
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    }
+    runtime.events().fire(new PlayerConfigurationEvent(this, entered.server(), PlayerConfigurationEvent.Stage.FINISHING));
+    resourcePacks.configuring(false);
+    return System.nanoTime() - started;
+  }
+  /** The client has finished the phase and is in Play. */
+  private void finishedConfiguration() {
+    PlayerConfigurationEvent entered = configurationEntered;
+    if (entered == null) return;
+    configurationEntered = null;
+    resourcePacks.configuring(false);
+    runtime.events().fire(new PlayerConfigurationEvent(this, entered.server(), PlayerConfigurationEvent.Stage.FINISHED));
+    connectedToFirst();
+  }
+  /** The first server, until the player counts as on it. */
+  private volatile gg.tame.conduit.api.server.RegisteredServer firstConnected;
+  private void connectedToFirst() {
+    var first = firstConnected;
+    if (first == null) return;
+    firstConnected = null;
+    runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first));
+  }
+
   private void switchTo(BackendServer requested, boolean fallback) throws Exception {
     BackendServer server = requested;
     var targetView = runtime.registered(server.name()).orElse(null);
@@ -2089,6 +2170,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // Conduit asks for this reconfiguration, so the acknowledgement is Conduit's. The new
         // backend is already in Configuration and has no Play packet to receive it as.
         conduitOwnsReconfiguration = true;
+        deadline += enteringConfiguration(next);
         writeClient(PlayPackets.startConfiguration(protocol));
         clientEnteredConfiguration = true;
         int waitSeconds = Math.max(1, remainingMillis(deadline) / 1000);
@@ -2096,6 +2178,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         conduitOwnsReconfiguration = false;
         configurationAck.clear();
         knownPacksAck.clear();
+        enteredConfiguration(next);
         // Both checks watch what this loop relays, and on the Via engine that is not everything the
         // client gets: from a 1.20.4 backend's Registry Data Via writes Known Packs and every
         // registry itself, ahead of the result, answers the client's reply itself, and hands this
@@ -2141,6 +2224,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
               throw new IOException("backend finished configuration before known packs");
             }
             if (!registrySeen) throw new IOException("backend finished configuration without 26.2 registry data");
+            // Plugins' time is theirs, not the switch's.
+            deadline += finishingConfiguration();
             if (!next.brandSeen()) {
               writeClient(BrandRewriter.synthesize(protocol, ConnectionState.CONFIGURATION, ""));
               next.markBrandSeen();

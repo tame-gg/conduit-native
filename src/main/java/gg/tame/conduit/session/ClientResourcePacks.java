@@ -32,7 +32,9 @@ import java.util.function.Consumer;
  * <p>The proxy's offers wait for the client to stand in a world, on the same gate as the proxy's
  * display ({@link ClientDisplay#takesWorld}): after Start Configuration a 1.20.2+ client reads Play ids
  * as Configuration ones, and a pack offer written then would be something else to it. They are held
- * and written when the Join Game ending the switch or the login arrives. The proxy's packs are the
+ * and written when the Join Game ending the switch or the login arrives, except while the session
+ * holds the client in Configuration for plugins ({@link #configuring}), where they go as that phase's
+ * own packets. The proxy's packs are the
  * proxy's, not a server's, so they stay across server switches; a server's stay as the client keeps
  * them, and the proxy neither removes nor re-sends those.
  */
@@ -52,6 +54,8 @@ public final class ClientResourcePacks {
   // Everything below is guarded by lock. The proxy writes only while holding it, which is how a write
   // passing beforeWrite is known to be the proxy's own rather than a server's.
   private boolean inWorld;
+  /** The session holds the client in its Configuration phase for plugins: offers go now, as Configuration packets. */
+  private boolean configuring;
   private boolean closed;
   private final Map<UUID, Offer> offers = new LinkedHashMap<>();
   /** Before 1.20.3: what the client was offered, in order, that it has not finished answering. */
@@ -90,7 +94,8 @@ public final class ClientResourcePacks {
       offer.loaded = previous != null && previous.loaded && previous.pack.url().equals(pack.url())
           && previous.pack.hash().equalsIgnoreCase(pack.hash());
       offers.put(pack.id(), offer);
-      if (inWorld) write(offer);
+      if (inWorld) write(offer, ConnectionState.PLAY);
+      else if (configuring) write(offer, ConnectionState.CONFIGURATION);
       return true;
     }
   }
@@ -100,7 +105,8 @@ public final class ClientResourcePacks {
       if (closed || !named) return false;
       Offer offer = offers.remove(id);
       if (offer != null && !offer.written) return true;
-      if (inWorld) send(id);
+      if (inWorld) send(id, ConnectionState.PLAY);
+      else if (configuring) send(id, ConnectionState.CONFIGURATION);
       else removedWhileAway.add(Optional.of(id));
       return true;
     }
@@ -111,7 +117,9 @@ public final class ClientResourcePacks {
       if (closed || !named) return false;
       offers.clear();
       if (inWorld) {
-        send(null);
+        send(null, ConnectionState.PLAY);
+      } else if (configuring) {
+        send(null, ConnectionState.CONFIGURATION);
       } else {
         removedWhileAway.clear();
         removedWhileAway.add(Optional.empty());
@@ -145,10 +153,20 @@ public final class ClientResourcePacks {
     synchronized (lock) {
       if (closed) return;
       inWorld = true;
-      for (Optional<UUID> removed : removedWhileAway) send(removed.orElse(null));
+      for (Optional<UUID> removed : removedWhileAway) send(removed.orElse(null), ConnectionState.PLAY);
       removedWhileAway.clear();
-      for (Offer offer : List.copyOf(offers.values())) if (!offer.fromServer && !offer.written) write(offer);
+      for (Offer offer : List.copyOf(offers.values())) if (!offer.fromServer && !offer.written) write(offer, ConnectionState.PLAY);
     }
+  }
+
+  /**
+   * Opens or closes the window in which the session holds the client in Configuration for plugins,
+   * from the moment it is in that phase until just before it is told to finish: what is offered or
+   * removed meanwhile goes at once, as Configuration packets. What was waiting from before keeps
+   * waiting for the world.
+   */
+  public void configuring(boolean open) {
+    synchronized (lock) { configuring = open; }
   }
 
   /** Called holding lock: a server's offer or removal on its way to the client. */
@@ -223,9 +241,9 @@ public final class ClientResourcePacks {
   }
 
   /** Called holding lock. */
-  private void write(Offer offer) {
+  private void write(Offer offer, ConnectionState state) {
     try {
-      Optional<byte[]> packet = ResourcePackPackets.offer(protocol, offer.pack);
+      Optional<byte[]> packet = ResourcePackPackets.offer(protocol, state, offer.pack);
       if (packet.isEmpty()) return;
       output.write(packet.get());
       offer.written = true;
@@ -242,9 +260,9 @@ public final class ClientResourcePacks {
   }
 
   /** Called holding lock: drops the pack {@code id}, or every pack when null. */
-  private void send(UUID id) {
+  private void send(UUID id, ConnectionState state) {
     try {
-      Optional<byte[]> packet = ResourcePackPackets.remove(protocol, id);
+      Optional<byte[]> packet = ResourcePackPackets.remove(protocol, state, id);
       if (packet.isPresent()) output.write(packet.get());
     } catch (IOException gone) {
       // As in write.
