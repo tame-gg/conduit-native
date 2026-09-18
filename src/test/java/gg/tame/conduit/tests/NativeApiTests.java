@@ -86,6 +86,7 @@ public final class NativeApiTests {
     aRejectedListenerRegistersNothing();
     throwingTasksKeepRepeatingAndFinishedOnesAreForgotten();
     aDisabledPluginCannotReschedule();
+    aBlockingPluginTaskHoldsUpNoOtherPlugin();
     loginCanBeDeniedAndJoinEventsFireInOrder();
     onlineLoginFiresAuthenticated();
     initialServerCanBeChosenCancelledOrRedirected();
@@ -180,6 +181,54 @@ public final class NativeApiTests {
       Thread.sleep(100);
       require(successors.get() == 0 && scheduler.taskCount() == 0, "nothing of the disabled plugin runs on");
     }
+  }
+
+  /**
+   * Every plugin's tasks shared two threads, so one plugin's task blocking on a slow socket held
+   * back every other plugin's timers for as long as it blocked.
+   */
+  private static void aBlockingPluginTaskHoldsUpNoOtherPlugin() throws Exception {
+    try (ConduitScheduler scheduler = new ConduitScheduler()) {
+      Plugin stuck = new TestPlugin("stuck");
+      Plugin lively = new TestPlugin("lively");
+      CountDownLatch release = new CountDownLatch(1);
+      CountDownLatch blocking = new CountDownLatch(3);
+      for (int i = 0; i < 3; i++) {
+        scheduler.buildTask(stuck, () -> {
+          blocking.countDown();
+          try { release.await(30, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        }).schedule();
+      }
+      require(blocking.await(5, TimeUnit.SECONDS), "the blocking tasks all started, on threads of their own");
+      List<String> ran = Collections.synchronizedList(new ArrayList<>());
+      CountDownLatch other = new CountDownLatch(1);
+      scheduler.buildTask(lively, () -> { ran.add(Thread.currentThread().getName()); other.countDown(); }).schedule();
+      require(other.await(2, TimeUnit.SECONDS), "another plugin's task runs while the first plugin's block");
+      require(ran.getFirst().startsWith("conduit-plugin-lively-"), "on its own plugin's thread, got " + ran);
+      require(threads("conduit-plugin-stuck-") == 3, "the stuck plugin holds its own threads, got " + threads("conduit-plugin-stuck-"));
+
+      AtomicInteger inside = new AtomicInteger();
+      AtomicInteger overlapped = new AtomicInteger();
+      AtomicInteger runs = new AtomicInteger();
+      ScheduledTask slow = scheduler.buildTask(lively, () -> {
+        if (inside.incrementAndGet() > 1) overlapped.incrementAndGet();
+        try { Thread.sleep(30); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        inside.decrementAndGet();
+        runs.incrementAndGet();
+      }).repeat(Duration.ofMillis(2)).schedule();
+      require(waitFor(() -> runs.get() >= 5, 5_000), "a slow repeating task keeps repeating");
+      slow.cancel();
+      require(overlapped.get() == 0, "and never overlaps itself");
+
+      scheduler.retire(stuck);
+      require(threads("conduit-plugin-stuck-") == 3, "a retired plugin's running tasks are not interrupted");
+      release.countDown();
+      require(waitFor(() -> threads("conduit-plugin-stuck-") == 0, 5_000), "and its threads end once they return");
+    }
+  }
+
+  private static long threads(String prefix) {
+    return Thread.getAllStackTraces().keySet().stream().filter(thread -> thread.getName().startsWith(prefix)).count();
   }
 
   // --- sessions -----------------------------------------------------------------------------

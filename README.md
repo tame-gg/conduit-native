@@ -592,8 +592,10 @@ it fires on; events fire synchronously, and player events fire on that player's 
 listener must not block. `@Subscribe(order = ...)` orders listeners from `FIRST` to `LAST`. A listener
 that throws is logged and the others still run.
 
-Scheduler tasks run on `conduit-scheduler` threads, never on player socket threads. A task that throws
-is logged and, if repeating, runs again next time.
+Scheduler tasks run on their own plugin's `conduit-plugin-<id>-N` threads, never on player socket
+threads or another plugin's, so a task that blocks holds up only its own plugin; a repeating task never
+overlaps itself. A task that throws is logged and, if repeating, runs again next time. A disabled plugin's
+threads end once any task still running returns.
 
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins

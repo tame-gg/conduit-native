@@ -4,10 +4,11 @@ import gg.tame.conduit.api.plugin.Plugin;
 import java.time.Duration;
 
 /**
- * Plugin tasks. Every task runs on the proxy's scheduler threads, never on a player's connection
- * thread, so a task may block briefly but should not hold a thread for long: the threads are
- * shared by every plugin. A task that throws is logged and, if repeating, still runs next time.
- * Disabling a plugin cancels its tasks and refuses it new ones.
+ * Plugin tasks. Every task runs on threads that belong to its plugin -- never on a player's
+ * connection thread, and never on another plugin's -- so a task that blocks holds up only its own
+ * plugin's work. A repeating task never overlaps itself: a run still going when the next falls due
+ * skips that one. A task that throws is logged and, if repeating, still runs next time. Disabling a
+ * plugin cancels its tasks, refuses it new ones, and ends its threads once a running task returns.
  */
 public interface Scheduler {
   TaskBuilder buildTask(Plugin plugin, Runnable task);
@@ -18,7 +19,7 @@ public interface Scheduler {
     TaskBuilder delay(Duration delay);
     /** Runs the task every {@code interval} after its first run, until cancelled. */
     TaskBuilder repeat(Duration interval);
-    /** Kept for readability: every task already runs off the connection threads. */
+    /** Kept for readability: every task already runs off the connection threads, on its plugin's own. */
     TaskBuilder async();
     /** @throws IllegalStateException when the plugin has been disabled or the proxy is shutting down */
     ScheduledTask schedule();
