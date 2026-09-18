@@ -75,6 +75,7 @@ public final class ModLoaderTests {
     registeredChannelsCanBeReplayed();
     fml1HandshakeReset();
     capturedNeoForgeLogin();
+    knownPacksOfAModdedClient();
     System.out.println("ModLoaderTests passed.");
   }
 
@@ -773,6 +774,103 @@ public final class ModLoaderTests {
     } catch (java.io.IOException expected) { /* ok */ }
     catch (AssertionError failure) { throw failure; }
     catch (Exception unexpected) { throw new AssertionError(message, unexpected); }
+  }
+
+  /**
+   * A heavily modded 1.20.5+ client declares a known pack per mod. Velocity capped the list at 64
+   * and dropped such a client; Conduit's limit is {@code [modded] known-packs-limit} (1024). A list
+   * inside it reaches the backend unchanged, and one past it is refused with a reason the player
+   * can read -- before, the refusal was swallowed and the client got a dropped socket, and the
+   * Configuration-phase kick carried a Play chat packet no Configuration client can parse.
+   */
+  private static void knownPacksOfAModdedClient() throws Exception {
+    byte[] modpack = knownPacks(1000);
+    require(knownPacksThroughProxy(modpack, true) == null, "1000 known packs, past Velocity's 64, reach the backend");
+    byte[] refusal = knownPacksThroughProxy(knownPacks(1025), false);
+    require(refusal[0] == 0x02, "the client gets 1.21's Configuration Disconnect, not a Play chat packet (got id " + refusal[0] + ")");
+    require(new String(refusal, java.nio.charset.StandardCharsets.UTF_8).contains("resource packs (1025)"),
+        "the refusal says how many packs the client declared");
+  }
+
+  /** Logs a scripted 1.21 client in and sends its Known Packs; returns what the client got back instead, or null. */
+  private static byte[] knownPacksThroughProxy(byte[] clientKnownPacks, boolean reachesBackend) throws Exception {
+    int v121 = 767;
+    UUID id = new UUID(7, 7);
+    try (ServerSocket backendListener = new ServerSocket(0)) {
+      AtomicReference<Throwable> backendFailure = new AtomicReference<>();
+      AtomicReference<byte[]> backendGot = new AtomicReference<>();
+      Thread backend = Thread.startVirtualThread(() -> {
+        try (Socket socket = backendListener.accept()) {
+          socket.setSoTimeout(5_000);
+          InputStream in = socket.getInputStream();
+          OutputStream out = socket.getOutputStream();
+          MinecraftFrames.read(in, 1 << 20);
+          MinecraftFrames.read(in, 1 << 20);
+          ByteArrayOutputStream success = new ByteArrayOutputStream();
+          try (DataOutputStream body = new DataOutputStream(success)) {
+            body.writeByte(0x02);
+            body.writeLong(id.getMostSignificantBits());
+            body.writeLong(id.getLeastSignificantBits());
+            MinecraftOutput.string(body, "player");
+            MinecraftOutput.varInt(body, 0);
+            body.writeBoolean(true);
+          }
+          MinecraftFrames.write(out, success.toByteArray());
+          require(MinecraftFrames.read(in, 1 << 20)[0] == 0x03, "backend gets Login Acknowledged");
+          MinecraftFrames.write(out, new byte[] {0x0E, 1, 9, 'm', 'i', 'n', 'e', 'c', 'r', 'a', 'f', 't', 4, 'c', 'o', 'r', 'e', 4, '1', '.', '2', '1'});
+          try {
+            for (byte[] packet = MinecraftFrames.read(in, 1 << 20); ; packet = MinecraftFrames.read(in, 1 << 20)) {
+              if (packet[0] == 0x07) { backendGot.set(packet); break; }
+            }
+          } catch (java.io.IOException closed) { }
+        } catch (Throwable failure) {
+          backendFailure.set(failure);
+        }
+      });
+      ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 1 << 20,
+          ForwardingMode.NONE, Optional.empty(),
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", backendListener.getLocalPort()))),
+          List.of("lobby"), List.of());
+      byte[] reply = null;
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(5_000);
+          InputStream in = client.getInputStream();
+          OutputStream out = client.getOutputStream();
+          MinecraftFrames.write(out, new Handshake(v121, "local", 25565, 2).encode());
+          MinecraftFrames.write(out, LoginStart.encode(new PlayerProfile(id, "player", List.of(), false), ProtocolDefinition.forVersion(v121)));
+          require(MinecraftFrames.read(in, 1 << 20)[0] == 0x02, "the 1.21 client gets Login Success");
+          MinecraftFrames.write(out, new byte[] {0x03});
+          readUntil(in, 0x0E);
+          MinecraftFrames.write(out, clientKnownPacks);
+          if (!reachesBackend) {
+            try { reply = MinecraftFrames.read(in, 1 << 20); }
+            catch (java.io.EOFException dropped) { throw new AssertionError("a refused client got a dropped socket and no reason"); }
+          }
+          backend.join(5_000);
+        }
+        serving.interrupt();
+      }
+      if (backendFailure.get() != null) throw new AssertionError("mock backend: " + backendFailure.get(), backendFailure.get());
+      if (reachesBackend) require(Arrays.equals(backendGot.get(), clientKnownPacks), "the backend gets the client's Known Packs byte for byte");
+      else require(backendGot.get() == null, "a refused Known Packs list never reaches the backend");
+      return reply;
+    }
+  }
+
+  private static byte[] knownPacks(int count) throws Exception {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream out = new DataOutputStream(bytes)) {
+      out.writeByte(0x07);
+      MinecraftOutput.varInt(out, count);
+      for (int i = 0; i < count; i++) {
+        MinecraftOutput.string(out, "mod" + i);
+        MinecraftOutput.string(out, "resources");
+        MinecraftOutput.string(out, "1.0." + i);
+      }
+    }
+    return bytes.toByteArray();
   }
 
   private static int reservePort() throws Exception {

@@ -261,7 +261,7 @@ Protocol-level mod compatibility — not a claim of “all Forge versions”.
 
 | Area | Status |
 |------|--------|
-| Known-packs limit (default 1024) + validation | IMPLEMENTED |
+| Known-packs limit (default 1024) + validation; an over-limit client is told why and the log names the setting to raise | IMPLEMENTED |
 | Mod loader detection (Vanilla / Fabric / Forge / NeoForge / Unknown) | IMPLEMENTED |
 | FML1 / FML2 / FML3 address-marker strip/preserve | IMPLEMENTED |
 | Handshake classification cache (bounded + TTL) | IMPLEMENTED |

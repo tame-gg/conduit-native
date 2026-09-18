@@ -19,6 +19,17 @@ public final class KnownPacksValidator {
 
   public record KnownPack(String namespace, String id, String version) {}
 
+  /** A list longer than the configured limit: the one refusal an operator can fix with a setting. */
+  public static final class TooManyPacks extends IOException {
+    public final int count;
+    public final int limit;
+    TooManyPacks(int count, int limit) {
+      super("known-packs count exceeds limit (" + count + " > " + limit + ")");
+      this.count = count;
+      this.limit = limit;
+    }
+  }
+
   public record Result(int count, java.util.List<KnownPack> packs) {
     public Result {
       packs = java.util.List.copyOf(packs);
@@ -31,7 +42,7 @@ public final class KnownPacksValidator {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(body))) {
       int count = MinecraftInput.varInt(input);
       if (count < 0) throw new IOException("known-packs count is negative");
-      if (count > maxPacks) throw new IOException("known-packs count exceeds limit (" + count + " > " + maxPacks + ")");
+      if (count > maxPacks) throw new TooManyPacks(count, maxPacks);
       java.util.ArrayList<KnownPack> packs = new java.util.ArrayList<>(Math.min(count, 64));
       Set<String> seen = new HashSet<>();
       for (int i = 0; i < count; i++) {

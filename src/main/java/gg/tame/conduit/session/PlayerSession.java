@@ -182,7 +182,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return java.util.concurrent.CompletableFuture.supplyAsync(() -> transferTo(server.getName()));
   }
   @Override public void disconnect(String reason) {
-    try { writeClient(PlayPackets.systemChat(protocol, reason)); } catch (IOException ignored) { }
+    // In Configuration the Play chat packet's id is some other Configuration packet, so the reason
+    // never showed: a client refused there got bytes it could not read and a closed socket.
+    try {
+      writeClient(clientState.state() == ConnectionState.CONFIGURATION
+          ? PlayPackets.configurationDisconnect(protocol, reason)
+          : PlayPackets.systemChat(protocol, reason));
+    } catch (IOException ignored) { }
     close();
   }
   @Override public void sendPluginMessage(String channel, byte[] data) {
@@ -909,7 +915,20 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     if (clientState.state() == ConnectionState.CONFIGURATION && protocol.knownPacks()
         && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_KNOWN_PACKS)) {
-      KnownPacksValidator.validate(PlayPackets.body(packet), runtime.modded().knownPacksLimit());
+      try {
+        KnownPacksValidator.validate(PlayPackets.body(packet), runtime.modded().knownPacksLimit());
+      } catch (KnownPacksValidator.TooManyPacks tooMany) {
+        // A heavily modded 1.20.5+ client declares a pack per mod. Refused silently, the player saw
+        // only a dropped connection and nothing in the log said which setting to raise.
+        gg.tame.conduit.log.ConduitLog.warn(username() + " declared " + tooMany.count + " known packs, over the limit of "
+            + tooMany.limit + "; raise [modded] known-packs-limit to let this client in.");
+        disconnect("Your client has more resource packs (" + tooMany.count + ") than this network allows (" + tooMany.limit + ").");
+        return true;
+      } catch (IOException malformed) {
+        gg.tame.conduit.log.ConduitLog.warn(username() + " sent an invalid known-packs list: " + malformed.getMessage());
+        disconnect("Your client sent an invalid resource pack list.");
+        return true;
+      }
       BackendConnection target = switchingTarget != null ? switchingTarget : backend;
       if (target != null) {
         byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
