@@ -51,6 +51,12 @@ import java.nio.file.Path;
 
 public final class AllTests {
   public static void main(String[] arguments) throws Exception {
+    // A failing suite used to leave the JVM running: Via's platform executors are not daemons and
+    // were stopped only after the last suite passed, so the test run hung instead of failing.
+    try { runAll(); }
+    finally { gg.tame.conduit.viaversion.ConduitViaBootstrap.stop(); }
+  }
+  private static void runAll() throws Exception {
     decodeFramesWithoutOverAllocation();
     enforceProtocolTransitions();
     validateIndependentConfiguration();
@@ -110,8 +116,6 @@ public final class AllTests {
     VelocityEventsTests.run();
     ServerKickTests.run();
     System.out.println("All Conduit foundation tests passed.");
-    // Release Via's non-daemon platform executors so this JVM can exit on its own.
-    gg.tame.conduit.viaversion.ConduitViaBootstrap.stop();
   }
   private static void decodeFramesWithoutOverAllocation() {
     VarIntFrameDecoder decoder = new VarIntFrameDecoder(16);
