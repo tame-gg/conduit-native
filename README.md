@@ -599,7 +599,7 @@ Fetch compile-time jars (never a Conduit core dependency):
 ./scripts/fetch-velocity-compat.ps1
 ```
 
-`./scripts/test.ps1` compiles core, then `src/compat-velocity` against `lib/*.jar` (includes `slf4j-nop`), then runs Phase9 which builds a real Velocity-API plugin and loads it.
+`./scripts/test.ps1` compiles core, then `src/compat-velocity` against `lib/*.jar` (includes `slf4j-jdk14`, so what plugins log through SLF4J reaches Conduit's `java.util.logging` loggers), then runs Phase9 which builds a real Velocity-API plugin and loads it.
 
 See `docs/VELOCITY_COMPATIBILITY.md` for the support matrix. Unsupported APIs throw; they are never faked.
 
