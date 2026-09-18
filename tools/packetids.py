@@ -120,6 +120,17 @@ KINDS: dict[tuple[str, str, str], list[str]] = {
     (STATE_PLAY, TO_CLIENT, "PLAY_MULTI_BLOCK_CHANGE"): ["multi_block_change"],
     (STATE_PLAY, TO_CLIENT, "PLAY_ENTITY_DESTROY"): ["entity_destroy"],
     (STATE_PLAY, TO_CLIENT, "PLAY_RESPAWN"): ["respawn"],
+    # What the proxy writes on a plugin's behalf: titles, the action bar, boss bars and the tab-list
+    # header. 1.8-1.16 multiplex every title action behind the one "title" packet; 1.17 split it
+    # into a packet per action, so a release has one family or the other, never both.
+    (STATE_PLAY, TO_CLIENT, "PLAY_TITLE"): ["title"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_SET_TITLE_TEXT"): ["set_title_text"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_SET_SUBTITLE"): ["set_title_subtitle"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_SET_TITLE_TIMES"): ["set_title_time"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_SET_ACTION_BAR"): ["action_bar"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_CLEAR_TITLES"): ["clear_titles"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_BOSS_BAR"): ["boss_bar"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_TAB_LIST_HEADER"): ["playerlist_header"],
 
     (STATE_PLAY, TO_SERVER, "PLAY_CLIENT_INFORMATION"): ["settings"],
     (STATE_PLAY, TO_SERVER, "PLAY_CHAT_COMMAND"): ["chat_command", "chat"],
