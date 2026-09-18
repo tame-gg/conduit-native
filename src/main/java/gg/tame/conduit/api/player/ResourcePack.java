@@ -50,7 +50,8 @@ public record ResourcePack(UUID id, String url, String hash, boolean required, T
 
   /**
    * A pack a client was offered through the proxy, by the proxy or by the server it was on, and has
-   * neither declined nor dropped: {@code loaded} once the client said so, pending until then.
+   * neither declined nor dropped: {@code loaded} once the client said so, pending until then. A
+   * loaded pack the proxy offers again unchanged stays loaded while the client answers once more.
    */
   public record Offered(ResourcePack pack, boolean fromServer, boolean loaded) {
     public Offered { Objects.requireNonNull(pack, "pack"); }

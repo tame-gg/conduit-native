@@ -21,10 +21,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
+import net.kyori.adventure.audience.Audience;
 import net.kyori.adventure.text.Component;
 
 /** The ProxyServer handed to Velocity plugins. Its public surface is the Velocity API and nothing else. */
-final class VelocityProxyServer implements ProxyServer, Unsupported.ToPlayers {
+final class VelocityProxyServer implements ProxyServer, Unsupported.PlayerGroup {
   private final VelocityEnvironment environment;
   private final VelocityProxyConfig config;
   VelocityProxyServer(VelocityEnvironment environment) {
@@ -77,13 +78,13 @@ final class VelocityProxyServer implements ProxyServer, Unsupported.ToPlayers {
   }
   @Override public RegisteredServer createRawRegisteredServer(ServerInfo server) { throw Unsupported.api("ProxyServer.createRawRegisteredServer"); }
 
-  /** Titles, boss bars and the rest go to every player; the console has none of them. */
-  @Override public java.util.Collection<Player> players() { return getAllPlayers(); }
   /** A broadcast: every player, and the console. */
   @Override public void deliver(Component message) {
     for (Player player : getAllPlayers()) player.sendMessage(message);
     environment.console.sendMessage(message);
   }
+  /** Every player; not the console, which has no title, action bar or boss bar to show. */
+  @Override public Iterable<? extends Audience> audiences() { return getAllPlayers(); }
 
   @Override public ConsoleCommandSource getConsoleCommandSource() { return environment.console; }
   @Override public PluginManager getPluginManager() { return environment.plugins; }

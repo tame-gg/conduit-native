@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.compat.velocity;
 
-import java.util.Collection;
 import java.util.UUID;
 import net.kyori.adventure.audience.MessageType;
 import net.kyori.adventure.bossbar.BossBar;
@@ -28,8 +27,8 @@ final class Unsupported {
 
   /**
    * Adventure's Audience methods are no-op defaults, so a plugin showing a title or a boss bar would
-   * see nothing happen and no error. Every audience in the adapter is one of these: chat messages
-   * reach {@link #deliver}, everything else throws.
+   * see nothing happen and no error. Every audience in the adapter is one of these (chat messages
+   * reach {@link #deliver}, everything else throws) or a {@link PlayerGroup}.
    */
   interface ChatOnly extends net.kyori.adventure.audience.Audience {
     void deliver(Component message);
@@ -66,30 +65,19 @@ final class Unsupported {
   }
 
   /**
-   * An audience of players, as Velocity's ProxyServer (every player) and RegisteredServer (the players
-   * on it) are: what a player can be shown goes to each of them as they are when it is called, under
-   * each player's own client's limits. Chat still reaches {@link ChatOnly#deliver}.
+   * The proxy and a server as audiences: on Velocity they forward to their players, and plugins
+   * announce to everyone through them (TitleAnnouncer's "all" target, for one) or walk their
+   * {@link #audiences()}. Chat reaches {@link #deliver}, which may add the console; everything else
+   * reaches each player, who shows it or refuses it as they would alone.
    */
-  interface ToPlayers extends ChatOnly {
-    Collection<? extends net.kyori.adventure.audience.Audience> players();
-    @Override default void sendActionBar(Component message) { players().forEach(player -> player.sendActionBar(message)); }
-    @Override default void sendPlayerListHeaderAndFooter(Component header, Component footer) {
-      players().forEach(player -> player.sendPlayerListHeaderAndFooter(header, footer));
-    }
-    @Override default void sendPlayerListHeader(Component header) { players().forEach(player -> player.sendPlayerListHeader(header)); }
-    @Override default void sendPlayerListFooter(Component footer) { players().forEach(player -> player.sendPlayerListFooter(footer)); }
-    @Override default void showTitle(Title title) { players().forEach(player -> player.showTitle(title)); }
-    @Override default <T> void sendTitlePart(TitlePart<T> part, T value) { players().forEach(player -> player.sendTitlePart(part, value)); }
-    @Override default void clearTitle() { players().forEach(net.kyori.adventure.audience.Audience::clearTitle); }
-    @Override default void resetTitle() { players().forEach(net.kyori.adventure.audience.Audience::resetTitle); }
-    @Override default void showBossBar(BossBar bar) { players().forEach(player -> player.showBossBar(bar)); }
-    @Override default void hideBossBar(BossBar bar) { players().forEach(player -> player.hideBossBar(bar)); }
-    @Override default void playSound(Sound sound) { players().forEach(player -> player.playSound(sound)); }
-    @Override default void playSound(Sound sound, double x, double y, double z) { players().forEach(player -> player.playSound(sound, x, y, z)); }
-    @Override default void stopSound(SoundStop stop) { players().forEach(player -> player.stopSound(stop)); }
-    @Override default void sendResourcePacks(ResourcePackRequest request) { players().forEach(player -> player.sendResourcePacks(request)); }
-    @Override default void removeResourcePacks(Iterable<UUID> ids) { players().forEach(player -> player.removeResourcePacks(ids)); }
-    @Override default void removeResourcePacks(UUID id, UUID... others) { players().forEach(player -> player.removeResourcePacks(id, others)); }
-    @Override default void clearResourcePacks() { players().forEach(net.kyori.adventure.audience.Audience::clearResourcePacks); }
+  interface PlayerGroup extends net.kyori.adventure.audience.ForwardingAudience {
+    void deliver(Component message);
+    @Override default void sendMessage(Component message) { deliver(message); }
+    @Override default void sendMessage(Identified source, Component message) { deliver(message); }
+    @Override default void sendMessage(Identity source, Component message) { deliver(message); }
+    @Override default void sendMessage(Component message, MessageType type) { deliver(message); }
+    @Override default void sendMessage(Identified source, Component message, MessageType type) { deliver(message); }
+    @Override default void sendMessage(Identity source, Component message, MessageType type) { deliver(message); }
+    @Override default void sendMessage(Component message, ChatType.Bound boundChatType) { deliver(message); }
   }
 }

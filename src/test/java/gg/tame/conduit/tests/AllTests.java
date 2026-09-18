@@ -125,6 +125,7 @@ public final class AllTests {
     ResourcePackTests.run();
     LoginFlowTests.run();
     TabCompleteEventTests.run();
+    VelocityAudienceTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

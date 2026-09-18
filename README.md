@@ -739,7 +739,8 @@ A `Player` can be offered resource packs of the proxy's own (`sendResourcePack`,
 1.20.2, Push and Pop by UUID from 1.20.3. The client's answers arrive as
 `PlayerResourcePackStatusEvent`, for the proxy's packs and for the ones its server offers; answers
 about the proxy's packs never reach the server, and a server's packs pass through untouched.
-`resourcePacks()` lists what the client was offered and still has or is deciding on.
+`resourcePacks()` lists what the client was offered and still has or is deciding on; a loaded pack
+offered again unchanged counts as loaded while the client answers again.
 
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins
@@ -750,12 +751,14 @@ after every plugin is disabled, to let go of what the loader itself holds.
 
 **PARTIAL — verified with in-repo plugins compiled against `com.velocitypowered:velocity-api`
 (`VelocityCompatTests`), and with real plugins run unmodified: LuckPerms 5.5.71, MiniMOTD 2.2.5,
-Maintenance 5.1.0, Server Redirect 1.4.3, mclo.gs 3.3.3 and velocity-hub 1.10-SNAPSHOT.** Each
-one's result and its remaining gaps are in `docs/VELOCITY_COMPATIBILITY.md`.
+Maintenance 5.1.0, Server Redirect 1.4.3, mclo.gs 3.3.3, velocity-hub 1.10-SNAPSHOT, ForcePack
+1.3.75-SNAPSHOT and TitleAnnouncer 3.1.0.** Each one's result and its remaining gaps are in
+`docs/VELOCITY_COMPATIBILITY.md`.
 
 This is not full Velocity compatibility. Titles, the action bar, boss bars, the player-list header and
 footer, a player's tab-list entries and sounds work through the adapter (only the proxy's own entries: the
-backend's are not tracked), and so do resource packs a plugin offers. Plugins built around the
+backend's are not tracked), for a player or for everyone on the proxy or a server, and so do
+resource packs a plugin offers. Plugins built around the
 backend's tab list or scoreboard teams, rewriting a backend's resource packs, voice chat, Bedrock
 players, packet injection or Velocity's own network pipeline (ViaVersion and its relatives) are not
 expected to work.

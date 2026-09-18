@@ -77,8 +77,12 @@ public final class ClientResourcePacks {
   public boolean offer(ResourcePack pack) {
     synchronized (lock) {
       if (closed || !ResourcePackPackets.supported(protocol)) return false;
-      offers.remove(pack.id());
+      Offer previous = offers.remove(pack.id());
       Offer offer = new Offer(pack, false, false);
+      // The same pack offered again (plugins re-offer a pack until they see it applied): the client
+      // keeps it loaded while it answers once more.
+      offer.loaded = previous != null && previous.loaded && previous.pack.url().equals(pack.url())
+          && previous.pack.hash().equalsIgnoreCase(pack.hash());
       offers.put(pack.id(), offer);
       if (inWorld) write(offer);
       return true;

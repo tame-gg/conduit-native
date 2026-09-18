@@ -62,6 +62,18 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public String getUsername() { return player.username(); }
   @Override public UUID getUniqueId() { return player.uniqueId(); }
   @Override public Identity identity() { return Identity.identity(player.uniqueId()); }
+  /**
+   * What Adventure code asks an audience about itself: plugins find the player behind an audience
+   * with {@code get(Identity.UUID)}, which is empty without this.
+   */
+  @Override public net.kyori.adventure.pointer.Pointers pointers() {
+    return net.kyori.adventure.pointer.Pointers.builder()
+        .withStatic(Identity.UUID, getUniqueId())
+        .withStatic(Identity.NAME, getUsername())
+        .withDynamic(Identity.LOCALE, this::getEffectiveLocale)
+        .withStatic(net.kyori.adventure.permission.PermissionChecker.POINTER, getPermissionChecker())
+        .build();
+  }
   @Override public boolean isOnlineMode() { return player.authenticated(); }
   /** The function PermissionsSetupEvent gave this player, else Conduit's own yes or no. */
   @Override public Tristate getPermissionValue(String permission) {

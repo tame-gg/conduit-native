@@ -40,7 +40,6 @@ import gg.tame.conduit.api.event.player.PlayerLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerPostLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
-import gg.tame.conduit.api.event.player.PlayerServerSwitchEvent;
 import gg.tame.conduit.api.event.player.PlayerSetupEvent;
 import gg.tame.conduit.api.event.proxy.ProxyStartEvent;
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
@@ -140,10 +139,9 @@ final class VelocityEventBridge {
     if (listening(ServerConnectedEvent.class)) {
       environment.fireAndWait(new ServerConnectedEvent(player, environment.server(event.target()), previous));
     }
-  }
-  @Subscribe public void onSwitched(PlayerServerSwitchEvent event) {
-    if (!listening(ServerPostConnectEvent.class)) return;
-    environment.fireAndWait(new ServerPostConnectEvent(environment.player(event.player()), event.source().map(environment::server).orElse(null)));
+    // After every connection, the first one included (no previous server): plugins such as resource
+    // pack senders wait for it to act on a player who just joined. Nothing depends on its outcome.
+    if (listening(ServerPostConnectEvent.class)) environment.events.fire(new ServerPostConnectEvent(player, previous));
   }
 
   /**
