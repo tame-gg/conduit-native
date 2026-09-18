@@ -176,8 +176,17 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   }
   /** Fires ProxyStartEvent, once; the matching ProxyShutdownEvent comes from {@link #close()}. */
   public void started() {
-    if (started.compareAndSet(false, true)) events.fire(new gg.tame.conduit.api.event.proxy.ProxyStartEvent(this));
+    if (!started.compareAndSet(false, true)) return;
+    configuration.ops().metrics().prometheusAddress().ifPresent(address -> {
+      // A metrics address that cannot be bound is reported and the proxy serves players regardless.
+      try { metricsEndpoint = gg.tame.conduit.metrics.PrometheusEndpoint.start(address, this); }
+      catch (IOException | RuntimeException failed) { gg.tame.conduit.log.ConduitLog.error("could not serve metrics on " + address + ": " + failed); }
+    });
+    events.fire(new gg.tame.conduit.api.event.proxy.ProxyStartEvent(this));
   }
+  /** The Prometheus endpoint when one is configured and bound, for tests. */
+  public Optional<gg.tame.conduit.metrics.PrometheusEndpoint> metricsEndpoint() { return Optional.ofNullable(metricsEndpoint); }
+  private volatile gg.tame.conduit.metrics.PrometheusEndpoint metricsEndpoint;
   public ConduitPluginManager pluginRuntime() { return plugins; }
   public Optional<RegisteredServer> registered(String name) { return servers.getServer(name); }
   public boolean isMaintenanceActive() { return maintenance.isActive(); }
@@ -205,6 +214,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       if (!current.initialBackends().equals(next.initialBackends()) || !current.fallbackBackends().equals(next.fallbackBackends())) {
         restart.add("routing.initial / routing.fallback");
       }
+      if (!current.ops().metrics().equals(next.ops().metrics())) restart.add("metrics.prometheus-address");
       List<String> live = new ArrayList<>();
       health.applySettings(next.health());
       live.add("health.*");
@@ -256,6 +266,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     plugins.disableAll();
     health.close();
     scheduler.close();
+    if (metricsEndpoint != null) metricsEndpoint.close();
   }
 
   private static final class PlayerViews implements PlayerLookup {

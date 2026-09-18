@@ -95,6 +95,7 @@ public final class AllTests {
     PluginRuntimeTests.run();
     MalformedInputTests.run();
     BackendPingTests.run();
+    ObservabilityTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityLifecycleTests.run();

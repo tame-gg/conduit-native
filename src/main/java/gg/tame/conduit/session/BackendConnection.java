@@ -43,7 +43,12 @@ public final class BackendConnection implements AutoCloseable {
   public static Socket open(BackendServer server) throws IOException {
     long start = System.nanoTime();
     Socket socket = new Socket();
-    socket.connect(server.address(), 3_000);
+    try { socket.connect(server.address(), 3_000); }
+    catch (IOException unreachable) {
+      ConduitMetrics.current().backendConnectFailed();
+      socket.close();
+      throw unreachable;
+    }
     ConduitMetrics.current().backendConnect(System.nanoTime() - start);
     return socket;
   }

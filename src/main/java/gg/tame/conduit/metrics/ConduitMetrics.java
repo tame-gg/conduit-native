@@ -32,6 +32,9 @@ public final class ConduitMetrics {
   private final LongAdder channelGuardActions = new LongAdder();
   private final LongAdder attackModeActivations = new LongAdder();
   private final LongAdder malformedProtocol = new LongAdder();
+  private final LongAdder backendConnectFailures = new LongAdder();
+  private final LongAdder translationFailures = new LongAdder();
+  private final LongAdder pluginTaskFailures = new LongAdder();
   private final AtomicLong windowStart = new AtomicLong(System.nanoTime());
   private final AtomicLong lastInboundPackets = new AtomicLong();
   private final AtomicLong lastOutboundPackets = new AtomicLong();
@@ -59,6 +62,21 @@ public final class ConduitMetrics {
   public void channelGuardAction() { channelGuardActions.increment(); }
   public void attackModeActivation() { attackModeActivations.increment(); }
   public void malformedProtocol() { malformedProtocol.increment(); }
+  /** A backend that could not be reached at all: refused, unreachable, or no answer to the connect. */
+  public void backendConnectFailed() { backendConnectFailures.increment(); }
+  /** Via could not carry a packet between a client and a backend of different versions. */
+  public void translationFailed() { translationFailures.increment(); }
+  public void pluginTaskFailed() { pluginTaskFailures.increment(); }
+  public long backendConnects() { return backendConnects.sum(); }
+  public long backendConnectFailures() { return backendConnectFailures.sum(); }
+  public double backendConnectSeconds() { return backendConnectNanos.sum() / 1e9; }
+  public double switchSeconds() { return switchNanos.sum() / 1e9; }
+  public long translationFailures() { return translationFailures.sum(); }
+  public long pluginTaskFailures() { return pluginTaskFailures.sum(); }
+  public long packetsIn() { return inboundPackets.sum(); }
+  public long packetsOut() { return outboundPackets.sum(); }
+  public long bytesIn() { return inboundBytes.sum(); }
+  public long bytesOut() { return outboundBytes.sum(); }
   public long switches() { return switches.sum(); }
   public long failedSwitches() { return failedSwitches.sum(); }
   public long fallbackEvents() { return fallbackEvents.sum(); }
@@ -91,17 +109,20 @@ public final class ConduitMetrics {
     long switchCount = Math.max(1, switches.sum());
     return new Snapshot(players.get(), backends.get(), dInP / seconds, dOutP / seconds, dInB / seconds, dOutB / seconds,
         authentications.sum(), backendConnectNanos.sum() / connects / 1_000_000.0, switchNanos.sum() / switchCount / 1_000_000.0,
-        decodeFailures.sum(), encodeFailures.sum());
+        decodeFailures.sum(), encodeFailures.sum(), backendConnectFailures.sum(), translationFailures.sum(), pluginTaskFailures.sum());
   }
   public record Snapshot(int players, int backends, double packetsInPerSec, double packetsOutPerSec,
                          double bytesInPerSec, double bytesOutPerSec, long authentications,
-                         double backendConnectMs, double switchMs, long decodeFailures, long encodeFailures) {
+                         double backendConnectMs, double switchMs, long decodeFailures, long encodeFailures,
+                         long backendConnectFailures, long translationFailures, long pluginTaskFailures) {
     @Override public String toString() {
       return "players=" + players + " backends=" + backends
           + " pkt/s in=" + round(packetsInPerSec) + " out=" + round(packetsOutPerSec)
           + " bytes/s in=" + round(bytesInPerSec) + " out=" + round(bytesOutPerSec)
           + " auth=" + authentications + " backend-connect-ms=" + round(backendConnectMs)
-          + " switch-ms=" + round(switchMs) + " decode-fail=" + decodeFailures + " encode-fail=" + encodeFailures;
+          + " switch-ms=" + round(switchMs) + " decode-fail=" + decodeFailures + " encode-fail=" + encodeFailures
+          + " backend-connect-fail=" + backendConnectFailures + " via-fail=" + translationFailures
+          + " plugin-task-fail=" + pluginTaskFailures;
     }
     private static long round(double value) { return Math.round(value); }
   }

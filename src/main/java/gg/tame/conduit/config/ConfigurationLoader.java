@@ -70,7 +70,13 @@ public final class ConfigurationLoader {
 
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
-    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory));
+    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory),
+        metrics(values));
+  }
+
+  private static MetricsSettings metrics(Map<String, String> values) {
+    String address = optionalString(values, "metrics.prometheus-address", "");
+    return new MetricsSettings(address.isBlank() ? Optional.empty() : Optional.of(parseAddress(address)));
   }
 
   private static StatusSettings status(Map<String, String> values, Path configDirectory) {

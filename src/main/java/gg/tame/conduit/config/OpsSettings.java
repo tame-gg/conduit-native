@@ -11,7 +11,8 @@ public record OpsSettings(
     SecuritySettings security,
     ModdedSettings modded,
     TranslationSettings translation,
-    StatusSettings status
+    StatusSettings status,
+    MetricsSettings metrics
 ) {
   public static final int CURRENT_SCHEMA = 4;
 
@@ -25,12 +26,20 @@ public record OpsSettings(
     if (modded == null) modded = ModdedSettings.defaults();
     if (translation == null) translation = TranslationSettings.defaults();
     if (status == null) status = StatusSettings.defaults();
+    if (metrics == null) metrics = MetricsSettings.defaults();
+  }
+
+  /** Every setting but the metrics ones, which then take their defaults. */
+  public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
+                     ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
+                     StatusSettings status) {
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, null);
   }
 
   /** Every setting but the server-list ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, null, null);
   }
 
   public static OpsSettings defaults() {
@@ -42,6 +51,7 @@ public record OpsSettings(
         SecuritySettings.defaults(),
         ModdedSettings.defaults(),
         TranslationSettings.defaults(),
-        StatusSettings.defaults());
+        StatusSettings.defaults(),
+        MetricsSettings.defaults());
   }
 }

@@ -41,3 +41,8 @@ via-backwards = true
 via-rewind = true
 via-legacy = false
 data-folder = "via"
+
+# Metrics in Prometheus' text format at GET /metrics. Off unless an address is set. No
+# authentication: keep it on loopback or a private network. Takes effect at start.
+# [metrics]
+# prometheus-address = "127.0.0.1:9225"

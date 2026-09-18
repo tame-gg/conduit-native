@@ -51,8 +51,10 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     try {
       return session.transformClientToBackend(state, packet);
     } catch (TranslationException exception) {
+      gg.tame.conduit.metrics.ConduitMetrics.current().translationFailed();
       throw exception;
     } catch (RuntimeException exception) {
+      gg.tame.conduit.metrics.ConduitMetrics.current().translationFailed();
       throw new TranslationException("Via client→backend failed: " + exception.getMessage(), exception);
     }
   }
@@ -62,8 +64,10 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     try {
       return session.transformBackendToClient(state, packet);
     } catch (TranslationException exception) {
+      gg.tame.conduit.metrics.ConduitMetrics.current().translationFailed();
       throw exception;
     } catch (RuntimeException exception) {
+      gg.tame.conduit.metrics.ConduitMetrics.current().translationFailed();
       throw new TranslationException("Via backend→client failed: " + exception.getMessage(), exception);
     }
   }

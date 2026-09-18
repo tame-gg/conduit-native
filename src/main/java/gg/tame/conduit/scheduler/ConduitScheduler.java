@@ -112,6 +112,7 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
           // A repeating task that fails every run printed a whole stack trace every run, and at a
           // short interval that buried everything else in the log. The first failure in a row is
           // printed in full, and after that only a count, at the 2nd, 4th, 8th... in a row.
+          gg.tame.conduit.metrics.ConduitMetrics.current().pluginTaskFailed();
           int inARow = ++task.failures;
           if (inARow == 1) ConduitLog.error("plugin task failed: " + plugin.description().id(), failure);
           else if (Integer.bitCount(inARow) == 1) {

@@ -241,9 +241,22 @@ version gate's name and message replace these while they apply, and a plugin can
 | Client version gating (`[versions]`) | IMPLEMENTED |
 | Graceful shutdown (bounded transfer then disconnect) | IMPLEMENTED |
 | Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
-| Metrics HTTP endpoint | UNSUPPORTED (command diagnostics only) |
+| Metrics HTTP endpoint (Prometheus text format) | IMPLEMENTED (optional, off by default; see Metrics below) |
 | Security (throttle / bot filter / channel guard / attack mode) | IMPLEMENTED (application-level; not DDoS protection) |
 | Modded (known-packs / detection / Forge / NeoForge / Fabric routing / packet queue) | IMPLEMENTED (protocol-level; real-client verified for NeoForge 20.2.93 only) |
+
+### Metrics
+
+`/conduit metrics` prints the counters and rates. With `[metrics] prometheus-address = "127.0.0.1:9225"`
+Conduit also serves them at `GET /metrics` in Prometheus' text format: players by `path` (`direct`,
+`translated`) and per server, open backend connections, enabled plugins, shutdown and maintenance state,
+each backend's health, draining and last ping time, and counters for accepted, throttled and malformed
+connections, bot-filter and channel-guard actions, authentications, backend connects and connect
+failures, switches and switch failures, fallbacks, Via translation failures, plugin task failures, and
+packets and bytes each way. It carries the operator's server names and nothing about players,
+addresses, tokens or paths. It has no authentication: keep it on loopback or a private network. It is
+off unless the address is set, the address takes effect at start, and one platform thread answers
+every scrape.
 
 ### Security (Phase 2)
 
@@ -538,11 +551,12 @@ Measured causes of proxy-side hitching (not Minecraft server tick lag):
 
 Steady play now coalesces TCP writes (`writeUnflushed` + flush when the opposite socket has no more queued bytes), uses TCP_NODELAY, reuses crypto/compression buffers, and bounds deferred Play (512 packets).
 
-Event-loop utilization is **not applicable**: Conduit uses blocking sockets on virtual threads, not a shared NIO selector. Mojang HTTPS runs on the connecting virtual thread before Play.
+Event-loop utilization is **not applicable**: Conduit uses blocking sockets on virtual threads (platform threads on Windows, because of JDK-8334574; see `SocketThreads`), not a shared NIO selector. Mojang HTTPS runs on the connecting thread before Play.
 
 Metrics (quiet; packet tracing remains `-Dconduit.trace=true`):
 
-`players`, `backends`, packets/sec, bytes/sec, authentications, backend connect ms, switch ms, decode/encode failures.
+`players`, `backends`, packets/sec, bytes/sec, authentications, backend connect ms, switch ms, decode/encode failures,
+backend connect failures, Via translation failures, plugin task failures.
 
 ## Native plugin API
 
