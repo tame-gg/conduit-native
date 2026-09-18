@@ -72,7 +72,7 @@ public record SecuritySettings(
     OFF, LOG, DROP, KICK;
     public static ChannelAction parse(String raw) {
       try { return ChannelAction.valueOf(raw.strip().toUpperCase(Locale.ROOT)); }
-      catch (RuntimeException exception) { throw new IllegalArgumentException("unknown channel-guard action: " + raw); }
+      catch (RuntimeException exception) { throw new IllegalArgumentException("security.channel-guard.default-action must be off, log, drop or kick"); }
     }
   }
 

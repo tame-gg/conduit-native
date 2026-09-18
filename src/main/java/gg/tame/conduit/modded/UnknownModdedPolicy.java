@@ -15,7 +15,7 @@ public enum UnknownModdedPolicy {
       case "allow" -> ALLOW;
       case "deny" -> DENY;
       case "route_to_fallback", "fallback" -> ROUTE_TO_FALLBACK;
-      default -> throw new IllegalArgumentException("unknown-modded-policy must be allow, deny, or route_to_fallback");
+      default -> throw new IllegalArgumentException("modded.unknown-policy must be allow, deny, or route_to_fallback");
     };
   }
 }

@@ -26,7 +26,13 @@ Requires a JDK capable of compiling Java 21 source. On Windows:
 ./scripts/run.ps1 -ConfigPath run/conduit.toml
 ```
 
-`--check-config <path>` validates a configuration without binding a listener.
+`--check-config <path>` validates a configuration without binding a listener. A mistake in the file stops
+the check, or the start, with one line and no stack trace naming the file, the line, the setting, what is
+written there and what is allowed, for example
+`Configuration error: conduit.toml line 3: listener.port must be 1..65535, found 70000`. A legal but
+doubtful value is one `WARN` instead: a server host that does not resolve (Conduit looks it up only at
+start), or `versions.enabled = true` with nothing to gate. `#` starts a comment anywhere outside a quoted
+string. `run.ps1` needs the file to exist: copy `config/conduit.toml` to `run/` first.
 
 ### Optional ViaVersion translation
 
@@ -200,6 +206,10 @@ back to a lobby that refused them.
 
 `/server` only lists configured names. Addresses, ports, and secrets are never shown.
 
+Server names ignore case, so `[servers.Lobby]` beside `[servers.lobby]` is refused, and `routing.initial` and
+`routing.fallback` must spell each name as its `[servers.<name>]` header does. A server at Conduit's own
+listener address and port is refused.
+
 Modern forwarding sends the TCP address Conduit accepted. Connecting to `127.0.0.1` therefore
 forwards `127.0.0.1`. Optional `forwarding.player-address` overrides that for remote backends.
 Local Paper does not care. Lobby → survival on a 26.2 client failed because Play packet id 16
@@ -293,7 +303,7 @@ failures, switches and switch failures, fallbacks, Via translation failures, plu
 packets and bytes each way. It carries the operator's server names and nothing about players,
 addresses, tokens or paths. It has no authentication: keep it on loopback or a private network. It is
 off unless the address is set, the address takes effect at start, and one platform thread answers
-every scrape.
+every scrape. The address must resolve and must not share the port Conduit listens on.
 
 ### Security (Phase 2)
 
@@ -559,6 +569,10 @@ Conduit intercepts only the `minecraft:brand` plugin message:
 Verified against **Paper git-Paper-499 (MC: 1.20.4)**. Keep Paper `online-mode=false`,
 Velocity modern forwarding enabled, a matching secret, and
 `network-compression-threshold=-1`.
+
+`forwarding.secret-file`, relative to `conduit.toml`, must exist and hold the secret. That is checked when
+the configuration loads, so by `--check-config` and `conduit reload` too. `forwarding.mode` is `none` or
+`modern`; `legacy` and `bungeeguard` are refused, as Conduit does not implement them.
 
 ## Real vanilla client
 

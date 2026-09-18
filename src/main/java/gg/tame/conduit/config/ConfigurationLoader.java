@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.config;
 
+import gg.tame.conduit.log.ConduitLog;
 import gg.tame.conduit.protocol.ProtocolCatalog;
 import gg.tame.conduit.protocol.ProtocolVersion;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,63 +25,174 @@ import java.util.Set;
 public final class ConfigurationLoader {
   private ConfigurationLoader() {}
 
+  /**
+   * A mistake in the file is an IllegalArgumentException whose message is the whole story for the
+   * operator: the file, the line and what is written there when it comes from one setting, and what
+   * is allowed. The launcher prints it alone, without a stack trace.
+   */
   public static ConduitConfiguration load(Path path) throws IOException {
+    String file = String.valueOf(path.getFileName());
+    List<String> lines;
+    try { lines = Files.readAllLines(path); }
+    catch (NoSuchFileException missing) {
+      throw new IllegalArgumentException(path.toAbsolutePath() + " does not exist. Copy the sample config/conduit.toml there and edit it.");
+    } catch (CharacterCodingException notUtf8) {
+      throw new IllegalArgumentException(file + " is not UTF-8 text. Save it as UTF-8.");
+    }
     Settings values = new Settings();
     List<String> serverOrder = new ArrayList<>();
     String section = "";
     int lineNumber = 0;
-    for (String raw : Files.readAllLines(path)) {
+    for (String raw : lines) {
       lineNumber++;
-      String line = raw.strip();
-      if (line.isEmpty() || line.startsWith("#")) continue;
-      if (line.startsWith("[") && line.endsWith("]")) {
+      String line = withoutComment(raw).strip();
+      if (line.isEmpty()) continue;
+      if (line.startsWith("[")) {
+        if (!line.endsWith("]")) throw malformed(file, lineNumber, raw, "a [section] header must end with ]");
         section = line.substring(1, line.length() - 1);
         if (section.startsWith("servers.")) {
           String name = section.substring("servers.".length());
           if (!serverOrder.contains(name)) serverOrder.add(name);
+          values.origins.putIfAbsent(section, new Origin(lineNumber, ""));
         }
         continue;
       }
       int equals = line.indexOf('=');
-      if (equals < 1 || section.isEmpty()) throw new IllegalArgumentException("invalid configuration at line " + lineNumber);
+      if (equals < 1) throw malformed(file, lineNumber, raw, "expected key = value");
+      if (section.isEmpty()) throw malformed(file, lineNumber, raw, "a setting must come after a [section] header");
       String key = section + "." + line.substring(0, equals).strip();
-      String value = line.substring(equals + 1).strip();
-      if (value.startsWith("\"") && value.endsWith("\"") && value.length() >= 2) value = value.substring(1, value.length() - 1);
-      if (values.putIfAbsent(key, value) != null) throw new IllegalArgumentException("duplicate setting: " + key);
+      String written = line.substring(equals + 1).strip();
+      String value = written;
+      if (value.startsWith("\"")) {
+        // Left open, the quote became part of the value: a host that never resolves, a MOTD with a stray ".
+        if (value.length() < 2 || !value.endsWith("\"")) throw malformed(file, lineNumber, raw, "a string must end with \"");
+        value = value.substring(1, value.length() - 1);
+      }
+      if (written.startsWith("[") && !written.endsWith("]")) throw malformed(file, lineNumber, raw, "an array must open and close on one line");
+      Origin first = values.origins.putIfAbsent(key, new Origin(lineNumber, written));
+      if (first != null) throw malformed(file, lineNumber, raw, key + " is already set on line " + first.line());
+      values.put(key, value);
     }
-    String host = required(values, "listener.host");
-    int port = integer(values, "listener.port");
+    try {
+      ConduitConfiguration configuration = build(path, values, serverOrder);
+      // A misspelt setting was silently ignored, and its default quietly used in its place.
+      for (String key : new java.util.TreeSet<>(values.keySet())) {
+        if (!values.read.contains(key)) ConduitLog.warn("Unknown setting " + key + " in " + file + " is ignored");
+      }
+      VersionGateSettings gate = configuration.versions();
+      if (gate.enabled() && !gate.hasConstraints()) {
+        ConduitLog.warn("versions.enabled is true in " + file + ", but versions.allow, versions.minimum and versions.maximum"
+            + " are all unset, so no Minecraft version is turned away");
+      }
+      return configuration;
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalArgumentException(values.describe(file, String.valueOf(invalid.getMessage())), invalid);
+    }
+  }
+
+  private static ConduitConfiguration build(Path path, Settings values, List<String> serverOrder) {
+    String file = String.valueOf(path.getFileName());
+    InetSocketAddress listener = new InetSocketAddress(required(values, "listener.host"), port(values, "listener.port"));
+    // Unresolved, it failed only at bind, as an UnresolvedAddressException with no message at all.
+    if (listener.isUnresolved()) throw new IllegalArgumentException("listener.host must be an IP address or a host name that resolves, such as 0.0.0.0 or 127.0.0.1");
     int maxFrame = integer(values, "listener.max-frame-bytes");
     ForwardingMode mode = ForwardingMode.parse(required(values, "forwarding.mode"));
-    Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file")).map(value -> path.getParent().resolve(value).normalize());
+    Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file")).map(value -> path.toAbsolutePath().getParent().resolve(value).normalize());
     List<BackendServer> servers = new ArrayList<>();
+    Map<String, String> lowerCaseNames = new HashMap<>();
     for (String name : serverOrder) {
-      String addressKey = "servers." + name + ".address";
-      String hostKey = "servers." + name + ".host";
-      if (values.containsKey(addressKey) && values.containsKey(hostKey)) throw new IllegalArgumentException("backend " + name + " has both address and host");
-      InetSocketAddress address = values.containsKey(addressKey)
-          ? parseAddress(values.get(addressKey))
-          : new InetSocketAddress(values.get(hostKey), integer(values, "servers." + name + ".port"));
-      var loaders = gg.tame.conduit.modded.ModCompatibility.parseList(
-          optionalList(values, "servers." + name + ".mod-loaders"));
+      String prefix = "servers." + name;
+      if (!name.matches("[a-zA-Z0-9_-]{1,64}")) throw new IllegalArgumentException(prefix + " is not a valid server name: use 1 to 64 letters, digits, _ or -");
+      // Lookups ignore case, so the second of these was refused only when the registry was built.
+      String earlier = lowerCaseNames.putIfAbsent(name.toLowerCase(Locale.ROOT), name);
+      if (earlier != null) throw new IllegalArgumentException(prefix + " has the same name as servers." + earlier + " (server names ignore case)");
+      String addressKey = prefix + ".address";
+      String hostKey = prefix + ".host";
+      boolean hasAddress = values.containsKey(addressKey);
+      if (hasAddress && values.containsKey(hostKey)) throw new IllegalArgumentException(prefix + " has both address and host; use one");
+      if (!hasAddress && !values.containsKey(hostKey)) throw new IllegalArgumentException(prefix + " needs host and port, or address = \"host:port\"");
+      InetSocketAddress address = hasAddress
+          ? parseAddress(values, addressKey)
+          : new InetSocketAddress(required(values, hostKey), port(values, prefix + ".port"));
+      if (address.isUnresolved()) {
+        // Legal (its DNS may not be up yet), but the lookup is never retried: every connect fails until a restart.
+        ConduitLog.warn(prefix + " host " + address.getHostString() + " in " + file + " does not resolve; Conduit looks it up"
+            + " only at start, so " + name + " is unreachable until a restart");
+      } else if (address.getPort() == listener.getPort() && (address.getAddress().equals(listener.getAddress())
+          || listener.getAddress().isAnyLocalAddress() && address.getAddress().isLoopbackAddress())) {
+        throw new IllegalArgumentException(prefix + " is Conduit's own listener (" + address.getHostString() + ":" + address.getPort()
+            + "); a server needs another address or port");
+      }
+      String loadersKey = prefix + ".mod-loaders";
+      java.util.Set<gg.tame.conduit.modded.ModLoaderFamily> loaders;
+      try { loaders = gg.tame.conduit.modded.ModCompatibility.parseList(optionalList(values, loadersKey)); }
+      catch (IllegalArgumentException unknown) {
+        throw new IllegalArgumentException(loadersKey + " may only name vanilla, fabric, quilt, forge or neoforge (" + unknown.getMessage() + ")");
+      }
       servers.add(new BackendServer(name, address, loaders));
     }
-    ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
+    ConduitConfiguration configuration = new ConduitConfiguration(listener, maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
         forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()));
-    // A misspelt setting was silently ignored, and its default quietly used in its place.
-    for (String key : new java.util.TreeSet<>(values.keySet())) {
-      if (!values.read.contains(key)) gg.tame.conduit.log.ConduitLog.warn("Unknown setting " + key + " in " + path.getFileName() + " is ignored");
+    if (configuration.forwardingSecretFile().isPresent()) {
+      // Otherwise first read by the launcher, where a missing file was a bare NoSuchFileException stack trace.
+      Path secretFile = configuration.forwardingSecretFile().get();
+      String text;
+      try { text = Files.readString(secretFile); }
+      catch (NoSuchFileException missing) { throw new IllegalArgumentException("forwarding.secret-file does not exist at " + secretFile); }
+      catch (IOException unreadable) { throw new IllegalArgumentException("forwarding.secret-file cannot be read at " + secretFile + " (" + unreadable.getClass().getSimpleName() + ")"); }
+      if (text.isBlank()) throw new IllegalArgumentException("forwarding.secret-file is empty at " + secretFile);
     }
+    configuration.ops().metrics().prometheusAddress().ifPresent(metrics -> {
+      // Otherwise the bind failed at start, was logged once, and the proxy ran without metrics.
+      boolean wildcard = metrics.getAddress().isAnyLocalAddress() || listener.getAddress().isAnyLocalAddress();
+      if (metrics.getPort() == listener.getPort() && (wildcard || metrics.getAddress().equals(listener.getAddress()))) {
+        throw new IllegalArgumentException("metrics.prometheus-address uses the port Conduit listens on (" + listener.getHostString()
+            + ":" + listener.getPort() + "); give it another port");
+      }
+    });
     return configuration;
   }
+
+  private record Origin(int line, String written) {}
 
   /** The settings, remembering which ones the loader asked for, so those it never did can be named. */
   private static final class Settings extends HashMap<String, String> {
     private final java.util.Set<String> read = new java.util.HashSet<>();
+    /** Where each setting, and each [servers.<name>] header, was written, so a message can point there. */
+    private final Map<String, Origin> origins = new HashMap<>();
     @Override public String get(Object key) { read.add(String.valueOf(key)); return super.get(key); }
     @Override public boolean containsKey(Object key) { read.add(String.valueOf(key)); return super.containsKey(key); }
     @Override public String getOrDefault(Object key, String fallback) { read.add(String.valueOf(key)); return super.getOrDefault(key, fallback); }
+
+    /**
+     * Every message about a setting starts with its key, here and in the settings records, so the
+     * file's line and value are added in this one place.
+     */
+    String describe(String file, String message) {
+      Origin origin = origins.get(message.split("[ :]", 2)[0]);
+      if (origin == null) return file + ": " + message;
+      return file + " line " + origin.line() + ": " + message + (origin.written().isEmpty() ? "" : ", found " + origin.written());
+    }
+  }
+
+  private static IllegalArgumentException malformed(String file, int line, String text, String problem) {
+    return new IllegalArgumentException(file + " line " + line + ": " + problem + ", found " + text.strip());
+  }
+
+  /**
+   * The line up to a # comment outside a quoted string. A trailing comment used to become part of the
+   * value: port = 25565 # default was "not an integer", and a commented host never resolved.
+   */
+  private static String withoutComment(String line) {
+    boolean quoted = false;
+    for (int i = 0; i < line.length(); i++) {
+      char c = line.charAt(i);
+      if (c == '"') quoted = !quoted;
+      else if (c == '\\' && quoted) i++;
+      else if (c == '#' && !quoted) return line.substring(0, i);
+    }
+    return line;
   }
 
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
@@ -88,8 +202,11 @@ public final class ConfigurationLoader {
   }
 
   private static MetricsSettings metrics(Map<String, String> values) {
-    String address = optionalString(values, "metrics.prometheus-address", "");
-    return new MetricsSettings(address.isBlank() ? Optional.empty() : Optional.of(parseAddress(address)));
+    String key = "metrics.prometheus-address";
+    if (optionalString(values, key, "").isBlank()) return MetricsSettings.defaults();
+    InetSocketAddress address = parseAddress(values, key);
+    if (address.isUnresolved()) throw new IllegalArgumentException(key + " must be an IP address or a host name that resolves, with a port");
+    return new MetricsSettings(Optional.of(address));
   }
 
   private static StatusSettings status(Map<String, String> values, Path configDirectory) {
@@ -194,12 +311,12 @@ public final class ConfigurationLoader {
   private static VersionGateSettings versions(Map<String, String> values) {
     Set<Integer> allow = new LinkedHashSet<>();
     for (String entry : optionalList(values, "versions.allow")) {
-      allow.add(resolveProtocol(entry));
+      allow.add(protocol("versions.allow", entry));
     }
     OptionalInt minimum = OptionalInt.empty();
     OptionalInt maximum = OptionalInt.empty();
-    if (values.containsKey("versions.minimum")) minimum = OptionalInt.of(resolveProtocol(values.get("versions.minimum")));
-    if (values.containsKey("versions.maximum")) maximum = OptionalInt.of(resolveProtocol(values.get("versions.maximum")));
+    if (values.containsKey("versions.minimum")) minimum = OptionalInt.of(protocol("versions.minimum", values.get("versions.minimum")));
+    if (values.containsKey("versions.maximum")) maximum = OptionalInt.of(protocol("versions.maximum", values.get("versions.maximum")));
     return new VersionGateSettings(
         optionalBoolean(values, "versions.enabled", false),
         allow,
@@ -224,6 +341,12 @@ public final class ConfigurationLoader {
     }
     throw new IllegalArgumentException("unknown Minecraft version: " + raw);
   }
+  private static int protocol(String key, String raw) {
+    try { return resolveProtocol(raw); }
+    catch (IllegalArgumentException unknown) {
+      throw new IllegalArgumentException(key + " must name Minecraft releases such as 1.20.4, or protocol numbers (" + unknown.getMessage() + ")");
+    }
+  }
 
   private static AuthenticationSettings authentication(Map<String, String> values) {
     AuthenticationMode authMode = values.containsKey("authentication.mode")
@@ -240,12 +363,21 @@ public final class ConfigurationLoader {
     catch (java.net.UnknownHostException exception) { throw new IllegalArgumentException("forwarding.player-address is not a valid IP"); }
   }
 
-  private static InetSocketAddress parseAddress(String raw) {
+  private static InetSocketAddress parseAddress(Map<String, String> values, String key) {
+    String raw = values.get(key).strip();
     int colon = raw.lastIndexOf(':');
-    if (colon < 1 || colon == raw.length() - 1) throw new IllegalArgumentException("backend address must be host:port");
-    String host = raw.substring(0, colon);
-    try { return new InetSocketAddress(host, Integer.parseInt(raw.substring(colon + 1))); }
-    catch (NumberFormatException exception) { throw new IllegalArgumentException("backend address port must be an integer", exception); }
+    if (colon < 1 || colon == raw.length() - 1) throw new IllegalArgumentException(key + " must be host:port");
+    int port;
+    try { port = Integer.parseInt(raw.substring(colon + 1)); }
+    catch (NumberFormatException exception) { throw new IllegalArgumentException(key + " must be host:port, with a number for the port"); }
+    if (port < 1 || port > 65535) throw new IllegalArgumentException(key + " port must be 1..65535");
+    return new InetSocketAddress(raw.substring(0, colon), port);
+  }
+  /** Out of range, InetSocketAddress refused it as "port out of range:70000", naming no setting. */
+  private static int port(Map<String, String> values, String key) {
+    int port = integer(values, key);
+    if (port < 1 || port > 65535) throw new IllegalArgumentException(key + " must be 1..65535");
+    return port;
   }
   private static String required(Map<String, String> values, String key) {
     String value = values.get(key);

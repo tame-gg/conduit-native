@@ -102,6 +102,7 @@ public final class AllTests {
     MalformedInputTests.run();
     BackendPingTests.run();
     ObservabilityTests.run();
+    ConfigValidationTests.run();
     ShutdownTests.run();
     RoutingFailoverTests.run();
     LifecycleRaceTests.run();

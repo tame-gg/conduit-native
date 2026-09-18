@@ -40,7 +40,7 @@ public record TranslationSettings(
         case "via-preferred", "viapreferred", "preferred" -> VIA_PREFERRED;
         case "via", "viaversion" -> VIA;
         case "native", "conduit" -> NATIVE;
-        default -> throw new IllegalArgumentException("unknown translation.engine: " + raw);
+        default -> throw new IllegalArgumentException("translation.engine must be via-preferred, via or native");
       };
     }
   }

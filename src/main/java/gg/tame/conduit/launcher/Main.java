@@ -12,16 +12,37 @@ public final class Main {
   private Main() {}
   public static void main(String[] arguments) throws Exception {
     boolean checkOnly = arguments.length > 0 && arguments[0].equals("--check-config");
+    if (arguments.length < (checkOnly ? 2 : 1)) {
+      System.err.println("Usage: java gg.tame.conduit.launcher.Main [--check-config] <path to conduit.toml>");
+      System.exit(2);
+    }
     Path configPath = Path.of(arguments[checkOnly ? 1 : 0]);
-    ConduitConfiguration config = ConfigurationLoader.load(configPath);
-    if (config.forwardingSecretFile().isPresent()) System.out.println("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
-    System.out.println("Authentication mode: " + config.authentication().mode().name().toLowerCase());
-    Forwarders.create(config);
+    ConduitConfiguration config;
+    try {
+      config = ConfigurationLoader.load(configPath);
+      if (config.forwardingSecretFile().isPresent()) System.out.println("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
+      System.out.println("Authentication mode: " + config.authentication().mode().name().toLowerCase());
+      Forwarders.create(config);
+    } catch (IllegalArgumentException | java.io.IOException invalid) {
+      // The operator's mistake, not Conduit's: the message names it, and a stack trace would bury it.
+      System.err.println("Configuration error: " + invalid.getMessage());
+      System.exit(1);
+      return;
+    }
     if (checkOnly) { System.out.println("Configuration valid."); return; }
     Path plugins = configPath.toAbsolutePath().getParent() == null ? Path.of("plugins") : configPath.toAbsolutePath().getParent().resolve("plugins");
-    gg.tame.conduit.config.ConfigMigrator.migrate(configPath);
-    config = ConfigurationLoader.load(configPath);
-    try (MinecraftProxy listener = new MinecraftProxy(config, gg.tame.conduit.auth.Authenticators.create(config.authentication()), gg.tame.conduit.crypto.RsaKeys.generate(), plugins)) {
+    // Loaded again only when defaults were appended: every load repeats the file's warnings.
+    if (gg.tame.conduit.config.ConfigMigrator.migrate(configPath).changed()) config = ConfigurationLoader.load(configPath);
+    MinecraftProxy proxy;
+    try {
+      proxy = new MinecraftProxy(config, gg.tame.conduit.auth.Authenticators.create(config.authentication()), gg.tame.conduit.crypto.RsaKeys.generate(), plugins);
+    } catch (java.net.BindException taken) {
+      System.err.println("Cannot listen on " + config.listener().getHostString() + ":" + config.listener().getPort()
+          + " (listener.host and listener.port in " + configPath.getFileName() + "): " + taken.getMessage());
+      System.exit(1);
+      return;
+    }
+    try (MinecraftProxy listener = proxy) {
       listener.runtime().bindConfigPath(configPath);
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
       listener.probeBackends();

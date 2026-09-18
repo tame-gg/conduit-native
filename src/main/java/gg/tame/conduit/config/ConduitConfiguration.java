@@ -46,13 +46,15 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     fallbackBackends = List.copyOf(fallbackBackends);
     if (backends.isEmpty()) throw new IllegalArgumentException("at least one [servers.<name>] backend is required");
     if (initialBackends.isEmpty()) throw new IllegalArgumentException("routing.initial must name at least one backend");
-    for (String name : initialBackends) requireBackend(backends, name);
-    for (String name : fallbackBackends) requireBackend(backends, name);
+    for (String name : initialBackends) requireBackend(backends, "routing.initial", name);
+    for (String name : fallbackBackends) requireBackend(backends, "routing.fallback", name);
   }
-  private static void requireBackend(List<BackendServer> backends, String name) {
-    if (backends.stream().noneMatch(backend -> backend.name().equals(name))) {
-      throw new IllegalArgumentException("routing references unknown backend: " + name);
-    }
+  private static void requireBackend(List<BackendServer> backends, String key, String name) {
+    if (backends.stream().anyMatch(backend -> backend.name().equals(name))) return;
+    // Routing names are matched exactly, although lookups elsewhere ignore case.
+    String hint = backends.stream().map(BackendServer::name).filter(name::equalsIgnoreCase).findFirst()
+        .map(match -> " (did you mean " + match + "?)").orElse("");
+    throw new IllegalArgumentException(key + " names unknown server " + name + hint);
   }
 
   public MaintenanceSettings maintenance() { return ops.maintenance(); }

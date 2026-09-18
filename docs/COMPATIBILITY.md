@@ -165,8 +165,10 @@ implement it. UNTESTED: not run.
 OVERALL STATUS covers the DIRECT checklist and the forwarding modes Conduit implements (none and
 modern). Legacy (BungeeCord IP forwarding) and BungeeGuard are not implemented by Conduit for any
 release: `Forwarders.create` handles `none` and `modern` only, and Conduit configured with either
-refuses to start (`java.lang.UnsupportedOperationException: forwarding mode legacy is not
-implemented`, and the same for `bungeeguard`; recorded under `logs-forwarding/startup-*`).
+refuses to start. The configuration is now rejected as it loads (`forwarding.mode must be none or
+modern: Conduit does not implement legacy forwarding`); the runs recorded under
+`logs-forwarding/startup-*` predate that and show `java.lang.UnsupportedOperationException: forwarding
+mode legacy is not implemented`, and the same for `bungeeguard`.
 
 <!-- DIRECT TABLES -->
 
