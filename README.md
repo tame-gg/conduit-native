@@ -636,7 +636,7 @@ enable, is skipped. `optional-dependencies: [other-plugin]` orders loading when 
 is ignored when it is not. Dependencies order enabling only; a plugin's classes cannot see another's.
 
 ```java
-package example;
+package com.example;
 
 import gg.tame.conduit.api.command.CommandManager;
 import gg.tame.conduit.api.event.Subscribe;
@@ -663,6 +663,19 @@ public final class ExamplePlugin extends ConduitPlugin {
   }
 }
 ```
+
+To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.0.jar` (the version is
+`Conduit.VERSION`) and its `-sources.jar`: the `gg.tame.conduit.api` classes and nothing else. Then:
+
+```powershell
+javac --release 21 -cp build/conduit-api-0.9.0.jar -d classes src/com/example/ExamplePlugin.java
+jar --create --file plugins/example.jar conduit-plugin.yml -C classes .
+```
+
+With Gradle: `compileOnly(files("path/to/conduit-api-0.9.0.jar"))`. The proxy provides the API at run time,
+so do not ship it inside the plugin. Use `gg.tame.conduit.api` only: the rest of Conduit (`session`,
+`network`, `protocol` and so on) is internal and changes without notice. `ApiBoundaryTests` checks that the
+API compiles on its own and that this example loads.
 
 A `@Subscribe` method takes exactly one event and may declare a supertype of the ones it wants (`Event`
 itself catches everything); a parameter that is not an `Event` is rejected at registration. Settings go in
