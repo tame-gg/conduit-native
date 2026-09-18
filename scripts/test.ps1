@@ -33,15 +33,20 @@ if ($LASTEXITCODE -ne 0) { throw "main compile failed" }
 $libJars = @(Get-ChildItem $lib -Filter *.jar | ForEach-Object FullName)
 if ($libJars.Count -eq 0) { throw "no jars in lib/ after fetch" }
 $cp = ($libJars + $viaJars + $out) -join ";"
+# cmd.exe refuses command lines over 8191 characters, which this class path reaches from a checkout
+# with a long path, so javac and java read it from an argument file. Quoted, for a path with spaces,
+# and with forward slashes, since a backslash inside quotes there is an escape.
+$cpArgs = Join-Path $out "classpath-args.txt"
+@("-cp", ('"' + $cp.Replace('\', '/') + '"')) | Set-Content $cpArgs
 $compatSources = Get-ChildItem (Join-Path $root "src\compat-velocity") -Recurse -Filter *.java -ErrorAction SilentlyContinue | ForEach-Object FullName
 if ($compatSources) {
   $compatList = Join-Path $out "compat-sources.txt"
   $compatSources | Set-Content $compatList
-  cmd /c "javac --release 21 -cp `"$cp`" -d `"$out`" `"@$compatList`" 2>&1"
+  cmd /c "javac --release 21 `"@$cpArgs`" -d `"$out`" `"@$compatList`" 2>&1"
   if ($LASTEXITCODE -ne 0) { throw "compat-velocity compile failed" }
 }
 
-cmd /c "javac --release 21 -cp `"$cp`" -d `"$out`" `"@$testList`" 2>&1"
+cmd /c "javac --release 21 `"@$cpArgs`" -d `"$out`" `"@$testList`" 2>&1"
 if ($LASTEXITCODE -ne 0) { throw "test compile failed" }
 
 $mainResources = Join-Path $root "src/main/resources"
@@ -50,7 +55,6 @@ if (Test-Path $mainResources) { Copy-Item (Join-Path $mainResources "*") $out -R
 $resources = Join-Path $root "src/test/resources"
 if (Test-Path $resources) { Copy-Item (Join-Path $resources "*") $out -Recurse -Force }
 
-$runCp = ($libJars + $viaJars + $out) -join ";"
 $runner = if ($Only) { $Only } else { "gg.tame.conduit.tests.AllTests" }
-cmd /c "java -ea -cp `"$runCp`" $runner"
+cmd /c "java -ea `"@$cpArgs`" $runner"
 if ($LASTEXITCODE -ne 0) { throw "tests failed" }

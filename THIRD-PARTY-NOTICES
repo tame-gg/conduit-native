@@ -92,7 +92,8 @@ does not compile or start without them.
 
 scripts/fetch-velocity-compat.ps1 fetches the following into lib/. They are for
 the Velocity compatibility layer and the tests only, and no distribution
-contains them. The versions follow velocity-api's own POM.
+contains them. The versions follow velocity-api's own POM, except night-config,
+which the POM does not name.
   velocity-api 3.4.0-20260121.190037-118
                                  MIT, Copyright 2018 Velocity Contributors
   adventure-api, -key, -text-minimessage, -text-serializer-plain, -legacy, -gson,
@@ -112,6 +113,17 @@ contains them. The versions follow velocity-api's own POM.
   gson 2.11.0                    Apache-2.0, Copyright 2008 Google Inc.
   snakeyaml 1.33                 Apache-2.0, Copyright (c) 2008, SnakeYAML
                                  https://bitbucket.org/snakeyaml/snakeyaml
+  configurate-core, -hocon, -yaml, -gson 4.1.2
+                                 Apache-2.0, zml and contributors,
+                                 https://github.com/SpongePowered/Configurate
+  geantyref 1.3.11               Apache-2.0, Bojan Tomic and contributors,
+                                 https://github.com/leangen/geantyref
+  typesafe-config 1.4.1          Apache-2.0, Lightbend (Typesafe) and contributors,
+                                 https://github.com/lightbend/config
+  night-config core, toml 3.8.4  LGPL-3.0, TheElectronWill and contributors,
+                                 https://github.com/TheElectronWill/night-config
+                                 (text: https://www.gnu.org/licenses/lgpl-3.0.txt; it
+                                 adds permissions to the GPL-3.0 in LICENSE)
 
 
 3. License texts

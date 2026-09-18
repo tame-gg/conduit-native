@@ -34,6 +34,18 @@ $artifacts = @(
   # Velocity gives its plugins SnakeYAML, at the version velocity-api's POM names. Keep that
   # version so plugins get what they compiled against.
   @{ Url = "$central/org/yaml/snakeyaml/1.33/snakeyaml-1.33.jar"; Name = "snakeyaml-1.33.jar" },
+  # Configurate 4, as velocity-api's POM names it (plugins such as TitleAnnouncer load their HOCON
+  # config with it), with what its POMs need at run time: geantyref, and Typesafe Config for HOCON.
+  @{ Url = "$central/org/spongepowered/configurate-core/4.1.2/configurate-core-4.1.2.jar"; Name = "configurate-core-4.1.2.jar" },
+  @{ Url = "$central/org/spongepowered/configurate-hocon/4.1.2/configurate-hocon-4.1.2.jar"; Name = "configurate-hocon-4.1.2.jar" },
+  @{ Url = "$central/org/spongepowered/configurate-yaml/4.1.2/configurate-yaml-4.1.2.jar"; Name = "configurate-yaml-4.1.2.jar" },
+  @{ Url = "$central/org/spongepowered/configurate-gson/4.1.2/configurate-gson-4.1.2.jar"; Name = "configurate-gson-4.1.2.jar" },
+  @{ Url = "$central/io/leangen/geantyref/geantyref/1.3.11/geantyref-1.3.11.jar"; Name = "geantyref-1.3.11.jar" },
+  @{ Url = "$central/com/typesafe/config/1.4.1/config-1.4.1.jar"; Name = "typesafe-config-1.4.1.jar" },
+  # Velocity's proxy also carries night-config's TOML reader, which velocity-api's POM does not name,
+  # and plugins such as ForcePack compile against it without bundling it.
+  @{ Url = "$central/com/electronwill/night-config/core/3.8.4/core-3.8.4.jar"; Name = "night-config-core-3.8.4.jar" },
+  @{ Url = "$central/com/electronwill/night-config/toml/3.8.4/toml-3.8.4.jar"; Name = "night-config-toml-3.8.4.jar" },
   @{ Url = "$paper/com/mojang/brigadier/1.0.18/brigadier-1.0.18.jar"; Name = "brigadier-1.0.18.jar" }
 )
 foreach ($id in @("adventure-api", "adventure-key", "adventure-text-minimessage", "adventure-text-serializer-plain",
