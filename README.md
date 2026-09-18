@@ -702,7 +702,10 @@ always ends the session), post-login, disconnect (exactly once for every player 
 played, were let in but taken by no server, were refused, or left during the login; `loginStatus()` says
 which), chat (cancellable; clients before 1.19 only), tab completion (`PlayerTabCompleteEvent`: change the
 backend's answer to a Tab press; clients before 1.13 only),
-command execute (cancellable), plugin enable/disable, and plugin messages (cancellable, both
+command execute (cancellable) and its outcome (`PostCommandEvent`: executed, threw, or forwarded to the
+backend), handshakes (`ConnectionHandshakeEvent`, for pings and logins alike, built only when listened
+for), plugin channels a client registers and unregisters (`PlayerChannelRegisterEvent`,
+`PlayerChannelUnregisterEvent`), plugin enable/disable, and plugin messages (cancellable, both
 directions). Every event's Javadoc names the thread
 it fires on; events fire synchronously, and player events fire on that player's connection threads, so a
 listener must not block. `@Subscribe(order = ...)` orders listeners from `FIRST` to `LAST`. A listener

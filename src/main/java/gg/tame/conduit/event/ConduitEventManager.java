@@ -55,6 +55,13 @@ public final class ConduitEventManager implements EventManager {
     retired.add(plugin);
     unregister(plugin);
   }
+  /** Whether a listener would hear an event of {@code type}: for an event only worth building when one would. */
+  public boolean listening(Class<? extends Event> type) {
+    for (Map.Entry<Class<?>, CopyOnWriteArrayList<Handler>> entry : handlers.entrySet()) {
+      if (entry.getKey().isAssignableFrom(type) && !entry.getValue().isEmpty()) return true;
+    }
+    return false;
+  }
   @Override public <E extends Event> E fire(E event) {
     List<Handler> matching = new ArrayList<>();
     for (Map.Entry<Class<?>, CopyOnWriteArrayList<Handler>> entry : handlers.entrySet()) {

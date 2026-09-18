@@ -127,6 +127,7 @@ public final class AllTests {
     TabCompleteEventTests.run();
     VelocityAudienceTests.run();
     PlayerExtrasTests.run();
+    ChannelCommandHandshakeEventTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

@@ -198,6 +198,14 @@ public final class MinecraftProxy implements AutoCloseable {
         return;
       }
       runtime.security().botFilter().recordValidHandshake(remote);
+      // Every ping comes through here, so the event is not even built unless someone listens.
+      if (runtime.events().listening(gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.class)) {
+        runtime.events().fire(new gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent(
+            (java.net.InetSocketAddress) client.getRemoteSocketAddress(), virtualHost(handshake), handshake.protocolVersion(),
+            handshake.nextState() == 1 ? gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.STATUS
+                : handshake.nextState() == Handshake.TRANSFER ? gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.TRANSFER
+                : gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.LOGIN));
+      }
       ProtocolSession session = new ProtocolSession(); session.acceptHandshake(handshake.nextState());
       // A protocol Conduit has no table for still gets an answer. Status is negotiated in the
       // same few packets on every version Conduit could be asked about, and answering it with a

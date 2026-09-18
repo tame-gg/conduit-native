@@ -497,12 +497,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       PluginPayloadValidator.validatePayload(decoded.data(), configuration.maxFrameBytes());
       if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY) {
         modClassifier.observeChannel(decoded.channel());
-        registeredChannels.observe(decoded.channel(), decoded.data());
+        var registration = registeredChannels.record(decoded.channel(), decoded.data());
         var outcome = runtime.security().channelGuard().inspect(decoded.channel(), username());
         if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.DROP) return false;
         if (outcome == gg.tame.conduit.security.ChannelGuard.Outcome.KICK) {
           disconnect("Blocked plugin channel.");
           return false;
+        }
+        if (registration != null && !registration.channels().isEmpty()) {
+          runtime.events().fire(registration.register()
+              ? new gg.tame.conduit.api.event.player.PlayerChannelRegisterEvent(this, registration.channels())
+              : new gg.tame.conduit.api.event.player.PlayerChannelUnregisterEvent(this, registration.channels()));
         }
         if ("minecraft:brand".equalsIgnoreCase(decoded.channel()) || "MC|Brand".equals(decoded.channel())) {
           try {
@@ -1342,11 +1347,19 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           return true;
         }
       }
-      if (effective.equals(command)) return false;
+      var forwarded = gg.tame.conduit.api.event.command.PostCommandEvent.Result.FORWARDED;
+      if (effective.equals(command)) {
+        commands.finished(this, "/" + command, forwarded);
+        return false;
+      }
       // Rewritten, and on its way to the backend. Before 1.19 the packet is the line alone; after,
       // the command may carry signatures over its arguments, which a rewrite would break.
-      if (protocol.capabilities().legacyPlayChat() && sendChatLineToServer("/" + effective)) return true;
+      if (protocol.capabilities().legacyPlayChat() && sendChatLineToServer("/" + effective)) {
+        commands.finished(this, "/" + effective, forwarded);
+        return true;
+      }
       gg.tame.conduit.log.ConduitLog.warn("A plugin rewrote /" + command + " for a client whose commands may be signed; the backend got it unchanged");
+      commands.finished(this, "/" + command, forwarded);
       return false;
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {

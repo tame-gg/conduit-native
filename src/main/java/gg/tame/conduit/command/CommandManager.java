@@ -23,6 +23,10 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   private final Map<String, RegisteredCommand> displaced = new LinkedHashMap<>();
   /** Disabled plugins, which may not register again. Weak, so they can still be collected. */
   private final java.util.Set<Plugin> retired = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+  /** Where PostCommandEvent goes; null for a manager no proxy runs, which then fires nothing. */
+  private final gg.tame.conduit.api.event.EventManager events;
+  public CommandManager() { this(null); }
+  public CommandManager(gg.tame.conduit.api.event.EventManager events) { this.events = events; }
   public synchronized void register(RegisteredCommand command) {
     install(command, null);
     builtIns.add(command);
@@ -122,10 +126,23 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     if (command == null || !there(source, command, parsed.arguments())) return false;
     if (!permitted(source, command)) {
       Messages.permission(source);
+      finished(source, line, gg.tame.conduit.api.event.command.PostCommandEvent.Result.EXECUTED);
       return true;
     }
-    command.executor().execute(source, parsed.arguments(), ParsedCommand.argumentText(line));
+    var result = gg.tame.conduit.api.event.command.PostCommandEvent.Result.EXCEPTION;
+    try {
+      command.executor().execute(source, parsed.arguments(), ParsedCommand.argumentText(line));
+      result = gg.tame.conduit.api.event.command.PostCommandEvent.Result.EXECUTED;
+    } finally {
+      finished(source, line, result);
+    }
     return true;
+  }
+  /** PostCommandEvent for {@code line}, told as typed but without its leading slash. */
+  public void finished(gg.tame.conduit.api.command.CommandSource source, String line, gg.tame.conduit.api.event.command.PostCommandEvent.Result result) {
+    if (events == null) return;
+    var who = source instanceof CommandSource own ? external(own) : source;
+    events.fire(new gg.tame.conduit.api.event.command.PostCommandEvent(who, line.startsWith("/") ? line.substring(1) : line, result));
   }
   /**
    * Whether the command is there at all for this source. Velocity's plugins decide theirs in

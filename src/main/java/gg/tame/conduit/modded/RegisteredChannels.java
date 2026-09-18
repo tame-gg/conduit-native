@@ -9,6 +9,7 @@ import gg.tame.conduit.protocol.ProtocolDefinition;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -34,19 +35,41 @@ public final class RegisteredChannels {
   private final Set<String> channels = new LinkedHashSet<>();
   private String registerChannel = REGISTER;
 
+  /** What one register or unregister message named: at most {@link #MAX_CHANNELS} channels. */
+  public record Change(boolean register, List<String> channels) {}
+
   /** Records a register or unregister payload. Returns true when {@code channel} was one. */
-  public synchronized boolean observe(String channel, byte[] payload) {
+  public boolean observe(String channel, byte[] payload) { return record(channel, payload) != null; }
+
+  /**
+   * Records a register or unregister payload and returns the channels it named, at most
+   * {@link #MAX_CHANNELS} of them, blank and over-long names left out; null when {@code channel} is
+   * neither. The payload is scanned rather than split, so a hostile list of millions of names costs a
+   * walk over the bytes, not millions of strings.
+   */
+  public synchronized Change record(String channel, byte[] payload) {
     boolean add = REGISTER.equalsIgnoreCase(channel) || LEGACY_REGISTER.equals(channel);
     boolean remove = UNREGISTER.equalsIgnoreCase(channel) || LEGACY_UNREGISTER.equals(channel);
-    if (!add && !remove) return false;
+    if (!add && !remove) return null;
     if (add) registerChannel = channel;
-    if (payload == null) return true;
-    for (String name : new String(payload, StandardCharsets.UTF_8).split("\0")) {
-      if (name.isBlank() || name.length() > PluginPayloadValidator.MAX_CHANNEL_CHARS) continue;
+    Set<String> named = new LinkedHashSet<>();
+    if (payload == null) return new Change(add, List.of());
+    String text = new String(payload, StandardCharsets.UTF_8);
+    for (int start = 0, end; start < text.length(); start = end + 1) {
+      end = text.indexOf('\0', start);
+      if (end < 0) end = text.length();
+      int length = end - start;
+      if (length == 0 || length > PluginPayloadValidator.MAX_CHANNEL_CHARS) continue;
+      // Past every cap there is nothing left for a name to change, so none is made.
+      boolean changes = remove ? !channels.isEmpty() : channels.size() < MAX_CHANNELS;
+      if (!changes && named.size() >= MAX_CHANNELS) continue;
+      String name = text.substring(start, end);
+      if (name.isBlank()) continue;
+      if (named.size() < MAX_CHANNELS) named.add(name);
       if (remove) channels.remove(name);
       else if (channels.size() < MAX_CHANNELS) channels.add(name);
     }
-    return true;
+    return new Change(add, List.copyOf(named));
   }
 
   public synchronized Set<String> channels() { return Set.copyOf(channels); }

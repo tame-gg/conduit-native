@@ -11,10 +11,12 @@ import com.velocitypowered.api.command.BrigadierCommand;
 import com.velocitypowered.api.command.Command;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.command.CommandMeta;
+import com.velocitypowered.api.command.CommandResult;
 import com.velocitypowered.api.command.CommandSource;
 import com.velocitypowered.api.command.RawCommand;
 import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.event.command.CommandExecuteEvent;
+import com.velocitypowered.api.event.command.PostCommandInvocationEvent;
 import gg.tame.conduit.api.plugin.Plugin;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -189,9 +191,20 @@ final class VelocityCommandHost implements CommandManager {
     return environment.console;
   }
 
+  /**
+   * Whether the command {@code line} names is a Velocity plugin's. Such a command's body runs here,
+   * often after Conduit's handler has returned, so its PostCommandInvocationEvent is fired here too,
+   * once the body is done and its outcome known.
+   */
+  boolean owns(String line) {
+    int space = line.indexOf(' ');
+    return byAlias.containsKey((space < 0 ? line : line.substring(0, space)).toLowerCase(Locale.ROOT));
+  }
+
   private void run(Registration registration, String alias, gg.tame.conduit.api.command.CommandSource conduitSource, List<String> arguments, String text) {
     CommandSource source = velocitySource(conduitSource);
     Runnable body = () -> {
+      CommandResult result = CommandResult.EXECUTED;
       try {
         String[] split = arguments.toArray(String[]::new);
         String raw = text;
@@ -201,13 +214,20 @@ final class VelocityCommandHost implements CommandManager {
           case BrigadierCommand brigadier -> {
             CommandDispatcher<CommandSource> dispatcher = dispatcher(brigadier, alias);
             try { dispatcher.execute(dispatcher.parse(line(alias, raw), source)); }
-            catch (CommandSyntaxException syntax) { source.sendMessage(Component.text(syntax.getMessage(), NamedTextColor.RED)); }
+            catch (CommandSyntaxException syntax) {
+              result = CommandResult.SYNTAX_ERROR;
+              source.sendMessage(Component.text(syntax.getMessage(), NamedTextColor.RED));
+            }
           }
           default -> throw new IllegalStateException("unreachable");
         }
       } catch (RuntimeException | LinkageError failed) {
+        result = CommandResult.EXCEPTION;
         environment.log.log(Level.SEVERE, "Velocity command /" + alias + " failed", failed);
         source.sendMessage(Component.text("An internal error occurred while running this command.", NamedTextColor.RED));
+      }
+      if (environment.events.listening(PostCommandInvocationEvent.class)) {
+        environment.events.fire(new PostCommandInvocationEvent(source, line(alias, text), result));
       }
     };
     if (INLINE.get()) body.run();

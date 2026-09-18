@@ -88,7 +88,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.gracefulShutdown = new GracefulShutdown(configuration.shutdown());
     this.security = new SecurityService(configuration.security());
     this.modded = new ModdedService(configuration.modded());
-    this.commands = new CommandManager();
+    this.commands = new CommandManager(events);
     this.players = new PlayerManager();
     this.boundAddress = configuration.listener();
     this.servers = new ServerViews(this, selector.registry(), selector);

@@ -228,6 +228,69 @@ final class VelocityEventBridge {
     @Override public HandshakeIntent getHandshakeIntent() { return HandshakeIntent.STATUS; }
   }
 
+  /** Told, not asked, as Velocity does not wait for it either: the ping or login goes on at once. */
+  @Subscribe public void onHandshake(gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent event) {
+    if (!listening(com.velocitypowered.api.event.connection.ConnectionHandshakeEvent.class)) return;
+    HandshakeIntent intent = switch (event.intent()) {
+      case STATUS -> HandshakeIntent.STATUS;
+      case LOGIN -> HandshakeIntent.LOGIN;
+      case TRANSFER -> HandshakeIntent.TRANSFER;
+    };
+    environment.events.fire(new com.velocitypowered.api.event.connection.ConnectionHandshakeEvent(new HandshakeConnection(event, intent), intent));
+  }
+  /** A connection that has sent its handshake and nothing else yet. A class, not a record, as PingConnection. */
+  private static final class HandshakeConnection implements InboundConnection {
+    private final gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent handshake;
+    private final HandshakeIntent intent;
+    HandshakeConnection(gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent handshake, HandshakeIntent intent) {
+      this.handshake = handshake; this.intent = intent;
+    }
+    @Override public InetSocketAddress getRemoteAddress() { return handshake.remoteAddress(); }
+    @Override public Optional<InetSocketAddress> getVirtualHost() { return Optional.of(handshake.virtualHost()); }
+    @Override public Optional<String> getRawVirtualHost() { return Optional.of(handshake.virtualHost().getHostString()); }
+    @Override public boolean isActive() { return true; }
+    @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.getProtocolVersion(handshake.protocolVersion()); }
+    @Override public ProtocolState getProtocolState() { return ProtocolState.HANDSHAKE; }
+    @Override public HandshakeIntent getHandshakeIntent() { return intent; }
+  }
+
+  // Channels and finished commands: told, not asked, as Velocity does not wait for these either.
+  @Subscribe public void onChannelRegister(gg.tame.conduit.api.event.player.PlayerChannelRegisterEvent event) {
+    if (listening(com.velocitypowered.api.event.player.PlayerChannelRegisterEvent.class)) {
+      environment.events.fire(new com.velocitypowered.api.event.player.PlayerChannelRegisterEvent(environment.player(event.player()), identifiers(event.channels())));
+    }
+  }
+  @Subscribe public void onChannelUnregister(gg.tame.conduit.api.event.player.PlayerChannelUnregisterEvent event) {
+    if (listening(com.velocitypowered.api.event.player.PlayerChannelUnregisterEvent.class)) {
+      environment.events.fire(new com.velocitypowered.api.event.player.PlayerChannelUnregisterEvent(environment.player(event.player()), identifiers(event.channels())));
+    }
+  }
+  /** A namespaced name as Velocity's Minecraft identifier, any other as a legacy one; a name neither takes is left out. */
+  private static java.util.List<ChannelIdentifier> identifiers(java.util.List<String> names) {
+    java.util.List<ChannelIdentifier> identifiers = new java.util.ArrayList<>(names.size());
+    for (String name : names) {
+      try {
+        identifiers.add(name.indexOf(':') >= 0
+            ? com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier.from(name)
+            : new com.velocitypowered.api.proxy.messages.LegacyChannelIdentifier(name));
+      } catch (IllegalArgumentException invalid) { }
+    }
+    return identifiers;
+  }
+  /**
+   * A Velocity plugin's own command is reported by VelocityCommandHost once its body has run, which is
+   * usually after Conduit's handler returned; only its forwarding to the backend is reported from here.
+   */
+  @Subscribe public void onPostCommand(gg.tame.conduit.api.event.command.PostCommandEvent event) {
+    if (!listening(com.velocitypowered.api.event.command.PostCommandInvocationEvent.class)) return;
+    boolean forwarded = event.result() == gg.tame.conduit.api.event.command.PostCommandEvent.Result.FORWARDED;
+    if (!forwarded && environment.commands.owns(event.command())) return;
+    com.velocitypowered.api.command.CommandSource source = event.source() instanceof gg.tame.conduit.api.player.Player player
+        ? environment.player(player) : environment.console;
+    environment.events.fire(new com.velocitypowered.api.event.command.PostCommandInvocationEvent(source, event.command(),
+        com.velocitypowered.api.command.CommandResult.valueOf(event.result().name())));
+  }
+
   @Subscribe public void onChat(gg.tame.conduit.api.event.player.PlayerChatEvent event) {
     if (event.cancelled() || !listening(PlayerChatEvent.class)) return;
     PlayerChatEvent chat = environment.fireAndWait(new PlayerChatEvent(environment.player(event.player()), event.message()));
