@@ -13,6 +13,40 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class PlayerManager {
   private final ConcurrentHashMap<UUID, TrackedPlayer> byId = new ConcurrentHashMap<>();
   private final ConcurrentHashMap<String, UUID> byName = new ConcurrentHashMap<>();
+  /**
+   * Who holds each identity, from the login that claimed it until that session's PlayerDisconnectEvent
+   * has fired: the index above only knows players who reached a server, so two logins of one player
+   * could both get past it and both be let in. The name counts as well as the UUID, because offline
+   * mode derives the UUID from the name case by case while every lookup by name ignores case. Guarded
+   * by this.
+   */
+  private final java.util.Map<UUID, PlayerSession> claimedIds = new java.util.HashMap<>();
+  private final java.util.Map<String, PlayerSession> claimedNames = new java.util.HashMap<>();
+  /** Claims {@code session}'s UUID and name; null when it now holds them, else the session holding either. */
+  public synchronized PlayerSession claim(PlayerSession session) {
+    String name = session.username().toLowerCase(Locale.ROOT);
+    PlayerSession holder = claimedIds.get(session.uniqueId());
+    if (holder == null) holder = claimedNames.get(name);
+    if (holder != null && holder != session) return holder;
+    claimedIds.put(session.uniqueId(), session);
+    claimedNames.put(name, session);
+    return null;
+  }
+  public synchronized void release(PlayerSession session) {
+    boolean held = claimedIds.remove(session.uniqueId(), session);
+    held |= claimedNames.remove(session.username().toLowerCase(Locale.ROOT), session);
+    if (held) notifyAll();
+  }
+  /** Waits up to {@code millis} for {@code holder} to release its claim; true once it has. */
+  public synchronized boolean awaitRelease(PlayerSession holder, long millis) throws InterruptedException {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(millis);
+    while (claimedIds.get(holder.uniqueId()) == holder || claimedNames.get(holder.username().toLowerCase(Locale.ROOT)) == holder) {
+      long left = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+      if (left <= 0) return false;
+      wait(left);
+    }
+    return true;
+  }
   public void add(TrackedPlayer session) {
     UUID id = session.uniqueId();
     byId.put(id, session);

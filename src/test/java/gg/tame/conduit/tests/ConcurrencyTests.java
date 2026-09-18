@@ -383,6 +383,7 @@ public final class ConcurrencyTests {
         Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
         AtomicInteger loggedIn = new AtomicInteger();
         List<Thread> sessions = new ArrayList<>();
+        int firstLogin = LOGINS.get();
         for (int index = 0; index < crowd; index++) {
           int role = index % 3;
           Socket client = new Socket("127.0.0.1", proxy.port());
@@ -425,7 +426,9 @@ public final class ConcurrencyTests {
             "every backend connection is released: " + ConduitMetrics.current().activeBackends());
         require(proxy.runtime().playerManager().all().isEmpty(),
             "the player index is empty: " + proxy.runtime().playerManager().all().size());
-        require(proxy.runtime().playerManager().getByUsername("playr").isEmpty(), "no name is left indexed");
+        for (int login = firstLogin + 1; login <= LOGINS.get(); login++) {
+          require(proxy.runtime().playerManager().getByUsername("playr" + login).isEmpty(), "no name is left indexed: playr" + login);
+        }
         require(proxy.runtime().security().throttle().inFlight() == 0,
             "every throttle lease is released: " + proxy.runtime().security().throttle().inFlight());
         serving.interrupt();
@@ -1079,10 +1082,12 @@ public final class ConcurrencyTests {
     }
   }
 
+  /** Numbers each login's player: one player may be connected only once, and these crowds are many. */
+  private static final AtomicInteger LOGINS = new AtomicInteger();
   private static byte[] legacyLoginStart() throws Exception {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
-      MinecraftOutput.varInt(output, 0); MinecraftOutput.string(output, "playr");
+      MinecraftOutput.varInt(output, 0); MinecraftOutput.string(output, "playr" + LOGINS.incrementAndGet());
     }
     return bytes.toByteArray();
   }

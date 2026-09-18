@@ -163,7 +163,7 @@ public final class DirectLoginCompressionTests {
   }
 
   /** 1.20.4 Join Game, id 0x29: a survival overworld with no death location. */
-  private static byte[] joinGame765() throws Exception {
+  static byte[] joinGame765() throws Exception {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     DataOutputStream out = new DataOutputStream(bytes);
     MinecraftOutput.varInt(out, 0x29);

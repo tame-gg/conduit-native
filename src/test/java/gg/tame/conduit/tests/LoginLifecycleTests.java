@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.tests;
 
+import static gg.tame.conduit.tests.NativeApiTests.DISCONNECT_OUT;
 import static gg.tame.conduit.tests.NativeApiTests.P47;
 import static gg.tame.conduit.tests.NativeApiTests.chat;
 import static gg.tame.conduit.tests.NativeApiTests.chatText;
@@ -89,6 +90,12 @@ public final class LoginLifecycleTests {
     securityRefusalsComeBeforeAnyPluginSeesThePlayer();
     aDoubleSlashReachesASlashNamedCommandOnly();
     aVelocityPermissionPluginDecidesTheBypassAndIsReleased();
+    aSecondLoginOfAConnectedPlayerIsRefused();
+    anOnlineAccountIsOneSessionWhateverItsName();
+    aRejoinWaitsForTheLastSessionToEnd();
+    loginsAtTheSameInstantLetOneIn();
+    kickExistingPlayersHandsTheSessionToTheNewLogin();
+    aVelocityPluginHearsADisplacedLoginAsConflicting();
     System.out.println("LoginLifecycleTests OK");
   }
 
@@ -524,6 +531,205 @@ public final class LoginLifecycleTests {
 
   private static void awaitSignal(String expected) throws InterruptedException {
     require(waitFor(() -> SIGNALS.contains(expected), 10_000), "never saw " + expected + " in " + SIGNALS);
+  }
+
+  // --- one player, one session -------------------------------------------------------------------
+
+  private static AuthenticationSettings kickExisting() {
+    return new AuthenticationSettings(AuthenticationMode.OFFLINE, AuthenticationSettings.DEFAULT_SESSION_URL, 5_000, true);
+  }
+
+  /** A second login of a connected player was let in beside the first, and only one of them was indexed. */
+  private static void aSecondLoginOfAConnectedPlayerIsRefused() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Proxy proxy = new Proxy(lobby, maintenance(false))) {
+      try (Client first = Client.join(proxy.port(), "Twin")) {
+        require(proxy.recorder.await(PlayerPostLoginEvent.class, 1), "the first login joined");
+        // Offline mode derives the UUID from the name as typed, so TWIN is another UUID, but one name.
+        for (String name : List.of("Twin", "TWIN")) {
+          try (Client second = Client.open(proxy.port(), name)) {
+            byte[] reply = second.readDirect();
+            require(id(reply) == 0 && text(reply).contains("already connected"), name + " is refused at login, got " + text(reply));
+            require(second.ends(), "and its connection ends");
+          }
+        }
+        Thread.sleep(200);
+        require(proxy.recorder.of(PlayerSetupEvent.class).size() == 1, "no plugin heard of the refused logins, got " + proxy.recorder.names());
+        require(lobby.logins.get() == 1, "nor did a backend");
+        require(proxy.runtime.player("Twin").orElseThrow() == proxy.recorder.of(PlayerSetupEvent.class).getFirst().player(),
+            "the first session is still the one online");
+        first.send(chat("still here"));
+        require(lobby.await(packet -> chatText(packet).equals("still here")), "and still plays");
+      }
+      require(proxy.recorder.await(PlayerDisconnectEvent.class, 1), "the first leaves");
+      try (Client again = Client.join(proxy.port(), "Twin")) {
+        require(proxy.recorder.await(PlayerPostLoginEvent.class, 2), "once it has gone, the same player joins again");
+      }
+    }
+  }
+
+  /** Online mode: the account is the UUID, so a renamed account's second login is the same player. */
+  private static void anOnlineAccountIsOneSessionWhateverItsName() throws Exception {
+    PlayerAuthenticator oneAccount = new PlayerAuthenticator() {
+      @Override public AuthenticationMode mode() { return AuthenticationMode.ONLINE; }
+      @Override public PlayerProfile verify(gg.tame.conduit.auth.SessionQuery query) {
+        return new PlayerProfile(new java.util.UUID(9, 9), query.username(), List.of(), true);
+      }
+    };
+    AuthenticationSettings online = new AuthenticationSettings(AuthenticationMode.ONLINE, "http://127.0.0.1:1/unused", 1000);
+    try (Backend lobby = new Backend("lobby"); Proxy proxy = new Proxy(lobby, maintenance(false), null, online, oneAccount);
+         Socket first = new Socket("127.0.0.1", proxy.port()); Socket renamed = new Socket("127.0.0.1", proxy.port())) {
+      first.setSoTimeout(10_000);
+      renamed.setSoTimeout(10_000);
+      require(id(encrypt(first, "OldName").read(1 << 16)) == 2, "the account joins");
+      require(proxy.recorder.await(PlayerPostLoginEvent.class, 1), "joined");
+      byte[] reply = encrypt(renamed, "NewName").read(1 << 16);
+      require(id(reply) == 0 && text(reply).contains("already connected"), "the same account under a new name is refused, got " + text(reply));
+      Thread.sleep(200);
+      require(proxy.recorder.of(PlayerSetupEvent.class).size() == 1, "before any plugin heard of it");
+    }
+  }
+
+  /**
+   * A player who quits and rejoins at once finds their last session still ending. They wait for it,
+   * rather than being refused over it, and plugins hear it end before they hear of the new one.
+   */
+  private static void aRejoinWaitsForTheLastSessionToEnd() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Proxy proxy = new Proxy(lobby, maintenance(false))) {
+      CountDownLatch leaving = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      proxy.recorder.hook = event -> {
+        if (!(event instanceof PlayerDisconnectEvent)) return;
+        leaving.countDown();
+        try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+      };
+      Client first = Client.join(proxy.port(), "Rejoiner");
+      require(proxy.recorder.await(PlayerPostLoginEvent.class, 1), "joined");
+      first.close();
+      require(leaving.await(10, TimeUnit.SECONDS), "the first session is ending, a disconnect listener still running");
+      try (Client second = Client.open(proxy.port(), "Rejoiner")) {
+        Thread.sleep(300);
+        require(proxy.recorder.of(PlayerSetupEvent.class).size() == 1, "the rejoin waits: neither refused nor set up yet");
+        proxy.recorder.hook = event -> { };
+        release.countDown();
+        byte[] success = second.readDirect();
+        require(id(success) == 2, "then it is let in, got " + text(success));
+        require(proxy.recorder.await(PlayerPostLoginEvent.class, 2), "and joins");
+        require(proxy.recorder.names(PlayerSetupEvent.class, PlayerDisconnectEvent.class)
+                .equals(List.of("PlayerSetupEvent", "PlayerDisconnectEvent", "PlayerSetupEvent")),
+            "the last session's end reached plugins before the new one's setup, got " + proxy.recorder.names());
+      }
+    }
+  }
+
+  /** Several logins of one player at the same instant: exactly one gets in, the rest are refused. */
+  private static void loginsAtTheSameInstantLetOneIn() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Proxy proxy = new Proxy(lobby, maintenance(false))) {
+      int attempts = 6;
+      CountDownLatch go = new CountDownLatch(1);
+      List<String> outcomes = Collections.synchronizedList(new ArrayList<>());
+      List<Client> clients = Collections.synchronizedList(new ArrayList<>());
+      List<Thread> racers = new ArrayList<>();
+      for (int i = 0; i < attempts; i++) {
+        racers.add(Thread.ofPlatform().daemon().start(() -> {
+          try {
+            go.await();
+            Client client = Client.open(proxy.port(), "Racer");
+            clients.add(client);
+            byte[] reply = client.readDirect();
+            outcomes.add(id(reply) == 2 ? "in" : text(reply));
+          } catch (Exception failed) { outcomes.add("failed: " + failed); }
+        }));
+      }
+      go.countDown();
+      for (Thread racer : racers) racer.join(20_000);
+      try {
+        require(outcomes.size() == attempts && outcomes.stream().filter("in"::equals).count() == 1
+            && outcomes.stream().filter(outcome -> !outcome.equals("in")).allMatch(outcome -> outcome.contains("already connected")),
+            "one login in, every other refused, got " + outcomes);
+        require(waitFor(() -> proxy.recorder.of(PlayerSetupEvent.class).size() == 1, 5_000) && lobby.logins.get() == 1,
+            "only the one that got in was set up and reached a backend, got " + proxy.recorder.names());
+      } finally {
+        for (Client client : clients) client.close();
+      }
+    }
+  }
+
+  private static void kickExistingPlayersHandsTheSessionToTheNewLogin() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Proxy proxy = new Proxy(lobby, maintenance(false), null, kickExisting(), null)) {
+      try (Client first = Client.join(proxy.port(), "Mover")) {
+        require(proxy.recorder.await(PlayerPostLoginEvent.class, 1), "the first login joined");
+        try (Client second = Client.join(proxy.port(), "Mover")) {
+          require(first.await(packet -> id(packet) == DISCONNECT_OUT && text(packet).contains("logged in from another location")),
+              "the session in the way is kicked");
+          require(first.ends(), "and ends");
+          require(proxy.recorder.await(PlayerPostLoginEvent.class, 2), "the new login joins");
+          require(proxy.runtime.player("Mover").orElseThrow() == proxy.recorder.of(PlayerSetupEvent.class).getLast().player(),
+              "and is the one online");
+          require(proxy.recorder.names(PlayerSetupEvent.class, PlayerDisconnectEvent.class)
+                  .equals(List.of("PlayerSetupEvent", "PlayerDisconnectEvent", "PlayerSetupEvent")),
+              "plugins heard the old session end before the new one was set up, got " + proxy.recorder.names());
+          require(proxy.recorder.of(PlayerDisconnectEvent.class).getFirst().loginStatus() == LoginStatus.SUCCESSFUL_LOGIN,
+              "a session that had joined leaves as a completed login");
+        }
+      }
+
+      // Displaced while its own login is still being decided: that login ends as a conflicting one.
+      CountDownLatch holding = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      java.util.concurrent.atomic.AtomicBoolean heldOnce = new java.util.concurrent.atomic.AtomicBoolean();
+      proxy.recorder.hook = event -> {
+        if (event instanceof PlayerLoginEvent login && login.player().username().equals("Slow") && heldOnce.compareAndSet(false, true)) {
+          holding.countDown();
+          try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+        }
+      };
+      int ended = proxy.recorder.of(PlayerDisconnectEvent.class).size();
+      try (Client slow = Client.open(proxy.port(), "Slow")) {
+        require(holding.await(10, TimeUnit.SECONDS), "the first login is held in PlayerLoginEvent");
+        try (Client fast = Client.open(proxy.port(), "Slow")) {
+          byte[] kicked = slow.readDirect();
+          require(id(kicked) == 0 && text(kicked).contains("logged in from another location"), "the held login is kicked at login, got " + text(kicked));
+          release.countDown();
+          require(id(fast.readDirect()) == 2, "the new login gets in once the old one has ended");
+          require(waitFor(() -> proxy.recorder.of(PlayerDisconnectEvent.class).size() == ended + 1, 10_000), "the displaced login ended");
+          PlayerDisconnectEvent displaced = proxy.recorder.of(PlayerDisconnectEvent.class).getLast();
+          require(displaced.loginStatus() == LoginStatus.CONFLICTING_LOGIN && !displaced.completedLogin(),
+              "as a conflicting login, got " + displaced.loginStatus());
+          require(proxy.recorder.await(PlayerPostLoginEvent.class, 3), "and the new one joined");
+        }
+      }
+    }
+  }
+
+  /** Velocity's DisconnectEvent says CONFLICTING_LOGIN for a login a newer one displaced. */
+  private static void aVelocityPluginHearsADisplacedLoginAsConflicting() throws Exception {
+    SIGNALS.clear();
+    Map<String, CountDownLatch> latches = new ConcurrentHashMap<>();
+    System.getProperties().put("login.test.signals", SIGNALS);
+    System.getProperties().put("login.test.latches", latches);
+    Path root = TempFiles.dir("login-conflict-velocity");
+    Path plugins = Files.createDirectories(root.resolve("plugins"));
+    VelocityCompatTests.jar(VelocityCompatTests.compile(root, "lpx.Lpx", LPX, List.of(), true), plugins.resolve("Lpx.jar"), null);
+    try (Backend lobby = new Backend("lobby");
+         Proxy proxy = new Proxy(lobby, maintenance(false), null, kickExisting(), null, plugins)) {
+      require(waitFor(() -> proxy.runtime.plugins().plugin("lpx").isPresent(), 10_000), "lpx enabled");
+      latches.put("Double", new CountDownLatch(1));
+      try (Client older = Client.open(proxy.port(), "Double")) {
+        awaitSignal("waiting:Double");
+        try (Client newer = Client.open(proxy.port(), "Double")) {
+          require(text(older.readDirect()).contains("logged in from another location"), "the older login is kicked");
+          latches.get("Double").countDown();
+          require(id(newer.readDirect()) == 2, "the newer one gets in");
+          awaitSignal("login:Double");
+          require(SIGNALS.contains("disconnect:Double:CONFLICTING_LOGIN:0"), "the displaced login's DisconnectEvent: " + SIGNALS);
+          require(List.copyOf(SIGNALS).indexOf("disconnect:Double:CONFLICTING_LOGIN:0") < List.copyOf(SIGNALS).indexOf("login:Double"),
+              "before the newer login's LoginEvent, and the older one never got one: " + SIGNALS);
+          require(SIGNALS.stream().filter("login:Double"::equals).count() == 1, "one LoginEvent: " + SIGNALS);
+        }
+      }
+      awaitSignal("disconnect:Double:SUCCESSFUL_LOGIN:0");
+      require(waitFor(() -> adapterHolds("players") == 0 && adapterHolds("grants") == 0, 10_000), "the adapter let go of both");
+    }
   }
 
   // --- harness ---------------------------------------------------------------------------------

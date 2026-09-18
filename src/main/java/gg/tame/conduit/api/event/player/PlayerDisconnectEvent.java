@@ -26,7 +26,13 @@ public record PlayerDisconnectEvent(Player player, LoginStatus loginStatus) impl
      */
     CANCELLED_BY_PROXY,
     /** The client hung up while its login was being decided, before any server was contacted. */
-    CANCELLED_BY_USER
+    CANCELLED_BY_USER,
+    /**
+     * A newer login of the same player took over before this one had finished, with
+     * {@code kick-existing-players} on. A player who had finished logging in and is displaced the
+     * same way leaves as {@link #SUCCESSFUL_LOGIN}: PostLoginEvent fired for them.
+     */
+    CONFLICTING_LOGIN
   }
 
   public PlayerDisconnectEvent {

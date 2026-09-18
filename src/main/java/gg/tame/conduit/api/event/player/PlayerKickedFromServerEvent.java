@@ -10,9 +10,11 @@ import java.util.Optional;
 
 /**
  * A backend disconnected the player: the server they were playing on ({@code duringConnect} false),
- * or one they were being connected to that refused their login ({@code duringConnect} true) -- a
- * switch, their first server, or a fallback after their server was lost. A backend that simply goes
- * away, with no disconnect packet, is not a kick; the player is moved to a fallback server instead.
+ * or one they were being connected to that refused them ({@code duringConnect} true) -- a switch,
+ * their first server, or a fallback after their server was lost or kicked them. A refusal is a Login
+ * Disconnect, or, from a 1.20.2+ server, a Configuration Disconnect before it finished configuring
+ * the player. A backend that simply goes away, with no disconnect packet, is not a kick; the player
+ * is moved to a fallback server instead.
  *
  * <p>{@link #result()} says what happens next, and starts as what Conduit would do anyway:
  * <ul>
@@ -24,18 +26,25 @@ import java.util.Optional;
  *   <li>Refused by their first server, or by a fallback: {@link KickResult.Notify} with the reason.
  *       The next candidate server is tried, and the message is what the player's disconnect screen
  *       says if none of them takes them. Disconnect ends the attempt at once.
+ *   <li>Refused in the configuration phase of their first server, of a switch's target or of a
+ *       fallback, once their client had entered it: {@link KickResult.Disconnect} with the backend's
+ *       reason, shown exactly as the backend wrote it. The client has left the server it was on and
+ *       cannot be configured for another on top of a half-finished configuration, so every result
+ *       ends the session: Notify disconnects with its message, and Redirect is not honoured (the
+ *       backend's reason is shown and a warning logged). The same holds for a client older than
+ *       1.20.2 once it has been sent its first server's Login Success.
  * </ul>
  * {@link KickResult.Redirect} sends the player to another registered server instead. Kicked from the
- * server they were on, they are moved there, and disconnected with the backend's reason if that
- * fails too. Refused during a switch, that server is tried instead, and if it fails they stay where
- * they were and are shown the backend's reason. On a first connection or a fallback it is the next
- * server tried. Its message is shown in chat once they arrive, except on a first connection, which
- * has no chat yet.
+ * server they were on, they are moved there. If that server refuses them too, its own event decides:
+ * Disconnect ends with its reason, Redirect names the next server (up to four in a row), and Notify
+ * disconnects them with the first server's reason, as does any other failure. Refused during a
+ * switch, that server is tried instead, and if it fails they stay where they were and are shown the
+ * backend's reason. On a first connection or a fallback it is the next server tried. Its message is
+ * shown in chat once they arrive, except on a first connection, which has no chat yet.
  *
- * <p>A refusal that arrives after a switching client has already been moved into the new server's
- * configuration phase is relayed to the client as it is and not reported here: by then there is no
- * way back. Fired on the thread that read the kick: the player's backend reader when they were
- * playing, the thread running the connection otherwise. Do not block.
+ * <p>Fired on the thread that read the kick: the player's backend reader when they were playing or
+ * being configured by their first server, the thread running the connection or the switch otherwise.
+ * Do not block.
  */
 public final class PlayerKickedFromServerEvent implements Event {
   /** What happens to a kicked player. */

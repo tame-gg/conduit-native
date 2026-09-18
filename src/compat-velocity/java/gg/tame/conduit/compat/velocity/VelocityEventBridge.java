@@ -100,8 +100,9 @@ final class VelocityEventBridge {
     if (listening(PostLoginEvent.class)) environment.fireAndWait(new PostLoginEvent(environment.player(event.player())));
   }
   /**
-   * Every player set up gets one, refused logins included, and the adapter lets go of them here.
-   * Conduit never has a conflicting login to report: a second login under the same name is let in.
+   * Every player set up gets one, refused logins included, and the adapter lets go of them here. A
+   * second login of a connected player is refused before any plugin sees it, so CONFLICTING_LOGIN is
+   * only ever a login that a newer one displaced before it finished (kick-existing-players).
    */
   @Subscribe public void onDisconnect(PlayerDisconnectEvent event) {
     try {
@@ -111,6 +112,7 @@ final class VelocityEventBridge {
           case PRE_SERVER_JOIN -> DisconnectEvent.LoginStatus.PRE_SERVER_JOIN;
           case CANCELLED_BY_PROXY -> DisconnectEvent.LoginStatus.CANCELLED_BY_PROXY;
           case CANCELLED_BY_USER -> DisconnectEvent.LoginStatus.CANCELLED_BY_USER_BEFORE_COMPLETE;
+          case CONFLICTING_LOGIN -> DisconnectEvent.LoginStatus.CONFLICTING_LOGIN;
         }));
       }
     } finally {

@@ -79,7 +79,10 @@ public final class BackendLoginPipeline {
     }
     return packet;
   }
-  /** The backend refused the login with a Login Disconnect. Its reason is JSON text in every version. */
+  /**
+   * The backend refused the player with a Login Disconnect, or a Configuration Disconnect before it
+   * finished configuring them. The reason is JSON text, whatever form the packet carried it in.
+   */
   public static final class Refused extends IOException {
     private final String reasonJson;
     public Refused(String reasonJson) {
@@ -96,7 +99,7 @@ public final class BackendLoginPipeline {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       int id = MinecraftInput.varInt(input); byte[] body = input.readAllBytes();
       if (state == ConnectionState.LOGIN) return handleLogin(id, body, maximumPacketBytes);
-      if (state == ConnectionState.CONFIGURATION) return handleConfiguration(id, body);
+      if (state == ConnectionState.CONFIGURATION) return handleConfiguration(id, body, maximumPacketBytes);
       return null;
     }
   }
@@ -165,7 +168,27 @@ public final class BackendLoginPipeline {
     pendingQueries.add(request.messageId());
     return null;
   }
-  private byte[] handleConfiguration(int id, byte[] body) {
+  private byte[] handleConfiguration(int id, byte[] body, int maximumPacketBytes) throws IOException {
+    if (protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_DISCONNECT)) {
+      // A refusal like a Login Disconnect, only later -- NeoForge refusing a client's mods, a plugin
+      // refusing a resource pack -- and the session's to decide in the same way. Relayed as it was,
+      // no plugin heard of it, and the proxy took the dead backend for a lost one and ran a fallback
+      // for a client that had already been shown the disconnect screen.
+      DataInputStream input = new DataInputStream(new ByteArrayInputStream(body));
+      boolean nbt = gg.tame.conduit.protocol.ProtocolEras.textComponentNbt(protocol.version().number());
+      String reason;
+      try {
+        // A component is a string, list or compound tag, and nothing may follow it.
+        if (nbt && (body.length == 0 || body[0] < 8 || body[0] > 10)) throw new IOException("not a text component");
+        reason = nbt ? gg.tame.conduit.protocol.text.ComponentCodec.nbtToJson(input) : MinecraftInput.string(input, maximumPacketBytes);
+        if (input.available() != 0) throw new IOException("trailing bytes after the reason");
+      } catch (IOException | RuntimeException unreadable) {
+        // Not a reason Conduit can read, so not one it can decide on; the packet goes on as it came.
+        return null;
+      }
+      forwardToClient = false;
+      throw new Refused(reason);
+    }
     if (protocol.is(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.CONFIGURATION_FINISH) && body.length == 0) {
       state = ConnectionState.PLAY;
     }

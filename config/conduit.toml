@@ -11,6 +11,9 @@ mode = "none"
 mode = "offline"
 # session-url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
 # timeout-millis = 5000
+# A login of a player who is already connected is refused. true ends the existing session instead
+# and lets the new login in; in offline mode that lets anyone who types a name kick its player.
+# kick-existing-players = false
 
 [servers.lobby]
 host = "127.0.0.1"

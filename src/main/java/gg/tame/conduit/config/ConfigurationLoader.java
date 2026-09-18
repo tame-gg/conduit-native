@@ -231,7 +231,7 @@ public final class ConfigurationLoader {
         : AuthenticationMode.OFFLINE;
     String url = values.getOrDefault("authentication.session-url", AuthenticationSettings.DEFAULT_SESSION_URL);
     int timeout = values.containsKey("authentication.timeout-millis") ? integer(values, "authentication.timeout-millis") : 15_000;
-    return new AuthenticationSettings(authMode, url, timeout);
+    return new AuthenticationSettings(authMode, url, timeout, optionalBoolean(values, "authentication.kick-existing-players", false));
   }
   private static Optional<java.net.InetAddress> forwardedAddress(Map<String, String> values) {
     String raw = values.get("forwarding.player-address");

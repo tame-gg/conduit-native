@@ -57,6 +57,11 @@ public final class MinecraftProxy implements AutoCloseable {
    * {@code conduit.loginDeadlineMillis} system property overrides it, so tests can use a short one.
    */
   private static final long LOGIN_DEADLINE_MS = 60_000;
+  /**
+   * How long a login waits for the player's previous session to finish ending. That session's
+   * PlayerDisconnectEvent listeners take part of it, and a Velocity plugin gets 10 s for its own.
+   */
+  private static final long CONFLICT_WAIT_MS = 12_000;
   private final ServerSocketChannel listener;
   private final ConduitConfiguration configuration;
   private final PlayerInfoForwarder forwarder;
@@ -226,6 +231,7 @@ public final class MinecraftProxy implements AutoCloseable {
       // about it, so that a permission plugin already knows the player when maintenance asks.
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
           handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(remote))) {
+        if (!claimIdentity(player, transport, protocol)) return;
         try {
           runtime.events().fire(new PlayerSetupEvent(player));
           admit(player, transport, protocol);
@@ -248,6 +254,40 @@ public final class MinecraftProxy implements AutoCloseable {
       runtime.security().throttle().release(leaseHolder.lease);
       connections.decrementAndGet();
     }
+  }
+  /**
+   * One player, one session: the last of the proxy's own checks, before any plugin hears of the
+   * player. A login of a player who is already connected is refused, or, with kick-existing-players,
+   * ends the existing session and waits for it to be gone. A session already ending is waited for
+   * either way -- a player who quits and rejoins at once is not refused over their own last session
+   * -- and so is its PlayerDisconnectEvent, so a plugin keyed by UUID hears one session end before the
+   * next is set up. False when this login was refused.
+   */
+  private boolean claimIdentity(PlayerSession player, PacketTransport transport, ProtocolDefinition protocol) {
+    long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(CONFLICT_WAIT_MS);
+    PlayerSession holder;
+    while ((holder = runtime.playerManager().claim(player)) != null) {
+      if (runtime.configuration().authentication().kickExistingPlayers()) {
+        if (!holder.closed()) holder.displace();
+      } else if (!holder.closed()) {
+        return refuseDuplicate(player, transport, protocol, "You are already connected to this network.");
+      }
+      long left = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+      try {
+        if (left <= 0 || !runtime.playerManager().awaitRelease(holder, left)) {
+          return refuseDuplicate(player, transport, protocol, "Your previous connection is still closing. Please try again.");
+        }
+      } catch (InterruptedException interrupted) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+    }
+    return true;
+  }
+  private static boolean refuseDuplicate(PlayerSession player, PacketTransport transport, ProtocolDefinition protocol, String message) {
+    ConduitLog.info("Refused a second login of " + player.username() + " (" + player.uniqueId() + "): " + message);
+    try { transport.write(LoginDisconnect.encode(protocol, message)); } catch (IOException ignored) { }
+    return false;
   }
   /** The proxy's and the plugins' decisions on a player who is set up: maintenance, then PlayerLoginEvent. */
   private void admit(PlayerSession player, PacketTransport transport, ProtocolDefinition protocol) throws IOException {

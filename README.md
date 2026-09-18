@@ -106,7 +106,21 @@ Backend Set Compression is consumed by Conduit and never forwarded to the client
 mode = "offline"   # or "online"
 # session-url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
 # timeout-millis = 5000
+# kick-existing-players = false
 ```
+
+### One session per player
+
+A login of a player who is already connected is refused ("You are already connected to this
+network."): the same UUID, or the same name in any letter case, which in offline mode is what the
+UUID comes from. The refusal is Conduit's own, made before any plugin sees the new login. A session
+that is already ending (the player quit and rejoined at once) is waited for, up to 12 seconds, and
+its `PlayerDisconnectEvent` reaches plugins before the new login's `PlayerSetupEvent`. With
+`kick-existing-players = true` the new login wins instead: the existing session is kicked with "You
+logged in from another location." and the new login waits for it to end. That happens as soon as the
+new login has authenticated, before maintenance or any plugin decides on it. In offline mode that lets
+anyone who types a player's name kick them, so it is off by default. It is read at each login, so
+`/conduit reload` applies it unless a setting that needs a restart changed in the same reload.
 
 ### Online
 
@@ -649,7 +663,8 @@ initial-server choice, server connect (cancellable and redirectable, for the fir
 connected/switch/switch-failed (switch-failed also for each first-server candidate that fails, with no
 source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason and a result of
 `Disconnect`, `Redirect` or `Notify`, for a kick while playing and for a login refused during a switch,
-a first connection or a fallback), post-login, disconnect (exactly once for every player set up, whether they
+a first connection or a fallback, including a 1.20.2+ server's refusal in its configuration phase, which
+always ends the session), post-login, disconnect (exactly once for every player set up, whether they
 played, were let in but taken by no server, were refused, or left during the login; `loginStatus()` says
 which), chat (cancellable; clients before 1.19 only),
 command execute (cancellable), plugin enable/disable, and plugin messages (cancellable, both
