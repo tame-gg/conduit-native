@@ -57,6 +57,7 @@ public final class ConcurrencyTests {
     aStalledLoginIsTimedOut();
     aBackendThatNeverFinishesLoginReleasesBothSockets();
     rapidServerCommandsOpenOneBackendConnection();
+    aQuietBackendKeepsTheSwitchedPlayer();
     closingABackendTwiceCountsOnce();
     manySessionsAllReleaseWhenTheirBackendsDrop();
     rejectHostileCompressedPackets();
@@ -926,6 +927,52 @@ public final class ConcurrencyTests {
       }
       backend.interrupt();
     }
+  }
+
+  /**
+   * A client can send {@code /server} as fast as it can type. Each one used to open its own backend
+   * socket and run its own login before finding out another switch had already won the commit, so
+   * one player could hold a configured backend open once per packet — and two that both reached the
+   * commit left the loser's connection installed and the winner's leaked.
+   */
+  /**
+   * A switch bounds every read of the new backend by its budget, and the commit left that deadline
+   * on the socket. A backend that then said nothing for four seconds -- a limbo server sends little
+   * more than a keep-alive every few -- read as lost, and the player was sent to the fallback as
+   * "unavailable". The initial connection never had this: it clears the deadline when login ends.
+   */
+  private static void aQuietBackendKeepsTheSwitchedPlayer() throws Exception {
+    try (ServerSocket lobby = new ServerSocket(0); ServerSocket limbo = new ServerSocket(0)) {
+      Thread lobbyThread = Thread.startVirtualThread(() -> serveLegacyBackend(lobby, 0));
+      Thread limboThread = Thread.startVirtualThread(() -> serveLegacyBackend(limbo, 0));
+      ConduitConfiguration configuration = configuration(
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort())),
+              new BackendServer("limbo", new InetSocketAddress("127.0.0.1", limbo.getLocalPort()))),
+          List.of("lobby"), List.of("lobby"), SecuritySettings.defaults());
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(15_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+          require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
+          MinecraftFrames.write(client.getOutputStream(), legacyChat("/server limbo"));
+          long until = System.currentTimeMillis() + 5_000;
+          while (!"limbo".equals(backendOf(proxy)) && System.currentTimeMillis() < until) Thread.sleep(50);
+          require("limbo".equals(backendOf(proxy)), "the switch reaches limbo, on " + backendOf(proxy));
+          Thread.sleep(6_000);
+          require("limbo".equals(backendOf(proxy)), "a quiet backend keeps the player, on " + backendOf(proxy));
+        }
+        serving.interrupt();
+      }
+      lobbyThread.interrupt();
+      limboThread.interrupt();
+    }
+  }
+
+  private static String backendOf(MinecraftProxy proxy) {
+    List<TrackedPlayer> players = proxy.runtime().playerManager().all();
+    return players.isEmpty() ? "(gone)" : players.getFirst().currentBackend();
   }
 
   private static void rapidServerCommandsOpenOneBackendConnection() throws Exception {

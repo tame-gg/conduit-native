@@ -397,6 +397,7 @@ public final class Phase6Tests {
         int proxyPort = proxy.port();
         Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
         try (Socket client = new Socket("127.0.0.1", proxyPort)) {
+          client.setSoTimeout(15_000);
           MinecraftFrames.write(client.getOutputStream(), new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2});
           MinecraftFrames.write(client.getOutputStream(), loginStart());
           require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 4096), new byte[] {2}), "lobby Login Success");
@@ -418,6 +419,11 @@ public final class Phase6Tests {
             require(java.util.Arrays.equals(MinecraftFrames.read(client.getInputStream(), 4096), new byte[] {2}), "survival finish");
           } else require(java.util.Arrays.equals(maybeBrand, new byte[] {2}), "survival finish");
           MinecraftFrames.write(client.getOutputStream(), new byte[] {2});
+          // A player sends the next /server once the first has landed. Sent any sooner, it is refused
+          // as a switch already in progress. This test used to be rescued from that by a stale switch
+          // deadline that dropped the silent survival backend and fell back to lobby, whose Start
+          // Configuration it then took for its own.
+          readUntilText(client, "Connected to");
           MinecraftFrames.write(client.getOutputStream(), chatCommand("server lobby"));
           byte[] startBack = readUntilPacket(client, 0x67);
           require(PlayPackets.packetId(startBack) == 0x67, "switch back start configuration");
@@ -497,6 +503,13 @@ public final class Phase6Tests {
     require(graph.nodes().size() >= 4, "proxy command nodes");
     byte[] again = gg.tame.conduit.command.CommandGraphs.mergeProxyCommands(ProtocolDefinition.forVersion(765), merged, List.of("lobby"));
     gg.tame.conduit.command.CommandGraph.decode(java.util.Arrays.copyOfRange(again, 1, again.length));
+  }
+  private static void readUntilText(Socket client, String text) throws Exception {
+    for (int attempt = 0; attempt < 16; attempt++) {
+      byte[] packet = MinecraftFrames.read(client.getInputStream(), 4096);
+      if (new String(packet, java.nio.charset.StandardCharsets.UTF_8).contains(text)) return;
+    }
+    throw new AssertionError("never received \"" + text + "\"");
   }
   private static byte[] readUntilPacket(Socket client, int packetId) throws Exception {
     for (int attempt = 0; attempt < 8; attempt++) {

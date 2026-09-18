@@ -1655,6 +1655,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // Client Settings land in that gap, and both servers dropped it with "Bad packet id 21".
       if (!protocol.hasConfiguration()) awaitingBackendJoinGame.hold();
       else awaitingBackendJoinGame.release();
+      // Every read of the new backend so far was bounded by the switch budget. From here it is the
+      // session's backend, which may be as quiet as it likes: left in place, that deadline read four
+      // silent seconds on a limbo server as a lost backend and sent the player to the fallback.
+      next.setReadTimeoutMillis(0);
       synchronized (lock) {
         backend = next;
         switchingTarget = null;
