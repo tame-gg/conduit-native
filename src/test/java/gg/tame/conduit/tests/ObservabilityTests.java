@@ -45,6 +45,7 @@ public final class ObservabilityTests {
 
   public static void run() throws Exception {
     theMetricsAddressComesFromTheConfig();
+    aSettingNothingReadsIsNamed();
     theEndpointServesCountsAndNothingPrivate();
     System.out.println("ObservabilityTests OK");
   }
@@ -75,6 +76,35 @@ public final class ObservabilityTests {
     Path bad = Files.writeString(root.resolve("bad.toml"), BASE_CONFIG + "[metrics]\nprometheus-address = \"nope\"\n");
     try { ConfigurationLoader.load(bad); throw new AssertionError("an address without a port was accepted"); }
     catch (IllegalArgumentException expected) { }
+  }
+
+  /**
+   * A misspelt setting was silently ignored and its default used in its place. It is now named in a
+   * warning, and every configuration shipped in config/ is read without one.
+   */
+  private static void aSettingNothingReadsIsNamed() throws Exception {
+    Path root = TempFiles.dir("conduit-config-unknown");
+    Path typo = Files.writeString(root.resolve("typo.toml"), BASE_CONFIG + "[health]\ninterval_ms = 5000\n[helth]\nenabled = false\n");
+    String warnings = stderrOf(() -> ConfigurationLoader.load(typo));
+    require(warnings.contains("Unknown setting health.interval_ms in typo.toml is ignored")
+        && warnings.contains("Unknown setting helth.enabled in typo.toml is ignored"), "each unread setting is named:\n" + warnings);
+    require(!warnings.contains(root.toString()), "by file name, not its path");
+    try (var shipped = Files.list(Path.of("config"))) {
+      for (Path config : shipped.filter(file -> file.toString().endsWith(".toml")).toList()) {
+        String shippedWarnings = stderrOf(() -> ConfigurationLoader.load(config));
+        require(!shippedWarnings.contains("Unknown setting"), config.getFileName() + " has settings Conduit does not read:\n" + shippedWarnings);
+      }
+    }
+  }
+
+  private interface Load { Object run() throws Exception; }
+
+  private static String stderrOf(Load load) throws Exception {
+    java.io.PrintStream original = System.err;
+    ByteArrayOutputStream captured = new ByteArrayOutputStream();
+    System.setErr(new java.io.PrintStream(captured, true, java.nio.charset.StandardCharsets.UTF_8));
+    try { load.run(); } finally { System.setErr(original); }
+    return captured.toString(java.nio.charset.StandardCharsets.UTF_8);
   }
 
   /**

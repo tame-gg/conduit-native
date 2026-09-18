@@ -23,7 +23,7 @@ public final class ConfigurationLoader {
   private ConfigurationLoader() {}
 
   public static ConduitConfiguration load(Path path) throws IOException {
-    Map<String, String> values = new HashMap<>();
+    Settings values = new Settings();
     List<String> serverOrder = new ArrayList<>();
     String section = "";
     int lineNumber = 0;
@@ -63,9 +63,22 @@ public final class ConfigurationLoader {
           optionalList(values, "servers." + name + ".mod-loaders"));
       servers.add(new BackendServer(name, address, loaders));
     }
-    return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
+    ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
         forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()));
+    // A misspelt setting was silently ignored, and its default quietly used in its place.
+    for (String key : new java.util.TreeSet<>(values.keySet())) {
+      if (!values.read.contains(key)) gg.tame.conduit.log.ConduitLog.warn("Unknown setting " + key + " in " + path.getFileName() + " is ignored");
+    }
+    return configuration;
+  }
+
+  /** The settings, remembering which ones the loader asked for, so those it never did can be named. */
+  private static final class Settings extends HashMap<String, String> {
+    private final java.util.Set<String> read = new java.util.HashSet<>();
+    @Override public String get(Object key) { read.add(String.valueOf(key)); return super.get(key); }
+    @Override public boolean containsKey(Object key) { read.add(String.valueOf(key)); return super.containsKey(key); }
+    @Override public String getOrDefault(Object key, String fallback) { read.add(String.valueOf(key)); return super.getOrDefault(key, fallback); }
   }
 
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {

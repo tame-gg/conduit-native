@@ -241,6 +241,7 @@ version gate's name and message replace these while they apply, and a plugin can
 | Client version gating (`[versions]`) | IMPLEMENTED |
 | Graceful shutdown (bounded transfer then disconnect) | IMPLEMENTED |
 | Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
+| Unknown settings (a misspelt key) named in a startup warning instead of silently ignored | IMPLEMENTED |
 | Metrics HTTP endpoint (Prometheus text format) | IMPLEMENTED (optional, off by default; see Metrics below) |
 | Security (throttle / bot filter / channel guard / attack mode) | IMPLEMENTED (application-level; not DDoS protection) |
 | Modded (known-packs / detection / Forge / NeoForge / Fabric routing / packet queue) | IMPLEMENTED (protocol-level; real-client verified for NeoForge 20.2.93 only) |
