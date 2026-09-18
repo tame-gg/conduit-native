@@ -211,6 +211,24 @@ registers. Plugins may register aliases of their own. Command names are case-ins
 Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.player`, `conduit.server.send.mass`, `conduit.info`, `conduit.maintenance.bypass`, `conduit.drain.bypass`, …
 `/send <your own name> <server>` needs only `conduit.server.send`; `conduit.server.send.player` is for moving somebody else.
 
+## Server list
+
+```toml
+[status]
+motd = "&bConduit&r network\n&7Two lines, if you like"
+display-max-players = 100
+favicon = "server-icon.png"
+```
+
+`motd` takes `&` codes: `&0`-`&9` and `&a`-`&f` colours (which, as in the game, clear bold and italic),
+`&l` bold, `&o` italic, `&r` plain; `\n` starts the second line; `&k`, `&m` and `&n` are dropped. It is
+the plain `"Conduit"` when unset. `display-max-players` (default 100) is only the number shown after the
+slash: Conduit has no join cap. `favicon` is a 64x64 PNG, relative to the config file; one that cannot be
+read, is the wrong size, or is over about 20 KB is logged at load and the list shows no icon. The answer
+always carries the real online count and up to 12 online players' names. Maintenance's MOTD and the
+version gate's name and message replace these while they apply, and a plugin can change any of it in
+`ServerListPingEvent`. Applied live by `/conduit reload`.
+
 ## Operations (Phase 1)
 
 | Feature | Status |
@@ -596,6 +614,9 @@ Scheduler tasks run on their own plugin's `conduit-plugin-<id>-N` threads, never
 threads or another plugin's, so a task that blocks holds up only its own plugin; a repeating task never
 overlaps itself. A task that throws is logged and, if repeating, runs again next time. A disabled plugin's
 threads end once any task still running returns.
+
+`proxy().serverListDefaults()` is the configured `[status]` answer, and `RegisteredServer.ping()` asks a
+backend for its status now instead of reading the cached `status()`.
 
 Other plugin formats plug in through `PluginManager.registerLoader(PluginLoader)`. The Velocity layer
 uses it, from the one bootstrap Conduit calls (`VelocityBoot.install(ConduitProxy)`), and its plugins

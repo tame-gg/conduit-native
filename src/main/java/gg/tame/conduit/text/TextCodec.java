@@ -1,11 +1,14 @@
 package gg.tame.conduit.text;
 
 import gg.tame.conduit.api.text.Text;
+import gg.tame.conduit.api.text.TextColor;
 import gg.tame.conduit.protocol.MinecraftOutput;
 import gg.tame.conduit.protocol.NetworkNbt;
+import gg.tame.conduit.protocol.text.ComponentCodec;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 
 /** Encodes native {@link Text} to network NBT or JSON chat components. */
 public final class TextCodec {
@@ -24,13 +27,15 @@ public final class TextCodec {
 
   private static void writeJson(StringBuilder json, Text text) {
     json.append('{');
-    json.append("\"text\":\"").append(escape(text.content())).append('"');
+    json.append("\"text\":");
+    ComponentCodec.quote(json, text.content());
     if (text.color() != null) json.append(",\"color\":\"").append(text.color().colorName()).append('"');
     if (text.isBold()) json.append(",\"bold\":true");
     if (text.isItalic()) json.append(",\"italic\":true");
     if (text.clickCommand() != null) {
-      json.append(",\"clickEvent\":{\"action\":\"run_command\",\"value\":\"")
-          .append(escape(text.clickCommand())).append("\"}");
+      json.append(",\"clickEvent\":{\"action\":\"run_command\",\"value\":");
+      ComponentCodec.quote(json, text.clickCommand());
+      json.append('}');
     }
     if (text.hover() != null) {
       json.append(",\"hoverEvent\":{\"action\":\"show_text\",\"contents\":");
@@ -98,8 +103,44 @@ public final class TextCodec {
     output.writeByte(value);
   }
 
-  private static String escape(String value) {
-    return value.replace("\\", "\\\\").replace("\"", "\\\"");
+  /**
+   * Reads a JSON component back into Text, for a reason a backend wrote. Text has no translatable
+   * or score parts: a translatable arrives as its key, and colours outside the sixteen named ones
+   * are dropped. Something that is not JSON at all is taken as literal text.
+   */
+  public static Text fromJson(String json) {
+    Object tree = ComponentCodec.parseJson(json);
+    return tree == null ? Text.of(json) : fromTree(tree);
+  }
+
+  private static Text fromTree(Object node) {
+    if (node instanceof List<?> list) {
+      // A bare array is its first element with the rest appended, which is how the client reads it.
+      if (list.isEmpty()) return Text.empty();
+      Text first = fromTree(list.getFirst());
+      for (Object rest : list.subList(1, list.size())) first = first.append(fromTree(rest));
+      return first;
+    }
+    if (!(node instanceof Map<?, ?> map)) return Text.of(node == null ? "" : String.valueOf(node));
+    Object content = map.get("text") != null ? map.get("text") : map.get("translate");
+    Text text = Text.of(content instanceof String string ? string : "");
+    if (map.get("color") instanceof String name) {
+      for (TextColor color : TextColor.values()) if (color.colorName().equals(name)) text = text.color(color);
+    }
+    if (Boolean.TRUE.equals(map.get("bold"))) text = text.bold();
+    if (Boolean.TRUE.equals(map.get("italic"))) text = text.italic();
+    if (map.get("clickEvent") instanceof Map<?, ?> click && "run_command".equals(click.get("action"))
+        && click.get("value") instanceof String command) {
+      text = text.clickRun(command);
+    }
+    if (map.get("hoverEvent") instanceof Map<?, ?> hover && "show_text".equals(hover.get("action"))) {
+      Object shown = hover.get("contents") != null ? hover.get("contents") : hover.get("value");
+      if (shown != null) text = text.hover(fromTree(shown));
+    }
+    if (map.get("extra") instanceof List<?> extra) {
+      for (Object child : extra) text = text.append(fromTree(child));
+    }
+    return text;
   }
 
   public static void writePlainNbt(DataOutput output, String text) throws IOException {

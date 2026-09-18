@@ -24,6 +24,14 @@ port = 25566
 initial = ["lobby"]
 fallback = ["lobby"]
 
+# Server list entry. motd takes &-codes (&0-&9 &a-&f colours, &l bold, &o italic, &r plain) and \n
+# for a second line. display-max-players is only the number shown after the slash; it limits nothing.
+# favicon is a 64x64 PNG, relative to this file.
+[status]
+motd = "Conduit"
+display-max-players = 100
+# favicon = "server-icon.png"
+
 # Optional ViaVersion ecosystem translation (disabled by default).
 # See docs/VIAVERSION.md and docs/LICENSING_VIA.md (GPLv3 Via* artifacts).
 [translation]

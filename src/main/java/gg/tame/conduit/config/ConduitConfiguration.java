@@ -61,6 +61,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
   public SecuritySettings security() { return ops.security(); }
   public ModdedSettings modded() { return ops.modded(); }
   public TranslationSettings translation() { return ops.translation(); }
+  public StatusSettings status() { return ops.status(); }
 
   public ConduitConfiguration withOps(OpsSettings replacement) {
     return new ConduitConfiguration(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends,

@@ -64,12 +64,20 @@ public final class ConfigurationLoader {
     }
     return new ConduitConfiguration(new InetSocketAddress(host, port), maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
-        forwardedAddress(values), ops(values));
+        forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()));
   }
 
-  private static OpsSettings ops(Map<String, String> values) {
+  private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
-    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values));
+    return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory));
+  }
+
+  private static StatusSettings status(Map<String, String> values, Path configDirectory) {
+    return new StatusSettings(
+        StatusSettings.parseMotd(optionalString(values, "status.motd", StatusSettings.DEFAULT_MOTD)),
+        optionalInteger(values, "status.display-max-players", StatusSettings.DEFAULT_DISPLAY_MAX_PLAYERS),
+        Optional.ofNullable(values.get("status.favicon")).filter(file -> !file.isBlank())
+            .flatMap(file -> StatusSettings.favicon(configDirectory.resolve(file).normalize())));
   }
 
   private static TranslationSettings translation(Map<String, String> values) {

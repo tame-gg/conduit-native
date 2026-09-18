@@ -161,6 +161,11 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     });
   }
   @Override public boolean shuttingDown() { return closed.get() || gracefulShutdown.isShuttingDown(); }
+  /** Read per call, so a reload is seen at once. */
+  @Override public gg.tame.conduit.api.server.ServerListDefaults serverListDefaults() {
+    var status = configuration.status();
+    return new gg.tame.conduit.api.server.ServerListDefaults(status.motd(), status.displayMaxPlayers(), status.favicon());
+  }
   /** Fires ProxyStartEvent, once; the matching ProxyShutdownEvent comes from {@link #close()}. */
   public void started() {
     if (started.compareAndSet(false, true)) events.fire(new gg.tame.conduit.api.event.proxy.ProxyStartEvent(this));
@@ -205,6 +210,8 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       live.add("security.*");
       modded.applySettings(next.modded());
       live.add("modded.*");
+      // Read from the configuration on every ping, so replacing it below is all it takes.
+      live.add("status.*");
       this.configuration = current.withOps(next.ops());
       if (!restart.isEmpty()) {
         return new ReloadResult(true, restart, live, null);
@@ -310,6 +317,22 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       return selector.health() != null && selector.health().isDraining(server.name());
     }
     @Override public gg.tame.conduit.api.server.ServerStatus status() { return selector.status(server.name()); }
+    /** A socket thread of its own: the probe blocks for up to the health timeout. The cache is left alone. */
+    @Override public CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping() {
+      var result = new CompletableFuture<gg.tame.conduit.api.server.ServerStatus>();
+      gg.tame.conduit.network.SocketThreads.start(() -> {
+        try {
+          result.complete(gg.tame.conduit.protocol.BackendStatusProbe.probe(server.address(), runtime.configuration().health().timeoutMs())
+              .map(ad -> gg.tame.conduit.api.server.ServerStatus.online(server.name(), ad.protocol(), ad.name(),
+                  ad.onlinePlayers(), ad.maxPlayers(), ad.latencyMillis(), java.time.Instant.now()))
+              .orElseGet(() -> gg.tame.conduit.api.server.ServerStatus.offline(server.name(), java.time.Instant.now())));
+        } catch (RuntimeException | Error failure) {
+          result.complete(gg.tame.conduit.api.server.ServerStatus.offline(server.name(), java.time.Instant.now()));
+          throw failure;
+        }
+      });
+      return result;
+    }
     @Override public CompletableFuture<Boolean> connect(Player player) { return player.connect(this); }
     BackendServer backend() { return server; }
   }

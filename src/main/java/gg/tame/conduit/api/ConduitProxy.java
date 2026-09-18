@@ -9,7 +9,9 @@ import gg.tame.conduit.api.player.PlayerLookup;
 import gg.tame.conduit.api.plugin.Plugin;
 import gg.tame.conduit.api.plugin.PluginManager;
 import gg.tame.conduit.api.scheduler.Scheduler;
+import gg.tame.conduit.api.server.ServerListDefaults;
 import gg.tame.conduit.api.server.ServerManager;
+import gg.tame.conduit.api.text.Text;
 import java.net.InetSocketAddress;
 import java.util.Optional;
 
@@ -47,4 +49,12 @@ public interface ConduitProxy {
    */
   void shutdown();
   boolean shuttingDown();
+  /**
+   * The server-list answer as the operator configured it ({@code [status]} in conduit.toml), for a
+   * plugin that wants to start from it. What a given client is actually sent can differ: see
+   * {@code ServerListPingEvent}. This default answers with Conduit's built-in defaults.
+   */
+  default ServerListDefaults serverListDefaults() {
+    return new ServerListDefaults(Text.of("Conduit"), 100, Optional.empty());
+  }
 }

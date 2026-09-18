@@ -50,6 +50,12 @@ public final class ComponentCodec {
     return out.append('}').toString();
   }
 
+  /** A JSON component as a tree of String, List, Map, Integer, Double and Boolean, or null when it does not parse. */
+  public static Object parseJson(String json) { return Json.parse(json); }
+
+  /** Appends {@code value} as a JSON string, escaping quotes, backslashes and control characters. */
+  public static void quote(StringBuilder out, String value) { Json.quote(out, value); }
+
   /** Best-effort plain text, for places that genuinely cannot carry structure. */
   public static String plain(Object component) {
     StringBuilder text = new StringBuilder();

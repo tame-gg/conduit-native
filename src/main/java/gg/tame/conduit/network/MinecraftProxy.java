@@ -2,6 +2,8 @@ package gg.tame.conduit.network;
 
 import gg.tame.conduit.api.event.player.PlayerAuthenticatedEvent;
 import gg.tame.conduit.api.event.player.PlayerLoginEvent;
+import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
+import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.auth.Authenticators;
 import gg.tame.conduit.auth.AuthenticationException;
 import gg.tame.conduit.auth.PlayerAuthenticator;
@@ -32,6 +34,7 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.file.Path;
 import java.security.KeyPair;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
@@ -180,7 +183,7 @@ public final class MinecraftProxy implements AutoCloseable {
           : statusFallbackProtocol();
       if (handshake.nextState() == 1) {
         runtime.security().botFilter().recordStatusPing(remote);
-        serveStatus(transport, protocol, handshake.protocolVersion());
+        serveStatus(transport, protocol, handshake, (java.net.InetSocketAddress) client.getRemoteSocketAddress());
         return;
       }
       if (!ProtocolDefinition.hasCodec(handshake.protocolVersion())) {
@@ -283,19 +286,39 @@ public final class MinecraftProxy implements AutoCloseable {
         .orElseThrow(() -> new IllegalStateException("no protocol tables are registered"));
   }
 
-  private void serveStatus(PacketTransport client, ProtocolDefinition protocol, int clientProtocol) throws IOException {
-    String description = "Conduit";
+  /** Status sample size: what the vanilla server sends, and about what the client's tooltip shows. */
+  private static final int STATUS_SAMPLE = 12;
+
+  private void serveStatus(PacketTransport client, ProtocolDefinition protocol, Handshake handshake,
+                           java.net.InetSocketAddress remote) throws IOException {
+    byte[] request = client.read(configuration.maxFrameBytes());
+    StatusResponder.checkRequest(protocol, request);
+    int clientProtocol = handshake.protocolVersion();
+    // Read per ping from the runtime's configuration, which a reload replaces, not the one this
+    // listener started with.
+    var status = runtime.configuration().status();
+    Text description = status.motd();
     String versionName = "Conduit " + protocol.version().displayName();
     int advertised = protocol.version().number();
     if (runtime.maintenance().isActive()) {
-      description = runtime.maintenance().motd();
+      description = Text.of(runtime.maintenance().motd());
     }
     if (runtime.versionGate().isEnabled() && !runtime.versionGate().allows(clientProtocol)) {
       versionName = runtime.versionGate().pingVersionName(clientProtocol);
       advertised = runtime.versionGate().statusProtocolAdvertisement(clientProtocol).orElse(clientProtocol);
-      if (!runtime.maintenance().isActive()) description = runtime.versionGate().kickMessage();
+      if (!runtime.maintenance().isActive()) description = Text.of(runtime.versionGate().kickMessage());
     }
-    client.write(StatusResponder.response(protocol, client.read(configuration.maxFrameBytes()), description, versionName, advertised));
+    var online = runtime.players().all();
+    List<ServerListPingEvent.SamplePlayer> sample = online.stream().limit(STATUS_SAMPLE)
+        .map(player -> new ServerListPingEvent.SamplePlayer(player.username(), player.uniqueId())).toList();
+    String host = gg.tame.conduit.modded.FmlAddressMarkers.parse(handshake.requestedHost()).cleanHost();
+    ServerListPingEvent ping = runtime.events().fire(new ServerListPingEvent(remote,
+        host.isEmpty() ? Optional.empty() : Optional.of(host), clientProtocol, description,
+        status.displayMaxPlayers(), online.size(), sample, versionName, advertised, status.favicon()));
+    // A client left with no answer at all shows the server as unreachable, which is what a plugin
+    // cancelling this asks for.
+    if (ping.cancelled()) return;
+    client.write(StatusResponder.response(protocol, request, ping));
     client.write(StatusResponder.pong(protocol, client.read(configuration.maxFrameBytes())));
   }
   /**

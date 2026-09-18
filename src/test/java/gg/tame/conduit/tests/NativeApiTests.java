@@ -15,6 +15,7 @@ import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
 import gg.tame.conduit.api.event.player.PlayerServerSwitchEvent;
 import gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent;
+import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
 import gg.tame.conduit.api.player.ConnectResult;
 import gg.tame.conduit.api.player.Player;
 import gg.tame.conduit.api.plugin.Plugin;
@@ -22,6 +23,7 @@ import gg.tame.conduit.api.plugin.PluginDescription;
 import gg.tame.conduit.api.scheduler.ScheduledTask;
 import gg.tame.conduit.api.scheduler.Scheduler;
 import gg.tame.conduit.api.server.RegisteredServer;
+import gg.tame.conduit.api.server.ServerStatus;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.api.text.TextColor;
 import gg.tame.conduit.auth.PlayerAuthenticator;
@@ -32,6 +34,7 @@ import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ForwardingMode;
 import gg.tame.conduit.config.HealthSettings;
 import gg.tame.conduit.config.OpsSettings;
+import gg.tame.conduit.config.StatusSettings;
 import gg.tame.conduit.event.ConduitEventManager;
 import gg.tame.conduit.login.PlayerProfile;
 import gg.tame.conduit.network.MinecraftProxy;
@@ -48,6 +51,7 @@ import gg.tame.conduit.protocol.PluginMessage;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.runtime.ConduitRuntime;
 import gg.tame.conduit.scheduler.ConduitScheduler;
+import gg.tame.conduit.text.TextCodec;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
@@ -87,6 +91,7 @@ public final class NativeApiTests {
     throwingTasksKeepRepeatingAndFinishedOnesAreForgotten();
     aDisabledPluginCannotReschedule();
     aBlockingPluginTaskHoldsUpNoOtherPlugin();
+    statusSettingsLoadFromConfig();
     loginCanBeDeniedAndJoinEventsFireInOrder();
     onlineLoginFiresAuthenticated();
     initialServerCanBeChosenCancelledOrRedirected();
@@ -97,6 +102,9 @@ public final class NativeApiTests {
     disconnectShowsTheKickScreen();
     aThrowingPermissionProviderDenies();
     proxyLifecycleReachesPluginsInOrder();
+    theServerListShowsTheConfiguredEntry();
+    pingListenersCanRewriteCancelAndSurviveAThrowingOne();
+    aLiveBackendPingAsksTheBackend();
     System.out.println("NativeApiTests OK");
   }
 
@@ -229,6 +237,42 @@ public final class NativeApiTests {
 
   private static long threads(String prefix) {
     return Thread.getAllStackTraces().keySet().stream().filter(thread -> thread.getName().startsWith(prefix)).count();
+  }
+
+  private static void statusSettingsLoadFromConfig() throws Exception {
+    Text motd = StatusSettings.parseMotd("&aGreen &lbold&r plain\\nline & two&k!");
+    require(TextCodec.toJson(motd).equals("{\"text\":\"\",\"extra\":[{\"text\":\"Green \",\"color\":\"green\"},"
+        + "{\"text\":\"bold\",\"color\":\"green\",\"bold\":true},{\"text\":\" plain\\nline & two!\"}]}"),
+        "& codes become components and \\n a line break, got " + TextCodec.toJson(motd));
+    require(StatusSettings.parseMotd("Conduit").equals(Text.of("Conduit")), "a MOTD with no codes is plain text");
+
+    Path dir = TempFiles.dir("conduit-status-config");
+    Files.write(dir.resolve("icon.png"), png(64, 64));
+    Files.write(dir.resolve("big.png"), png(128, 128));
+    Files.write(dir.resolve("icon.txt"), "not a png".getBytes(StandardCharsets.UTF_8));
+    require(StatusSettings.favicon(dir.resolve("big.png")).isEmpty(), "a favicon that is not 64x64 is refused");
+    require(StatusSettings.favicon(dir.resolve("icon.txt")).isEmpty(), "one that is not a PNG is refused");
+    require(StatusSettings.favicon(dir.resolve("missing.png")).isEmpty(), "one that cannot be read is refused, not fatal");
+    Path config = dir.resolve("conduit.toml");
+    String base = "[listener]\nhost = \"127.0.0.1\"\nport = 25565\nmax-frame-bytes = 1048576\n[forwarding]\nmode = \"none\"\n"
+        + "[servers.lobby]\naddress = \"127.0.0.1:25566\"\n[routing]\ninitial = [\"lobby\"]\nfallback = [\"lobby\"]\n";
+    Files.writeString(config, base);
+    var defaults = gg.tame.conduit.config.ConfigurationLoader.load(config).status();
+    require(defaults.motd().equals(Text.of("Conduit")) && defaults.displayMaxPlayers() == 100 && defaults.favicon().isEmpty(),
+        "no [status] section keeps the old MOTD, got " + defaults);
+    Files.writeString(config, base + "[status]\nmotd = \"&cHi\"\ndisplay-max-players = 250\nfavicon = \"icon.png\"\n");
+    var configured = gg.tame.conduit.config.ConfigurationLoader.load(config).status();
+    require(configured.motd().equals(Text.of("Hi").color(TextColor.RED)) && configured.displayMaxPlayers() == 250, "configured, got " + configured);
+    require(configured.favicon().orElseThrow().equals("data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(png(64, 64))),
+        "the favicon, relative to the config file, as a data URI");
+    Files.writeString(config, base + "[status]\nfavicon = \"big.png\"\n");
+    require(gg.tame.conduit.config.ConfigurationLoader.load(config).status().favicon().isEmpty(), "a bad favicon does not stop the load");
+  }
+
+  /** Just the header a PNG reader looks at for the size; the body is never decoded. */
+  private static byte[] png(int width, int height) {
+    return java.nio.ByteBuffer.allocate(33).putLong(0x89504E470D0A1A0AL).putInt(13).putInt(0x49484452)
+        .putInt(width).putInt(height).put(new byte[] {8, 6, 0, 0, 0}).putInt(0).array();
   }
 
   // --- sessions -----------------------------------------------------------------------------
@@ -554,6 +598,97 @@ public final class NativeApiTests {
         "start once, shutdown while still enabled, then disable, got " + SIGNALS);
   }
 
+  /**
+   * Every ping was answered "Conduit", 0 of 0, no sample, no icon, whatever was configured or online,
+   * and the description was escaped for quotes and backslashes only, so a line break broke the JSON.
+   */
+  private static void theServerListShowsTheConfiguredEntry() throws Exception {
+    StatusSettings status = new StatusSettings(StatusSettings.parseMotd("&bWelcome\\nline \"two\"\t"), 250,
+        Optional.of("data:image/png;base64,AAAA"));
+    try (Backend lobby = new Backend("lobby"); Fixture proxy = new Fixture(List.of(lobby), List.of("lobby"), List.of("lobby"), status)) {
+      String empty = ping(proxy.port(), "localhost");
+      require(empty.contains("\"players\":{\"max\":250,\"online\":0}"), "the configured max and nobody online, got " + empty);
+      try (Client client = Client.join(proxy.port(), "listed")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
+        Player player = proxy.runtime.player("listed").orElseThrow();
+        String json = ping(proxy.port(), "localhost");
+        require(json.contains("\"players\":{\"max\":250,\"online\":1,\"sample\":[{\"name\":\"listed\",\"id\":\"" + player.uniqueId() + "\"}]}"),
+            "the real online count and a sample of who is on, got " + json);
+        require(json.contains("\"description\":{\"text\":\"Welcome\\nline \\\"two\\\"\\t\\u0001\",\"color\":\"aqua\"}"),
+            "the configured MOTD as a component, every control character escaped, got " + json);
+        require(json.contains("\"favicon\":\"data:image/png;base64,AAAA\"") && json.contains("\"protocol\":47}"), "icon and version, got " + json);
+        require(gg.tame.conduit.protocol.text.ComponentCodec.parseJson(json) instanceof java.util.Map<?, ?>, "and it is JSON a client can read");
+      }
+      var defaults = proxy.runtime.serverListDefaults();
+      require(defaults.description().equals(status.motd()) && defaults.maxPlayers() == 250 && defaults.favicon().equals(status.favicon()),
+          "plugins can read the configured defaults, got " + defaults);
+    }
+  }
+
+  private static void pingListenersCanRewriteCancelAndSurviveAThrowingOne() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Fixture proxy = new Fixture(List.of(lobby), List.of("lobby"), List.of("lobby"))) {
+      proxy.runtime.events().register(new TestPlugin("careless"), new Object() {
+        @Subscribe(order = Subscribe.Order.FIRST) public void boom(ServerListPingEvent event) { event.setDescription(null); }
+      });
+      String untouched = ping(proxy.port(), "localhost");
+      require(untouched.contains("\"description\":{\"text\":\"Conduit\"}") && untouched.contains("\"max\":100,\"online\":0"),
+          "a throwing listener still leaves the default answer, got " + untouched);
+      UUID ghost = new UUID(1, 2);
+      proxy.recorder.hook = event -> {
+        if (event instanceof ServerListPingEvent ping) {
+          ping.setDescription(Text.of("Rewritten").color(TextColor.GOLD));
+          ping.setMaxPlayers(7);
+          ping.setOnlinePlayers(3);
+          ping.setSamplePlayers(List.of(new ServerListPingEvent.SamplePlayer("ghost", ghost)));
+          ping.setVersionName("Custom \"build\"");
+          ping.setVersionProtocol(9999);
+          ping.setFavicon(Optional.of("data:image/png;base64,BBBB"));
+        }
+      };
+      String json = ping(proxy.port(), "play.example.net\0FML3\0");
+      require(json.equals("{\"version\":{\"name\":\"Custom \\\"build\\\"\",\"protocol\":9999},\"players\":{\"max\":7,\"online\":3,"
+          + "\"sample\":[{\"name\":\"ghost\",\"id\":\"" + ghost + "\"}]},\"description\":{\"text\":\"Rewritten\",\"color\":\"gold\"},"
+          + "\"favicon\":\"data:image/png;base64,BBBB\"}"), "whatever the listener set is what the client gets, got " + json);
+      ServerListPingEvent seen = proxy.recorder.of(ServerListPingEvent.class).getLast();
+      require(seen.virtualHost().equals(Optional.of("play.example.net")) && seen.protocolVersion() == 47
+          && seen.remoteAddress().getAddress().isLoopbackAddress(), "who asked, and through which host, Forge marker removed");
+
+      proxy.recorder.hook = event -> { if (event instanceof ServerListPingEvent ping) ping.setCancelled(true); };
+      require(ping(proxy.port(), "localhost") == null, "a cancelled ping is closed with no answer");
+      require(proxy.recorder.of(ServerListPingEvent.class).size() == 3, "one event per ping");
+    }
+  }
+
+  private static void aLiveBackendPingAsksTheBackend() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Fixture proxy = new Fixture(List.of(lobby), List.of("lobby"), List.of("lobby"))) {
+      // The proxy's own status answer stands in for a backend's.
+      RegisteredServer self = proxy.runtime.servers().register("self", new InetSocketAddress("127.0.0.1", proxy.port()));
+      ServerStatus live = self.ping().get(10, TimeUnit.SECONDS);
+      require(live.online() && live.maxPlayers().orElse(-1) == 100 && live.onlinePlayers().orElse(-1) == 0, "asked now, got " + live);
+      RegisteredServer gone = proxy.runtime.servers().register("gone", new InetSocketAddress("127.0.0.1", reservePort()));
+      require(!gone.ping().get(10, TimeUnit.SECONDS).online(), "an unreachable backend pings offline rather than failing");
+    }
+  }
+
+  /** A raw 1.8 server-list ping: the status JSON, or null when the proxy closed without answering. */
+  private static String ping(int port, String host) throws Exception {
+    try (Socket socket = new Socket("127.0.0.1", port)) {
+      socket.setSoTimeout(10_000);
+      MinecraftFrames.write(socket.getOutputStream(), new Handshake(47, host, 25565, 1).encode());
+      MinecraftFrames.write(socket.getOutputStream(), new byte[] {0});
+      byte[] response;
+      try { response = MinecraftFrames.read(socket.getInputStream(), 1 << 20); }
+      catch (java.net.SocketTimeoutException stalled) { throw new AssertionError("no answer and no close"); }
+      catch (IOException closed) { return null; }
+      require(id(response) == 0, "a status response, got id " + id(response));
+      String json = text(response);
+      MinecraftFrames.write(socket.getOutputStream(), packet(1, output -> output.writeLong(42)));
+      byte[] pong = MinecraftFrames.read(socket.getInputStream(), 64);
+      require(id(pong) == 1 && java.nio.ByteBuffer.wrap(pong, 1, 8).getLong() == 42, "the pong echoes the nonce");
+      return json;
+    }
+  }
+
   private static final List<String> SIGNALS = Collections.synchronizedList(new ArrayList<>());
   public static void signal(String value) { SIGNALS.add(value); }
 
@@ -604,10 +739,17 @@ public final class NativeApiTests {
     Fixture(List<Backend> backends, List<String> initial, List<String> fallback, AuthenticationSettings auth, PlayerAuthenticator authenticator) throws Exception {
       this(backends, initial, fallback, TempFiles.dir("conduit-native-api").resolve("plugins"), auth, authenticator);
     }
+    Fixture(List<Backend> backends, List<String> initial, List<String> fallback, StatusSettings status) throws Exception {
+      this(backends, initial, fallback, TempFiles.dir("conduit-native-api").resolve("plugins"), OFFLINE, null, status);
+    }
     Fixture(List<Backend> backends, List<String> initial, List<String> fallback, Path plugins,
             AuthenticationSettings auth, PlayerAuthenticator authenticator) throws Exception {
+      this(backends, initial, fallback, plugins, auth, authenticator, null);
+    }
+    Fixture(List<Backend> backends, List<String> initial, List<String> fallback, Path plugins,
+            AuthenticationSettings auth, PlayerAuthenticator authenticator, StatusSettings status) throws Exception {
       OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, new HealthSettings(false, 10_000, 1_500, 3, 2),
-          null, null, null, null, null);
+          null, null, null, null, null, status);
       ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 1 << 20,
           ForwardingMode.NONE, Optional.empty(), backends.stream().map(Backend::server).toList(), initial, fallback,
           auth, Optional.empty(), ops);

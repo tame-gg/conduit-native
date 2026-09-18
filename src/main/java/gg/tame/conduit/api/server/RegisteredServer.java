@@ -17,6 +17,12 @@ public interface RegisteredServer {
         ? gg.tame.conduit.api.server.ServerStatus.online(getName(), -1, "", -1, -1, -1, java.time.Instant.now())
         : gg.tame.conduit.api.server.ServerStatus.offline(getName(), java.time.Instant.now());
   }
+  /**
+   * Asks the backend for its status now, rather than reading the cached {@link #status()}. Completes
+   * off the calling thread, with an offline status when the backend does not answer in time; never
+   * exceptionally. This default answers with the cached status.
+   */
+  default CompletableFuture<ServerStatus> ping() { return CompletableFuture.completedFuture(status()); }
   CompletableFuture<Boolean> connect(Player player);
   /** Players on this backend right now. Empty for a server the proxy does not have registered. */
   default Collection<Player> players() { return List.of(); }

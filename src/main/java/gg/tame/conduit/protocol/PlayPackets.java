@@ -31,7 +31,7 @@ public final class PlayPackets {
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT));
       if (ProtocolEras.textComponentNbt(protocol.version().number())) NetworkNbt.stringComponent(output, message);
-      else MinecraftOutput.string(output, "{\"text\":\"" + message.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
+      else MinecraftOutput.string(output, gg.tame.conduit.protocol.text.ComponentCodec.literalJson(message));
     }
     return bytes.toByteArray();
   }
