@@ -102,6 +102,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final java.util.Set<BackendConnection> open = java.util.concurrent.ConcurrentHashMap.newKeySet();
   private volatile boolean closed;
   private volatile boolean expectClientLoginAck;
+  /** The backend's login asked the client something, so an answer may still be in flight. */
+  private volatile boolean loginQueriesRelayed;
   /**
    * The command name a client with no command tree last sent the backend to complete, until the
    * backend's reply has had Conduit's matching commands added. That reply is the only place such a
@@ -610,7 +612,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (toClient == null) continue;
         writeClient(toClient);
         loginPipeline.observe(PacketDirection.SERVER_TO_CLIENT, toClient);
-        if (pump == null && connection.login().awaitingLoginQuery()) pump = new LoginQueryPump(connection);
+        if (pump == null && connection.login().awaitingLoginQuery()) {
+          pump = new LoginQueryPump(connection);
+          loginQueriesRelayed = true;
+        }
         if (pump != null) pump.rethrow();
         // Via answers Login Success on the old client's behalf, and it has to be sent while the
         // backend is still reading Login. Leaving it queued until the next flush delivers a
@@ -842,9 +847,21 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private boolean handleClientPacket(byte[] packet) throws IOException {
     int id = PlayPackets.packetId(packet);
     rememberClientInformation(packet, id);
-    if (expectClientLoginAck
+    boolean loginAck = expectClientLoginAck
         && protocol.is(ConnectionState.LOGIN, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.LOGIN_ACKNOWLEDGED)
-        && packet.length <= 2) {
+        && packet.length <= 2;
+    if (expectClientLoginAck && loginQueriesRelayed && !loginAck) {
+      // Conduit reads the client as configuring from the moment it writes Login Success, but the
+      // client is still logging in until it acknowledges that. When the login asked the client
+      // anything, what comes first may be an answer still in flight, whose id 0x02 is Finish
+      // Configuration once read as Configuration. It went to the backend as one, and the backend's
+      // Play followed to a client that had not finished configuring. The backend has left Login, so
+      // there is nobody to answer.
+      gg.tame.conduit.log.ConduitLog.warn("Dropped Login packet id=0x" + Integer.toHexString(id) + " from " + username()
+          + " after the backend finished its login");
+      return true;
+    }
+    if (loginAck) {
       expectClientLoginAck = false;
       // Withheld from the backend, because Conduit acknowledged that login itself and a second
       // acknowledgement is a stray packet. Shown to the translator anyway: this is the packet it

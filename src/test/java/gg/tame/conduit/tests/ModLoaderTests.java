@@ -76,6 +76,7 @@ public final class ModLoaderTests {
     fml1HandshakeReset();
     capturedNeoForgeLogin();
     knownPacksOfAModdedClient();
+    aLateLoginAnswerIsNotAFinishedConfiguration();
     System.out.println("ModLoaderTests passed.");
   }
 
@@ -856,6 +857,71 @@ public final class ModLoaderTests {
       if (reachesBackend) require(Arrays.equals(backendGot.get(), clientKnownPacks), "the backend gets the client's Known Packs byte for byte");
       else require(backendGot.get() == null, "a refused Known Packs list never reaches the backend");
       return reply;
+    }
+  }
+
+  /**
+   * Conduit reads the client as configuring from the moment it writes Login Success, but the client
+   * is logging in until it acknowledges that. A login answer still in flight has id 0x02, which in
+   * Configuration is Finish Configuration: it went to the backend as one, and the backend's Play
+   * followed to a client that had not finished configuring. The backend has left Login by then, so
+   * there is nobody to give the late answer to.
+   */
+  private static void aLateLoginAnswerIsNotAFinishedConfiguration() throws Exception {
+    ProtocolDefinition v1202 = ProtocolDefinition.forVersion(764);
+    UUID id = new UUID(8, 8);
+    try (ServerSocket backendListener = new ServerSocket(0)) {
+      AtomicReference<Throwable> backendFailure = new AtomicReference<>();
+      AtomicReference<byte[]> afterAck = new AtomicReference<>();
+      Thread backend = Thread.startVirtualThread(() -> {
+        try (Socket socket = backendListener.accept()) {
+          socket.setSoTimeout(5_000);
+          InputStream in = socket.getInputStream();
+          OutputStream out = socket.getOutputStream();
+          MinecraftFrames.read(in, 1 << 20);
+          MinecraftFrames.read(in, 1 << 20);
+          // A query, then Login Success without waiting for its answer.
+          MinecraftFrames.write(out, loginPluginRequest(v1202, 0, "fml:loginwrapper", new byte[] {1}));
+          ByteArrayOutputStream success = new ByteArrayOutputStream();
+          try (DataOutputStream body = new DataOutputStream(success)) {
+            body.writeByte(0x02);
+            body.writeLong(id.getMostSignificantBits());
+            body.writeLong(id.getLeastSignificantBits());
+            MinecraftOutput.string(body, "player");
+            MinecraftOutput.varInt(body, 0);
+          }
+          MinecraftFrames.write(out, success.toByteArray());
+          require(MinecraftFrames.read(in, 1 << 20)[0] == 0x03, "backend gets Login Acknowledged");
+          afterAck.set(MinecraftFrames.read(in, 1 << 20));
+        } catch (Throwable failure) {
+          backendFailure.set(failure);
+        }
+      });
+      ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 1 << 20,
+          ForwardingMode.NONE, Optional.empty(),
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", backendListener.getLocalPort()))),
+          List.of("lobby"), List.of());
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(5_000);
+          InputStream in = client.getInputStream();
+          OutputStream out = client.getOutputStream();
+          MinecraftFrames.write(out, new Handshake(764, "local", 25565, 2).encode());
+          MinecraftFrames.write(out, LoginStart.encode(new PlayerProfile(id, "player", List.of(), false), v1202));
+          require(MinecraftFrames.read(in, 1 << 20)[0] == 0x04, "the query reaches the client");
+          require(MinecraftFrames.read(in, 1 << 20)[0] == 0x02, "then Login Success");
+          MinecraftFrames.write(out, loginPluginResponse(v1202, 0, new byte[] {1}));
+          MinecraftFrames.write(out, new byte[] {0x03});
+          MinecraftFrames.write(out, new PluginMessage("minecraft:brand", PluginMessage.brandPayload("vanilla")).encode(0x01));
+          backend.join(5_000);
+        }
+        serving.interrupt();
+      }
+      if (backendFailure.get() != null) throw new AssertionError("mock backend: " + backendFailure.get(), backendFailure.get());
+      require(afterAck.get() != null && afterAck.get()[0] == 0x01,
+          "the client's first Configuration packet is the first the backend sees (got id "
+              + (afterAck.get() == null ? "none" : afterAck.get()[0]) + ", 0x02 is Finish Configuration)");
     }
   }
 
