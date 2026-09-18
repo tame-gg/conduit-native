@@ -15,6 +15,9 @@ import gg.tame.conduit.protocol.CompatibilityRegistry;
 import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.ProtocolDefinition;
 import gg.tame.conduit.protocol.TranslationSupport;
+import gg.tame.conduit.session.BackendConnection;
+import java.io.IOException;
+import java.net.Socket;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -41,7 +44,9 @@ public final class BackendSelector {
 
   public BackendSelector(ConduitConfiguration configuration, BackendHealthService health) {
     this.configuration = configuration;
-    this.registry = new ServerRegistry(configuration);
+    // One registry for both. Health used to keep its own copy of the configured servers, so a server a
+    // plugin registered was never probed and could not be drained.
+    this.registry = health == null ? new ServerRegistry(configuration) : health.registry();
     this.health = health;
     for (BackendServer server : registry.all()) {
       statuses.put(ServerRegistry.normalize(server.name()), ServerStatus.unknown(server.name()));
@@ -51,6 +56,39 @@ public final class BackendSelector {
   public ServerRegistry registry() { return registry; }
   public Instant lastRefresh() { return lastRefresh; }
   public BackendHealthService health() { return health; }
+
+  /**
+   * Unregisters {@code name} and forgets everything learned about it, so a server registered later
+   * under the same name -- a cloud system reusing "lobby-1" on a new port -- starts with no health
+   * verdict, drain flag or advertised protocol of its namesake's.
+   */
+  public boolean unregister(String name) {
+    boolean removed = registry.unregister(name);
+    if (health != null) health.forget(name);
+    advertisements.remove(ServerRegistry.normalize(name));
+    statuses.remove(ServerRegistry.normalize(name));
+    return removed;
+  }
+
+  /**
+   * Opens the connection a player's login goes over. A backend that cannot even be reached counts
+   * against its health (see {@link BackendHealthService#connectFailed}); one that answers and then
+   * refuses the player is up, and does not.
+   */
+  public Socket open(BackendServer server) throws IOException {
+    try {
+      return BackendConnection.open(server);
+    } catch (IOException unreachable) {
+      if (health != null) health.connectFailed(server.name());
+      throw unreachable;
+    }
+  }
+
+  /** Health checks have found {@code name} down. Never true while they are off or have no verdict yet. */
+  public boolean knownDown(String name) {
+    if (health != null) return health.snapshot(name).health() == BackendHealth.UNHEALTHY;
+    return status(name).availability() == ServerAvailability.OFFLINE;
+  }
 
   public void probeAll() {
     if (health != null) {
@@ -264,9 +302,10 @@ public final class BackendSelector {
     return named(List.copyOf(names));
   }
 
+  /** Configured names a plugin has since unregistered are skipped; looking them up threw and broke the join. */
   private List<BackendServer> named(List<String> names) {
     List<BackendServer> result = new ArrayList<>();
-    for (String name : names) result.add(registry.get(name).orElseThrow());
+    for (String name : names) registry.get(name).ifPresent(result::add);
     return result;
   }
 }

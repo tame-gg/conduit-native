@@ -425,7 +425,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       BackendConnection connection = null;
       try {
         prepareTranslation(server);
-        socket = BackendConnection.open(server);
+        socket = selector.open(server);
         writeBackendHandshake(socket, server);
         MinecraftFrames.write(socket.getOutputStream(), LoginStart.encode(profile(), backendDefinition));
         connection = track(new BackendConnection(server, socket, backendDefinition, forwarder, profile(), address, configuration, false));
@@ -490,9 +490,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return new Refusal(result, reason, json);
   }
 
-  /** Puts {@code server} next in a walk of candidates, for a Redirect from one that refused the player. */
+  /**
+   * Puts {@code server} next in a walk of candidates, for a Redirect from one that refused the player,
+   * unless the walk has already tried it. A listener that redirects every refusal to the lobby met a
+   * lobby that refused the player, and the walk logged them in to it again after each refusal: 45,000
+   * logins in fifteen seconds from one joining player, until the client gave up.
+   */
   private void tryNext(List<BackendServer> order, int index, gg.tame.conduit.api.server.RegisteredServer server) {
     selector.registry().get(server.getName()).ifPresent(next -> {
+      if (order.subList(0, index + 1).stream().anyMatch(tried -> tried.name().equalsIgnoreCase(next.name()))) return;
       order.subList(index + 1, order.size()).removeIf(other -> other.name().equalsIgnoreCase(next.name()));
       order.add(index + 1, next);
     });
@@ -1595,9 +1601,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
       catch (Exception exception) { failed.add(ServerRegistry.normalize(server.name())); }
     }
-    // A fallback that refused the player had a reason; one that was merely down leaves nothing to say.
+    // A fallback that refused the player had a reason. With none, the socket used to close with nothing
+    // written, and the player saw "Connection lost": the chat line above goes with the world it was in.
     if (refusal != null) disconnectJson(refusal);
-    else close();
+    else disconnect(Text.of("Lost connection to " + lost.server().name() + ", and no other server could take you. Please try again later."));
   }
   public void requestSwitch(String name) { transferTo(name); }
   @Override public boolean transferTo(String name) {
@@ -1695,6 +1702,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     long started = System.nanoTime();
     long deadline = started + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SWITCH_BUDGET_MS);
+    // After the listeners, which may send the player somewhere that is up; with checks off or no
+    // verdict yet the switch is tried as always.
+    if (selector.knownDown(server.name())) throw new IOException(server.name() + " is unavailable");
     ensureCompatible(server);
     synchronized (lock) {
       if (lifecycle.get() == SessionLifecycle.CLOSED) throw new IOException("session closed");
@@ -1713,7 +1723,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // still belongs to the backend the player is actually on, and the client's packets have to
       // keep being encoded for that one.
       pending = buildTranslation(server);
-      socket = BackendConnection.open(server);
+      socket = selector.open(server);
       enforceDeadline(deadline, "connect");
       Handshake switchHandshake = pending.support() == TranslationSupport.TRANSLATED
           ? new Handshake(pending.backendProtocol(), handshake.requestedHost(), handshake.requestedPort(), 2)

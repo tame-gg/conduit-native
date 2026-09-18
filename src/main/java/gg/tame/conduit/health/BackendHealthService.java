@@ -51,12 +51,25 @@ public final class BackendHealthService implements AutoCloseable {
     if (closed.get()) return;
     if (!replacement.enabled()) {
       stopScheduler();
+      // No probe will run to overturn a verdict, so none is kept: a server marked unhealthy stayed
+      // out of routing, and refused by /server, until the proxy restarted.
+      states.clear();
       return;
     }
     restartScheduler();
   }
 
   public HealthSettings settings() { return settings; }
+  /** The servers probed: the proxy's own registry, so servers plugins register are probed too. */
+  public ServerRegistry registry() { return registry; }
+
+  /** Everything known about {@code name}, for a server that has been unregistered. */
+  public void forget(String name) {
+    String key = ServerRegistry.normalize(name);
+    states.remove(key);
+    advertisements.remove(key);
+    drained.remove(key);
+  }
 
   public void probeOnce() {
     for (BackendServer server : registry.all()) probe(server);
@@ -95,6 +108,16 @@ public final class BackendHealthService implements AutoCloseable {
     }
   }
 
+  /**
+   * A player's connection to {@code name} failed before the backend answered at all -- refused, timed
+   * out, unreachable -- which is what a failed probe finds too, so it counts as one: the next player is
+   * not sent to a server that just failed this one. Only while probes run, as only a probe brings a
+   * server back; with checks off a failure counted here would keep the server out of routing for good.
+   */
+  public void connectFailed(String name) {
+    if (settings.enabled() && !closed.get() && registry.contains(name)) applyProbeResult(name, false);
+  }
+
   private void restartScheduler() {
     stopScheduler();
     ScheduledExecutorService next = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -121,6 +144,9 @@ public final class BackendHealthService implements AutoCloseable {
   private void probe(BackendServer server) {
     Optional<BackendStatusProbe.Advertisement> advertisement =
         BackendStatusProbe.probe(server.address(), settings.timeoutMs());
+    // Unregistered while it was being probed, perhaps with another server already under its name; or
+    // checks were turned off meanwhile, and their verdicts cleared.
+    if (registry.get(server.name()).orElse(null) != server || !settings.enabled()) return;
     if (advertisement.isPresent()) {
       advertisements.put(ServerRegistry.normalize(server.name()), advertisement.get());
       applyProbeResult(server.name(), true);

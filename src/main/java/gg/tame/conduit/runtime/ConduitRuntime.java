@@ -317,7 +317,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     }
     @Override public boolean unregister(String name) {
       views.remove(ServerRegistry.normalize(name));
-      return registry.unregister(name);
+      return selector.unregister(name);
     }
   }
   static final class ApiServer implements RegisteredServer {

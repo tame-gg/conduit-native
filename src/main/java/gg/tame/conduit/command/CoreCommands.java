@@ -218,7 +218,9 @@ public final class CoreCommands {
       Messages.failure(source, "No servers configured.");
       return;
     }
-    String hub = candidates.getFirst().name();
+    // The first one health checks and drains allow; the first configured one only when none is.
+    String hub = candidates.stream().filter(server -> runtime.health().isRoutable(server.name())).findFirst()
+        .orElse(candidates.getFirst()).name();
     if (hub.equalsIgnoreCase(source.currentBackend())) {
       Messages.alreadyConnected(source, hub);
       return;

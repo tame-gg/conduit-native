@@ -836,7 +836,7 @@ public final class NativeApiTests {
   // --- harness ------------------------------------------------------------------------------
 
   static final ProtocolDefinition P47 = ProtocolDefinition.forVersion(47);
-  private static final int CHAT_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT);
+  static final int CHAT_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT);
   static final int DISCONNECT_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT);
   private static final int PLUGIN_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE);
   private static final int PLUGIN_IN = P47.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE);
@@ -868,11 +868,11 @@ public final class NativeApiTests {
     }
   }
 
-  private static final class Fixture implements AutoCloseable {
-    private final MinecraftProxy proxy;
-    private final ConduitRuntime runtime;
+  static final class Fixture implements AutoCloseable {
+    final MinecraftProxy proxy;
+    final ConduitRuntime runtime;
     private final Thread serving;
-    private final Recorder recorder = new Recorder();
+    final Recorder recorder = new Recorder();
     private final Plugin owner = new TestPlugin("probe");
     Fixture(List<Backend> backends, List<String> initial, List<String> fallback) throws Exception {
       this(backends, initial, fallback, TempFiles.dir("conduit-native-api").resolve("plugins"), OFFLINE, null);
@@ -889,8 +889,14 @@ public final class NativeApiTests {
     }
     Fixture(List<Backend> backends, List<String> initial, List<String> fallback, Path plugins,
             AuthenticationSettings auth, PlayerAuthenticator authenticator, StatusSettings status) throws Exception {
-      OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, new HealthSettings(false, 10_000, 1_500, 3, 2),
-          null, null, null, null, null, status);
+      this(backends, initial, fallback, plugins, auth, authenticator, status, new HealthSettings(false, 10_000, 1_500, 3, 2));
+    }
+    Fixture(List<Backend> backends, List<String> initial, List<String> fallback, HealthSettings health) throws Exception {
+      this(backends, initial, fallback, TempFiles.dir("conduit-native-api").resolve("plugins"), OFFLINE, null, null, health);
+    }
+    Fixture(List<Backend> backends, List<String> initial, List<String> fallback, Path plugins,
+            AuthenticationSettings auth, PlayerAuthenticator authenticator, StatusSettings status, HealthSettings health) throws Exception {
+      OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, health, null, null, null, null, null, status);
       ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 1 << 20,
           ForwardingMode.NONE, Optional.empty(), backends.stream().map(Backend::server).toList(), initial, fallback,
           auth, Optional.empty(), ops);
@@ -1096,7 +1102,7 @@ public final class NativeApiTests {
     try { return condition.holds(); } catch (Exception failed) { return false; }
   }
 
-  private static void require(boolean condition, String message) {
+  static void require(boolean condition, String message) {
     if (!condition) throw new AssertionError(message);
   }
 }

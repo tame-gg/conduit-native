@@ -166,7 +166,10 @@ fallback = ["lobby", "survival"]
 `routing.initial` is tried in order after authentication. Matching native protocol on a later server
 does not jump the queue (a 26.2 client still starts on lobby when lobby is first). If the current backend socket dies,
 `routing.fallback` is tried next, skipping the dead server and any server that already failed
-in that incident (no reconnect loop). If none accept, the client is disconnected.
+in that incident (no reconnect loop). If none accept, the client is disconnected with a message naming
+the server it lost. A `PlayerKickedFromServerEvent` redirect to a server the same join or fallback has
+already tried is ignored, so a listener that sends every refused player to the lobby cannot send them
+back to a lobby that refused them.
 
 `/server` only lists configured names. Addresses, ports, and secrets are never shown.
 
@@ -355,6 +358,13 @@ mod-loaders = ["forge", "neoforge"]
 ```
 
 Unhealthy backends are excluded from **new** routing only. Existing players are not kicked by a failed probe.
+While checks are enabled, a player's connection to a backend that cannot be reached at all (refused,
+timed out) counts as a failed probe too, so the next player is not sent there; a backend that answers
+and refuses the player (a whitelist, a full server) does not count. A switch to a server marked
+unhealthy (`/server`, `/send`, a plugin's connect) fails at once, and `/hub` picks the first initial or
+fallback server that is neither unhealthy nor draining. Servers plugins register are probed like
+configured ones, and an unregistered server's health, drain flag and advertised version are forgotten.
+Turning checks off (`/conduit reload`) clears every verdict, since no probe would be left to clear one.
 
 Version gate is separate from protocol translation. `versions.strict-backend-match=true` refuses switches when Conduit has no translator between client and advertised backend codecs (default `false` keeps Via-style backends usable).
 
