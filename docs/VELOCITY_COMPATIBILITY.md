@@ -136,7 +136,7 @@ logger named after the class it is injected into, not the plugin's Conduit logge
 |---|---|---|
 | `getUsername`, `getUniqueId`, `identity`, `isOnlineMode`, `isActive`, `getProtocolVersion`, `getProtocolState`, `getVirtualHost` | Supported | VCT |
 | `hasPermission` / `getPermissionValue`: the player's function from `PermissionsSetupEvent` (see Permissions), or, when no plugin set one, Conduit's permission provider, which answers TRUE or FALSE and never UNDEFINED | Supported | VCT, LuckPerms, Maintenance |
-| `getRemoteAddress`: the address is correct, but the port is always 0 because Conduit's API does not carry it | Partial | VCT |
+| `getRemoteAddress`: the client's address and the port it connected from; the port is 0 when `forwarding.player-address` makes the address a configured one | Supported | VCT, `ClientSettingsTests` |
 | `getRawVirtualHost`: host name only, with FML markers removed | Partial | |
 | `getGameProfile`: id and name only, no properties such as skins | Partial | VCT |
 | `getPing`: the round trip of the last keep-alive the client answered, measured by Conduit between writing it and reading the answer, as the game measures it; `-1` ("unknown") until the client has answered one, up to a keep-alive interval after joining | Supported | `PlayerLatencyTests` |

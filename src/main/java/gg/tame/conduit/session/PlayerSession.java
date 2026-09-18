@@ -200,6 +200,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
   @Override public int protocolVersion() { return clientProtocol; }
   @Override public InetAddress remoteAddress() { return address; }
+  @Override public java.net.InetSocketAddress remoteSocketAddress() {
+    return new java.net.InetSocketAddress(address, configuration.forwardedPlayerAddress().isPresent() ? 0 : client.remotePort());
+  }
   @Override public java.net.InetSocketAddress virtualHost() {
     String host = handshake.requestedHost();
     int marker = host.indexOf('\0');

@@ -27,6 +27,8 @@ public interface Player extends CommandSource {
    * configured. An address without a port, because a forwarded one has none.
    */
   InetAddress remoteAddress();
+  /** {@link #remoteAddress()} with the port the client connected from; 0 for a forwarded address, which has none. */
+  default InetSocketAddress remoteSocketAddress() { return new InetSocketAddress(remoteAddress(), 0); }
   /** Host and port the client says it dialled, from its handshake, unresolved. Forge markers are removed. */
   InetSocketAddress virtualHost();
   /**

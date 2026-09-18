@@ -72,7 +72,7 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public void disconnect(Component reason) { player.disconnect(Texts.toConduit(reason)); }
 
   /** Conduit knows the address, not the port, when the address is forwarded; the port is then 0. */
-  @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(player.remoteAddress(), 0); }
+  @Override public InetSocketAddress getRemoteAddress() { return player.remoteSocketAddress(); }
   @Override public Optional<InetSocketAddress> getVirtualHost() { return Optional.ofNullable(player.virtualHost()); }
   @Override public Optional<String> getRawVirtualHost() { return getVirtualHost().map(InetSocketAddress::getHostString); }
   @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.getProtocolVersion(player.protocolVersion()); }

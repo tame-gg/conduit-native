@@ -86,6 +86,9 @@ public final class ClientSettingsTests {
       require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
       Player player = proxy.runtime.player("Settler").orElseThrow();
       require(player.settings().isEmpty() && player.locale().isEmpty(), "nothing is known before the client says");
+      // The port the client connected from, which Velocity's getRemoteAddress used to report as 0.
+      require(player.remoteSocketAddress().getPort() > 0 && player.remoteSocketAddress().getAddress().isLoopbackAddress(),
+          "the client's own port is known, got " + player.remoteSocketAddress());
       client.send(packet(0x15, out -> {
         MinecraftOutput.string(out, "nl_nl"); out.writeByte(4); out.writeByte(1); out.writeBoolean(false); out.writeByte(0x03);
       }));

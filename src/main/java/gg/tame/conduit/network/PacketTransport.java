@@ -110,6 +110,8 @@ public final class PacketTransport {
     state = EncryptionState.ENCRYPTED;
   }
   public InputStream input() { return input; }
+  /** The port the peer connected from, or 0 when there is no socket. */
+  public int remotePort() { return socket == null ? 0 : socket.getPort(); }
   /** The socket's input, each read bounded by what is left of the deadline while there is one. */
   private final class DeadlineInput extends java.io.FilterInputStream {
     DeadlineInput(InputStream in) { super(in); }
