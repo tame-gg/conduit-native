@@ -76,11 +76,14 @@ public final class PacketTransport {
   public boolean hungUp() {
     if (socket == null) return false;
     try {
-      int timeout = socket.getSoTimeout();
+      // Through the field the login deadline reads too: set on the socket alone, the 1 ms was
+      // replaced by the whole read timeout before the read, and every login waited that long.
+      int timeout = readTimeoutMillis;
       int next;
+      readTimeoutMillis = 1;
       socket.setSoTimeout(1);
       try { next = input.read(); }
-      finally { socket.setSoTimeout(timeout); }
+      finally { readTimeoutMillis = timeout; socket.setSoTimeout(timeout); }
       if (next < 0) return true;
       PushbackInputStream kept = new PushbackInputStream(input, 1);
       kept.unread(next);

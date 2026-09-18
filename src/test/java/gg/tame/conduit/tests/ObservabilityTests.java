@@ -134,12 +134,17 @@ public final class ObservabilityTests {
         require(await(() -> proxy.runtime().metricsEndpoint().isPresent()), "the endpoint is bound once the proxy starts");
         client.connect(new InetSocketAddress("127.0.0.1", proxy.port()));
         client.setSoTimeout(10_000);
+        long asked = System.nanoTime();
         MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
         MinecraftFrames.write(client.getOutputStream(), packet(0, out -> MinecraftOutput.string(out, "Metrics")));
         InputStream in = client.getInputStream();
         boolean joined = false;
         for (int i = 0; i < 10 && !joined; i++) joined = MinecraftFrames.read(in, 1 << 20)[0] == 0x01;   // 1.8 Join Game
         require(joined, "the player joined through the refusing first server");
+        // A check made while the login is held waited out the whole 3 s read timeout, twice, on every
+        // login; a join through two local servers takes a fraction of one.
+        long took = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - asked);
+        require(took < 2_500, "the join took " + took + " ms");
 
         HttpResponse<String> scrape = http.send(HttpRequest.newBuilder(endpoint).GET().build(), HttpResponse.BodyHandlers.ofString());
         String body = scrape.body();
