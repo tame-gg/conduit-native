@@ -3,6 +3,7 @@ package gg.tame.conduit.metrics;
 
 import com.sun.net.httpserver.HttpServer;
 import gg.tame.conduit.log.ConduitLog;
+import gg.tame.conduit.network.SocketThreads;
 import gg.tame.conduit.protocol.TranslationSupport;
 import gg.tame.conduit.runtime.ConduitRuntime;
 import gg.tame.conduit.session.PlayerSession;
@@ -14,20 +15,49 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Conduit's counters and a few gauges read from the live proxy, in Prometheus' text format at
  * {@code GET /metrics}. Off unless {@code [metrics] prometheus-address} is set. It carries counts
  * and the operator's own server names only: no player names, addresses, tokens or paths. One
- * platform thread answers every scrape, so a flood of scrapes costs one thread and never a player's.
+ * thread answers every scrape, so a flood of scrapes costs one thread and never a player's.
  */
 public final class PrometheusEndpoint implements AutoCloseable {
-  private final HttpServer server;
+  /**
+   * The most one exchange may take, the reading of its request included. The JDK's server reads a
+   * request with no limit of its own, so a single connection that sent half a request held the thread
+   * answering scrapes for as long as it stayed open, and no scrape was answered again. A scrape on
+   * the network this belongs on takes milliseconds.
+   */
+  private static final long EXCHANGE_DEADLINE_MS = 3_000;
 
-  private PrometheusEndpoint(HttpServer server) { this.server = server; }
+  private final HttpServer server;
+  private final ExecutorService answering;
+
+  private PrometheusEndpoint(HttpServer server, ExecutorService answering) { this.server = server; this.answering = answering; }
 
   public static PrometheusEndpoint start(InetSocketAddress address, ConduitRuntime runtime) throws IOException {
     HttpServer server = HttpServer.create(address, 16);
+    // The exchange's socket is a blocking NIO channel, so interrupting the thread closes it and ends
+    // a stalled request; the guard keeps an interrupt that comes too late off the next exchange.
+    ExecutorService answering = Executors.newSingleThreadExecutor(SocketThreads.factory());
+    server.setExecutor(exchange -> answering.execute(() -> {
+      Thread thread = Thread.currentThread();
+      AtomicBoolean over = new AtomicBoolean();
+      CompletableFuture.delayedExecutor(EXCHANGE_DEADLINE_MS, TimeUnit.MILLISECONDS).execute(() -> {
+        synchronized (over) { if (!over.get()) thread.interrupt(); }
+      });
+      try { exchange.run(); }
+      finally {
+        synchronized (over) { over.set(true); }
+        Thread.interrupted();
+      }
+    }));
     server.createContext("/metrics", exchange -> {
       try (exchange) {
         if (!"GET".equals(exchange.getRequestMethod()) && !"HEAD".equals(exchange.getRequestMethod())) {
@@ -45,12 +75,15 @@ public final class PrometheusEndpoint implements AutoCloseable {
     });
     server.start();
     ConduitLog.info("Serving metrics at http://" + address.getHostString() + ":" + server.getAddress().getPort() + "/metrics");
-    return new PrometheusEndpoint(server);
+    return new PrometheusEndpoint(server, answering);
   }
 
   public int port() { return server.getAddress().getPort(); }
 
-  @Override public void close() { server.stop(0); }
+  @Override public void close() {
+    server.stop(0);
+    answering.shutdownNow();
+  }
 
   /** The whole exposition, read at the moment of the scrape. */
   public static String render(ConduitRuntime runtime) {

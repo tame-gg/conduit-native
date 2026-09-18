@@ -302,8 +302,9 @@ time in the game, backend connects and connect
 failures, switches and switch failures, fallbacks, Via translation failures, plugin task failures, and
 packets and bytes each way. It carries the operator's server names and nothing about players,
 addresses, tokens or paths. It has no authentication: keep it on loopback or a private network. It is
-off unless the address is set, the address takes effect at start, and one platform thread answers
-every scrape. The address must resolve and must not share the port Conduit listens on.
+off unless the address is set, the address takes effect at start, and one thread answers every
+scrape; a connection whose exchange is not over within 3 s, a request sent in part and then left, is
+closed. The address must resolve and must not share the port Conduit listens on.
 
 ### Security (Phase 2)
 

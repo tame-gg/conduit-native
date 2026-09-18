@@ -47,7 +47,39 @@ public final class ObservabilityTests {
     theMetricsAddressComesFromTheConfig();
     aSettingNothingReadsIsNamed();
     theEndpointServesCountsAndNothingPrivate();
+    aStalledRequestDoesNotStopTheScrapes();
     System.out.println("ObservabilityTests OK");
+  }
+
+  /**
+   * The JDK's server reads a request with no time limit, on the one thread that answers scrapes, so a
+   * single connection that sent half a request and then nothing held that thread for as long as it
+   * stayed open, and no scrape was answered again. The stalled request is now cut off.
+   */
+  private static void aStalledRequestDoesNotStopTheScrapes() throws Exception {
+    OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, new HealthSettings(false, 10_000, 1_500, 3, 2),
+        null, null, null, null, null, null, null);
+    ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", 25565), 1 << 20,
+        ForwardingMode.NONE, Optional.empty(), List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", 25566))),
+        List.of("lobby"), List.of("lobby"), AuthenticationSettings.offline(), Optional.empty(), ops);
+    Path root = TempFiles.dir("conduit-metrics-stall");
+    try (gg.tame.conduit.runtime.ConduitRuntime runtime = new gg.tame.conduit.runtime.ConduitRuntime(configuration, root.resolve("plugins"), root);
+         gg.tame.conduit.metrics.PrometheusEndpoint endpoint = gg.tame.conduit.metrics.PrometheusEndpoint.start(new InetSocketAddress("127.0.0.1", 0), runtime);
+         Socket stalled = new Socket("127.0.0.1", endpoint.port())) {
+      stalled.getOutputStream().write("GET /metrics HTTP/1.1\r\nHost: 127.0.0.1\r\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+      stalled.getOutputStream().flush();
+      Thread.sleep(300);
+      HttpClient http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(2)).build();
+      HttpRequest scrape = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + endpoint.port() + "/metrics"))
+          .timeout(java.time.Duration.ofSeconds(8)).GET().build();
+      try {
+        require(http.send(scrape, HttpResponse.BodyHandlers.ofString()).statusCode() == 200, "the scrape after the stalled request is answered");
+      } catch (java.net.http.HttpTimeoutException waited) {
+        throw new AssertionError("a connection that sent half a request stopped every scrape");
+      }
+      stalled.setSoTimeout(10_000);
+      require(stalled.getInputStream().read() == -1, "the stalled connection is closed");
+    }
   }
 
   private static final String BASE_CONFIG = """
