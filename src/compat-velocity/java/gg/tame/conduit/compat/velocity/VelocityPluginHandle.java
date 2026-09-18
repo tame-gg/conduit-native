@@ -88,9 +88,11 @@ final class VelocityPluginHandle extends ConduitPlugin {
     environment.events.unregisterListeners(current);
     environment.commands.forget(current);
     environment.scheduler.forget(current);
+    // Gone from the plugin list first: a player's permission setup still in flight checks that list
+    // before keeping this plugin's function, and must not find it between the release and the removal.
+    environment.plugins.remove(current);
     environment.permissions.release(current);
     environment.channels.release(current);
-    environment.plugins.remove(current);
     current.shutdownExecutor();
     synchronized (this) { injector = null; }
   }

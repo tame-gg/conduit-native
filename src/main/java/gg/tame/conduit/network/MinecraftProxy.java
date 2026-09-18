@@ -2,14 +2,18 @@
 package gg.tame.conduit.network;
 
 import gg.tame.conduit.api.event.player.PlayerAuthenticatedEvent;
+import gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus;
 import gg.tame.conduit.api.event.player.PlayerLoginEvent;
+import gg.tame.conduit.api.event.player.PlayerSetupEvent;
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
+import gg.tame.conduit.api.permission.PermissionProvider;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.auth.Authenticators;
 import gg.tame.conduit.auth.AuthenticationException;
 import gg.tame.conduit.auth.PlayerAuthenticator;
 import gg.tame.conduit.auth.SessionQuery;
 import gg.tame.conduit.command.CoreCommands;
+import gg.tame.conduit.command.Permissions;
 import gg.tame.conduit.config.AuthenticationMode;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.crypto.RsaKeys;
@@ -217,23 +221,19 @@ public final class MinecraftProxy implements AutoCloseable {
           throw new IOException(exception.getMessage(), exception);
         }
       }
+      // Everything above is the proxy protecting itself, and no plugin can see or override any of it.
+      // From here the client is a Player: plugins set it up first, and only then is anything decided
+      // about it, so that a permission plugin already knows the player when maintenance asks.
       try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
           handshake, firstPacket, loginStart, configuration.forwardedPlayerAddress().orElse(remote))) {
-        if (runtime.maintenance().isActive() && !maintenanceBypass(player)) {
-          try { transport.write(LoginDisconnect.encode(protocol, runtime.maintenance().kickMessage())); } catch (IOException ignored) { }
-          return;
+        try {
+          runtime.events().fire(new PlayerSetupEvent(player));
+          admit(player, transport, protocol);
+        } finally {
+          // Whatever ended the login, plugins that set something up for this player hear it once;
+          // every path that knows why has already said so, and this is for the ones that threw.
+          player.leave(LoginStatus.CANCELLED_BY_PROXY);
         }
-        PlayerLoginEvent login = runtime.events().fire(new PlayerLoginEvent(player));
-        if (!login.allowed()) {
-          // Still in Login: the reason goes out as a login disconnect, and no backend is dialled.
-          player.disconnect(login.denyReason().orElseThrow());
-          return;
-        }
-        if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
-        // The session clears the timeout itself, once its own login exchange with the client and
-        // the backend is over: everything read from the client before that point is part of a
-        // login, and a login that stops halfway must not park the worker holding it.
-        player.play();
       }
     } catch (IOException exception) { ConduitLog.warn("Connection closed: " + exception.getMessage()); }
     catch (RuntimeException | Error unexpected) {
@@ -249,11 +249,67 @@ public final class MinecraftProxy implements AutoCloseable {
       connections.decrementAndGet();
     }
   }
+  /** The proxy's and the plugins' decisions on a player who is set up: maintenance, then PlayerLoginEvent. */
+  private void admit(PlayerSession player, PacketTransport transport, ProtocolDefinition protocol) throws IOException {
+    // Setup listeners may hold the login for seconds -- a permission plugin loading the player from
+    // its database -- and nothing is decided for a client that gave up meanwhile.
+    if (over(player, transport)) return;
+    if (runtime.maintenance().isActive() && !maintenanceBypass(player)) {
+      try { transport.write(LoginDisconnect.encode(protocol, runtime.maintenance().kickMessage())); } catch (IOException ignored) { }
+      player.leave(LoginStatus.CANCELLED_BY_PROXY);
+      return;
+    }
+    PlayerLoginEvent login = runtime.events().fire(new PlayerLoginEvent(player));
+    if (!login.allowed()) {
+      // Still in Login: the reason goes out as a login disconnect, and no backend is dialled.
+      player.disconnect(login.denyReason().orElseThrow());
+      player.leave(LoginStatus.CANCELLED_BY_PROXY);
+      return;
+    }
+    if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
+    // Login listeners may have held it as long. A client that gave up meanwhile would otherwise still
+    // be logged in to a backend, and reported by a PlayerPostLoginEvent as having joined.
+    if (over(player, transport)) return;
+    // The shutdown's sweep of online players cannot see a login still being decided.
+    if (runtime.shuttingDown()) {
+      player.disconnect(runtime.configuration().shutdown().message());
+      player.leave(LoginStatus.CANCELLED_BY_PROXY);
+      return;
+    }
+    // The session clears the timeout itself, once its own login exchange with the client and
+    // the backend is over: everything read from the client before that point is part of a
+    // login, and a login that stops halfway must not park the worker holding it.
+    player.play();
+  }
+  /** Whether the login ended while listeners held it, and if so tells plugins how. */
+  private static boolean over(PlayerSession player, PacketTransport transport) {
+    // A listener that kicked the player, rather than denying the login, has closed the session.
+    if (player.lifecycle() == gg.tame.conduit.session.SessionLifecycle.CLOSED) {
+      player.leave(LoginStatus.CANCELLED_BY_PROXY);
+      return true;
+    }
+    if (transport.hungUp()) {
+      player.leave(LoginStatus.CANCELLED_BY_USER);
+      return true;
+    }
+    return false;
+  }
+  /**
+   * The allowlist first: it is the operator's own list, and has to work when the permission plugin
+   * is broken or gone. Then the provider in force, read once, so a plugin disabled halfway through
+   * cannot leave the permissive default answering the second question.
+   */
   private boolean maintenanceBypass(PlayerSession player) {
     if (runtime.maintenance().settings().allowsUsername(player.username())) return true;
-    if (runtime.permissions() instanceof gg.tame.conduit.permission.PermissivePermissionProvider) return false;
-    return player.hasPermission(gg.tame.conduit.command.Permissions.MAINTENANCE_BYPASS)
-        || player.hasPermission(gg.tame.conduit.command.Permissions.CONDUIT_ADMIN);
+    PermissionProvider provider = runtime.permissions();
+    try {
+      // A default that grants every node would let everyone in.
+      return provider.manages(player)
+          && (provider.hasPermission(player, Permissions.MAINTENANCE_BYPASS) || provider.hasPermission(player, Permissions.CONDUIT_ADMIN));
+    } catch (RuntimeException | LinkageError failure) {
+      ConduitLog.error("permission provider failed deciding whether " + player.username() + " may bypass maintenance; refused", failure);
+      return false;
+    }
   }
   private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address) throws IOException, AuthenticationException {
     if (!authPermits.tryAcquire()) throw new AuthenticationException("authentication busy");

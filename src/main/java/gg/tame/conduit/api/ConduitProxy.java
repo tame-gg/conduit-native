@@ -26,13 +26,17 @@ public interface ConduitProxy {
   EventManager events();
   PluginManager plugins();
   Scheduler scheduler();
-  /** The permission provider in force: the default grants everything, until a plugin sets one. */
+  /**
+   * The permission provider in force: the default grants everything, until a plugin sets one. The
+   * default does not let anyone through maintenance mode (see {@link PermissionProvider#manages}).
+   */
   PermissionProvider permissions();
   /**
    * Makes {@code provider} answer every permission check, for players and commands alike, until
    * {@code owner} is disabled; then the default comes back. The last plugin to call this wins. A
    * provider that throws denies the permission it was asked about. Called on whichever thread is
-   * checking, often a player's connection thread, so it must answer from memory.
+   * checking, often a player's connection thread, so it must answer from memory. A joining player is
+   * first asked about after {@code PlayerSetupEvent}, which is where a provider loads them.
    *
    * @throws IllegalStateException when {@code owner} has been disabled
    */

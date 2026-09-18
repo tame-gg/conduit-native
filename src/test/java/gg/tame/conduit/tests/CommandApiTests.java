@@ -350,11 +350,13 @@ public final class CommandApiTests {
   }
 
   private static void registrationRejectsUntypeableNames() {
-    for (String bad : List.of("/slash", "two words", " ")) {
+    for (String bad : List.of("/", "//", "two words", " ")) {
       boolean threw = false;
       try { cmd(bad, List.of()); } catch (IllegalArgumentException expected) { threw = true; }
       require(threw, "rejected unreachable command name: '" + bad + "'");
     }
+    // A player reaches it as "//slash": one slash is the command's, the rest is the name.
+    require(cmd("/slash", List.of()).name().equals("/slash"), "a name that starts with a slash is typeable");
     boolean threw = false;
     try { cmd("ok", List.of("bad alias")); } catch (IllegalArgumentException expected) { threw = true; }
     require(threw, "rejected unreachable alias");

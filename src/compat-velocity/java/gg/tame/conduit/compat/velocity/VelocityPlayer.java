@@ -41,8 +41,6 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   private final gg.tame.conduit.api.player.Player player;
   /** The server before the current one, from the last switch Conduit reported. */
   volatile VelocityRegisteredServer previousServer;
-  /** Whether Conduit reported this player logged in, for DisconnectEvent's login status. */
-  volatile boolean loggedIn;
   /** A plugin's setEffectiveLocale; null leaves the client's own. */
   private volatile Locale effectiveLocale;
 

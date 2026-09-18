@@ -18,6 +18,7 @@ import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
 import gg.tame.conduit.api.event.player.PlayerServerSwitchEvent;
 import gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent;
+import gg.tame.conduit.api.event.player.PlayerSetupEvent;
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
 import gg.tame.conduit.api.player.ConnectResult;
 import gg.tame.conduit.api.player.Player;
@@ -302,11 +303,14 @@ public final class NativeApiTests {
 
       try (Client kyle = Client.join(proxy.port(), "kyle")) {
         require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
-        require(proxy.recorder.names(PlayerLoginEvent.class, PlayerInitialServerEvent.class, PlayerServerConnectEvent.class,
+        require(proxy.recorder.names(PlayerSetupEvent.class, PlayerLoginEvent.class, PlayerInitialServerEvent.class, PlayerServerConnectEvent.class,
                 PlayerPostLoginEvent.class, PlayerServerConnectedEvent.class, PlayerDisconnectEvent.class)
-            .equals(List.of("PlayerLoginEvent", "PlayerLoginEvent", "PlayerInitialServerEvent", "PlayerServerConnectEvent",
+            .equals(List.of("PlayerSetupEvent", "PlayerLoginEvent", "PlayerDisconnectEvent",
+                "PlayerSetupEvent", "PlayerLoginEvent", "PlayerInitialServerEvent", "PlayerServerConnectEvent",
                 "PlayerPostLoginEvent", "PlayerServerConnectedEvent")),
-            "join events in order, got " + proxy.recorder.names());
+            "join events in order, the denied login's ending included, got " + proxy.recorder.names());
+        require(proxy.recorder.of(PlayerDisconnectEvent.class).getFirst().loginStatus() == PlayerDisconnectEvent.LoginStatus.CANCELLED_BY_PROXY,
+            "a denied login ends as cancelled by the proxy");
         PlayerServerConnectedEvent connected = proxy.recorder.of(PlayerServerConnectedEvent.class).getFirst();
         require(connected.source().isEmpty() && connected.target().getName().equals("lobby"), "first server has no source");
         Player player = proxy.runtime.player("kyle").orElseThrow(() -> new AssertionError("player lookup after PostLogin"));
@@ -320,8 +324,9 @@ public final class NativeApiTests {
         require(!proxy.runtime.onlineMode() && !player.authenticated(), "offline mode");
         require(proxy.recorder.of(PlayerAuthenticatedEvent.class).isEmpty(), "no authenticated event offline");
       }
-      require(proxy.recorder.await(PlayerDisconnectEvent.class, 1), "disconnect event");
-      require(proxy.recorder.of(PlayerDisconnectEvent.class).size() == 1, "a denied login gets no disconnect event");
+      require(proxy.recorder.await(PlayerDisconnectEvent.class, 2), "disconnect event");
+      require(proxy.recorder.of(PlayerDisconnectEvent.class).size() == 2, "one disconnect event each, the denied login's included");
+      require(proxy.recorder.of(PlayerDisconnectEvent.class).getLast().completedLogin(), "the one who joined completed the login");
       require(proxy.runtime.player("kyle").isEmpty(), "gone from the lookup");
     }
   }
@@ -830,12 +835,12 @@ public final class NativeApiTests {
 
   // --- harness ------------------------------------------------------------------------------
 
-  private static final ProtocolDefinition P47 = ProtocolDefinition.forVersion(47);
+  static final ProtocolDefinition P47 = ProtocolDefinition.forVersion(47);
   private static final int CHAT_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT);
-  private static final int DISCONNECT_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT);
+  static final int DISCONNECT_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DISCONNECT);
   private static final int PLUGIN_OUT = P47.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLUGIN_MESSAGE);
   private static final int PLUGIN_IN = P47.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE);
-  private static final int CHAT_IN = P47.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND);
+  static final int CHAT_IN = P47.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND);
   private static final AuthenticationSettings OFFLINE = AuthenticationSettings.offline();
 
   /** Records every event the proxy fires, and lets a test act on them as a plugin would. */
@@ -906,10 +911,10 @@ public final class NativeApiTests {
   }
 
   /** A 1.8.9 backend: accepts the login, sends Join Game, then records every packet it is sent. */
-  private static final class Backend implements AutoCloseable {
+  static final class Backend implements AutoCloseable {
     private final String name;
     private final ServerSocket listener = new ServerSocket(0);
-    private final AtomicInteger logins = new AtomicInteger();
+    final AtomicInteger logins = new AtomicInteger();
     private final List<byte[]> received = Collections.synchronizedList(new ArrayList<>());
     private final List<Socket> sockets = Collections.synchronizedList(new ArrayList<>());
     private volatile Socket current;
@@ -964,7 +969,7 @@ public final class NativeApiTests {
   }
 
   /** A 1.8.9 client. After {@link #join} a reader thread keeps every packet the proxy sends it. */
-  private static final class Client implements AutoCloseable {
+  static final class Client implements AutoCloseable {
     private final Socket socket;
     private final List<byte[]> received = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean reading;
@@ -1006,7 +1011,7 @@ public final class NativeApiTests {
     @Override public void close() throws IOException { socket.close(); }
   }
 
-  private record TestPlugin(String id) implements Plugin {
+  record TestPlugin(String id) implements Plugin {
     @Override public PluginDescription description() { return new PluginDescription(id, id, "1.0", "Main", 1, List.of()); }
     @Override public ConduitProxy proxy() { return null; }
     @Override public Logger getLogger() { return Logger.getLogger("test." + id); }
@@ -1019,9 +1024,9 @@ public final class NativeApiTests {
 
   private static final class Probe implements Event { volatile boolean cancelled; }
 
-  private interface Body { void write(DataOutputStream output) throws Exception; }
+  interface Body { void write(DataOutputStream output) throws Exception; }
 
-  private static byte[] packet(int id, Body body) throws IOException {
+  static byte[] packet(int id, Body body) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, id);
@@ -1033,10 +1038,10 @@ public final class NativeApiTests {
     }
     return bytes.toByteArray();
   }
-  private static int id(byte[] packet) {
+  static int id(byte[] packet) {
     try { return PlayPackets.packetId(packet); } catch (IOException unreadable) { return -1; }
   }
-  private static byte[] loginStart(String name) throws IOException { return packet(0, output -> MinecraftOutput.string(output, name)); }
+  static byte[] loginStart(String name) throws IOException { return packet(0, output -> MinecraftOutput.string(output, name)); }
   private static byte[] loginSuccess() throws IOException {
     return packet(2, output -> { MinecraftOutput.string(output, new UUID(0, 1).toString()); MinecraftOutput.string(output, "backend"); });
   }
@@ -1046,7 +1051,7 @@ public final class NativeApiTests {
       MinecraftOutput.string(output, "flat"); output.writeBoolean(false);
     });
   }
-  private static byte[] chat(String line) throws IOException { return packet(CHAT_IN, output -> MinecraftOutput.string(output, line)); }
+  static byte[] chat(String line) throws IOException { return packet(CHAT_IN, output -> MinecraftOutput.string(output, line)); }
   private static byte[] pluginMessage(int id, String channel, byte[] data) throws IOException {
     return new PluginMessage(channel, data).encode(id);
   }
@@ -1063,26 +1068,26 @@ public final class NativeApiTests {
     catch (IOException unreadable) { return new byte[0]; }
   }
   /** The serverbound 1.8 chat line, or "" for any other packet. */
-  private static String chatText(byte[] packet) {
+  static String chatText(byte[] packet) {
     try {
       if (PlayPackets.packetId(packet) != CHAT_IN) return "";
       return PlayPackets.chatCommand(packet);
     } catch (IOException | RuntimeException unreadable) { return ""; }
   }
   /** The leading JSON string of a packet: a disconnect reason or a 1.8 chat line. */
-  private static String text(byte[] packet) {
+  static String text(byte[] packet) {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
       return MinecraftInput.string(input, 1 << 16);
     } catch (IOException | RuntimeException unreadable) { return ""; }
   }
 
-  private static int reservePort() throws IOException {
+  static int reservePort() throws IOException {
     try (ServerSocket socket = new ServerSocket(0)) { return socket.getLocalPort(); }
   }
 
-  private interface Condition { boolean holds() throws Exception; }
-  private static boolean waitFor(Condition condition, long millis) throws InterruptedException {
+  interface Condition { boolean holds() throws Exception; }
+  static boolean waitFor(Condition condition, long millis) throws InterruptedException {
     long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
     while (System.nanoTime() < deadline) {
       try { if (condition.holds()) return true; } catch (Exception notYet) { }

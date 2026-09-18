@@ -80,6 +80,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final Object lock = new Object();
   private final AtomicReference<SessionLifecycle> lifecycle = new AtomicReference<>(SessionLifecycle.CONNECTING);
   private final java.util.concurrent.atomic.AtomicBoolean switchInFlight = new java.util.concurrent.atomic.AtomicBoolean();
+  /** PlayerDisconnectEvent has fired; see {@link #leave}. */
+  private final java.util.concurrent.atomic.AtomicBoolean left = new java.util.concurrent.atomic.AtomicBoolean();
   /**
    * Guards the translator. A translator is one stateful decoder per session, not a pure function:
    * ViaVersion's connection carries entity trackers, world state and a partially written buffer.
@@ -354,7 +356,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     } finally {
       // Let in, never joined. Listeners that set something up for this player in PlayerLoginEvent
       // heard nothing more, and whatever they kept for the player was kept for good.
-      if (initial == null) runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerDisconnectEvent(this, false));
+      if (initial == null) leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.PRE_SERVER_JOIN);
     }
     if (initial == null) return;
     // Login is over. Both links were read under a deadline until here, because a client or a
@@ -374,10 +376,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       closed = true;
       players.remove(this);
       gg.tame.conduit.metrics.ConduitMetrics.current().playerLeft();
-      runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerDisconnectEvent(this));
+      leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
       backendReader.interrupt();
       close();
     }
+  }
+  /**
+   * Tells plugins the player is gone: once, the first time any path that ends the session gets here,
+   * so that everything set up for the player in PlayerSetupEvent is released exactly once.
+   */
+  public void leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus status) {
+    if (left.compareAndSet(false, true)) runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerDisconnectEvent(this, status));
   }
   private BackendConnection track(BackendConnection connection) {
     open.add(connection);
@@ -1059,7 +1068,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       var execute = new gg.tame.conduit.api.event.command.CommandExecuteEvent(this, command);
       runtime.events().fire(execute);
       if (execute.cancelled()) return true;
-      try { return commands.dispatch(this, command); }
+      // The client's own slash is gone already; dispatch strips one more, so it gets one back.
+      // Without it "//lpv" ran "lpv", where Velocity runs the command registered as "/lpv", and a
+      // backend's "//wand" was taken by any proxy command that happened to be called "wand".
+      try { return commands.dispatch(this, "/" + command); }
       catch (RuntimeException exception) {
         gg.tame.conduit.log.ConduitLog.error("command failed", exception);
         return true;

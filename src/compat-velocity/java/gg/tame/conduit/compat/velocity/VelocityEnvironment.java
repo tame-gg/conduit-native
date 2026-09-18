@@ -61,8 +61,8 @@ final class VelocityEnvironment {
 
   /**
    * One wrapper per joined player, dropped at DisconnectEvent. A player still logging in gets a
-   * fresh one each time: a login that is refused or never reaches a backend raises no
-   * disconnect, and a cached wrapper for it would never be released.
+   * fresh one each time: only the player lookup says a player is live, and a wrapper cached for
+   * anyone outside it could be cached again by a late event after their disconnect had released it.
    */
   VelocityPlayer player(gg.tame.conduit.api.player.Player player) {
     if (player == null) return null;

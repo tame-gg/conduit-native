@@ -62,9 +62,10 @@ final class VelocityCommandHost implements CommandManager {
     try {
       for (String raw : meta.getAliases()) {
         String alias = raw.toLowerCase(Locale.ROOT);
-        // Velocity takes these (LuckPerms adds "/lpv" so that "//lpv" works); Conduit's command line
-        // strips one slash and splits on spaces, so no player could ever type them here.
-        if (alias.startsWith("/") || alias.chars().anyMatch(Character::isWhitespace)) {
+        // A leading slash is fine: "//lpv" asks for an alias "/lpv", as LuckPerms registers one.
+        // Conduit's command line splits on spaces, though, so an alias with one could never be typed,
+        // and nor could one of slashes alone.
+        if (alias.chars().anyMatch(Character::isWhitespace) || alias.chars().allMatch(c -> c == '/')) {
           untypeable.add(alias);
           continue;
         }

@@ -21,6 +21,10 @@ public interface CommandManager {
    * and so on) is taken over, with a warning in the log, and the built-in comes back when the
    * plugin's command goes. {@code /conduit} is never taken over.
    *
+   * <p>A name may itself start with a slash, as WorldEdit's do: a player types {@code //wand} for a
+   * command named {@code /wand}. Exactly one slash is taken off what the player types, and the rest
+   * must match a name exactly, so {@code //wand} never runs a command named {@code wand}.
+   *
    * @throws IllegalArgumentException when a name or alias belongs to another plugin, is
    *     {@code conduit}, or could never be typed; nothing is registered then
    */

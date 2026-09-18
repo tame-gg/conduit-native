@@ -12,9 +12,13 @@ public record RegisteredCommand(String name, List<String> aliases, String permis
     check(name);
     for (String alias : aliases) check(alias);
   }
-  /** A name the dispatcher can never see again is a silent dead command; refuse it at registration. */
+  /**
+   * A name the dispatcher can never see again is a silent dead command; refuse it at registration.
+   * A leading slash is typeable: the player adds the command's own ("//lpv" is "/lpv"). Slashes
+   * alone are not, since a line of nothing but slashes is read as no command at all.
+   */
   private static void check(String name) {
-    if (name.isBlank() || name.startsWith("/") || name.chars().anyMatch(Character::isWhitespace)) {
+    if (name.isBlank() || name.chars().allMatch(c -> c == '/') || name.chars().anyMatch(Character::isWhitespace)) {
       throw new IllegalArgumentException("invalid command name: " + name);
     }
   }

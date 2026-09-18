@@ -32,16 +32,16 @@ final class VelocityPluginHost implements PluginManager {
     for (Container container : byId.values()) if (container.instance == plugin) return Optional.of(container);
     return Optional.empty();
   }
-  /** The plugin whose jar a class with this loader came from, or null. */
+  /**
+   * The plugin whose jar {@code code}'s class came from, or null. A class loader a plugin made under
+   * its own counts as the plugin's, as when a plugin loads its body from a jar inside its jar.
+   */
+  Container owning(Object code) { return code == null ? null : loadedBy(code.getClass().getClassLoader()); }
+  /** The plugin whose jar a class with this loader, or a loader under the plugin's, came from; or null. */
   Container loadedBy(ClassLoader loader) {
-    if (loader == null) return null;
-    for (Container container : byId.values()) if (container.loader == loader) return container;
-    return null;
-  }
-  /** The plugin whose jar {@code code}'s class came from, or null. */
-  Container owning(Object code) {
-    if (code == null) return null;
-    for (Container container : byId.values()) if (code.getClass().getClassLoader() == container.loader) return container;
+    for (; loader != null; loader = loader.getParent()) {
+      for (Container container : byId.values()) if (loader == container.loader) return container;
+    }
     return null;
   }
   Container require(Object plugin) {

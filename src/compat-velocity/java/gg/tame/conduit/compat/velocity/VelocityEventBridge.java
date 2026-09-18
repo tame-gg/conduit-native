@@ -33,6 +33,7 @@ import gg.tame.conduit.api.event.player.PlayerPostLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
 import gg.tame.conduit.api.event.player.PlayerServerSwitchEvent;
+import gg.tame.conduit.api.event.player.PlayerSetupEvent;
 import gg.tame.conduit.api.event.proxy.ProxyStartEvent;
 import gg.tame.conduit.api.event.proxy.ServerListPingEvent;
 import gg.tame.conduit.api.text.Text;
@@ -61,20 +62,20 @@ final class VelocityEventBridge {
     if (listening(ProxyShutdownEvent.class)) environment.fireAndWait(new ProxyShutdownEvent());
   }
 
-  /** Authenticated and about to go to a backend: permissions are set up first, then LoginEvent, as on Velocity. */
+  /**
+   * Authenticated, nothing decided yet: permissions are set up here, before Conduit's maintenance
+   * check and LoginEvent ask about them, as Velocity sets them up before LoginEvent.
+   */
+  @Subscribe public void onSetup(PlayerSetupEvent event) {
+    environment.permissions.setUp(environment.player(event.player()));
+  }
+  /** About to go to a backend; not fired for a player maintenance refused. */
   @Subscribe public void onLogin(PlayerLoginEvent event) {
-    if (!event.allowed()) return;
-    VelocityPlayer player = environment.player(event.player());
-    environment.permissions.setUp(player);
-    if (!listening(LoginEvent.class)) return;
-    LoginEvent login = environment.fireAndWait(new LoginEvent(player));
+    if (!event.allowed() || !listening(LoginEvent.class)) return;
+    LoginEvent login = environment.fireAndWait(new LoginEvent(environment.player(event.player())));
     if (!login.getResult().isAllowed()) {
       event.deny(Texts.toConduit(login.getResult().getReasonComponent().orElse(net.kyori.adventure.text.Component.empty())));
     }
-  }
-  /** A refused login never gets a disconnect event, so what was set up for it goes here. */
-  @Subscribe(order = Subscribe.Order.LAST) public void onLoginDecided(PlayerLoginEvent event) {
-    if (!event.allowed()) environment.permissions.forget(event.player());
   }
   @Subscribe public void onInitialServer(PlayerInitialServerEvent event) {
     if (!listening(PlayerChooseInitialServerEvent.class)) return;
@@ -85,16 +86,21 @@ final class VelocityEventBridge {
     if (chosen != null && !chosen.equals(offered)) event.setInitialServer(environment.nativeServer(chosen));
   }
   @Subscribe public void onPostLogin(PlayerPostLoginEvent event) {
-    VelocityPlayer player = environment.player(event.player());
-    player.loggedIn = true;
-    if (listening(PostLoginEvent.class)) environment.fireAndWait(new PostLoginEvent(player));
+    if (listening(PostLoginEvent.class)) environment.fireAndWait(new PostLoginEvent(environment.player(event.player())));
   }
+  /**
+   * Every player set up gets one, refused logins included, and the adapter lets go of them here.
+   * Conduit never has a conflicting login to report: a second login under the same name is let in.
+   */
   @Subscribe public void onDisconnect(PlayerDisconnectEvent event) {
-    VelocityPlayer player = environment.player(event.player());
     try {
       if (listening(DisconnectEvent.class)) {
-        environment.fireAndWait(new DisconnectEvent(player,
-            player.loggedIn ? DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN : DisconnectEvent.LoginStatus.PRE_SERVER_JOIN));
+        environment.fireAndWait(new DisconnectEvent(environment.player(event.player()), switch (event.loginStatus()) {
+          case SUCCESSFUL_LOGIN -> DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN;
+          case PRE_SERVER_JOIN -> DisconnectEvent.LoginStatus.PRE_SERVER_JOIN;
+          case CANCELLED_BY_PROXY -> DisconnectEvent.LoginStatus.CANCELLED_BY_PROXY;
+          case CANCELLED_BY_USER -> DisconnectEvent.LoginStatus.CANCELLED_BY_USER_BEFORE_COMPLETE;
+        }));
       }
     } finally {
       environment.forget(event.player());

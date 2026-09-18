@@ -9,7 +9,9 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PushbackInputStream;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
 import javax.crypto.Cipher;
 
 /** Raw socket framing with an optional AES/CFB8 layer applied to the entire byte stream. */
@@ -66,6 +68,30 @@ public final class PacketTransport {
     synchronized (writeLock) { output.flush(); }
   }
   public int available() throws IOException { return input.available(); }
+  /**
+   * Whether the peer has hung up, asked while it owes nothing -- a client waiting for its login to
+   * be answered. A socket shows a hang-up only to a read, so this reads, for a millisecond; a byte
+   * that did arrive stays the next one read.
+   */
+  public boolean hungUp() {
+    if (socket == null) return false;
+    try {
+      int timeout = socket.getSoTimeout();
+      int next;
+      socket.setSoTimeout(1);
+      try { next = input.read(); }
+      finally { socket.setSoTimeout(timeout); }
+      if (next < 0) return true;
+      PushbackInputStream kept = new PushbackInputStream(input, 1);
+      kept.unread(next);
+      input = kept;
+      return false;
+    } catch (SocketTimeoutException quiet) {
+      return false;
+    } catch (IOException gone) {
+      return true;
+    }
+  }
   public void beginNegotiation() {
     if (state != EncryptionState.PLAINTEXT) throw new IllegalStateException("encryption negotiation is not valid in " + state);
     state = EncryptionState.ENCRYPTION_NEGOTIATING;

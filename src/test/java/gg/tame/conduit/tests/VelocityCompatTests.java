@@ -573,7 +573,7 @@ public final class VelocityCompatTests {
         awaitSignal("ping:deny.example:47:0/77:conduit motd:true");
         String hidden = statusPing(proxy.port(), "hidden.example");
         require(hidden != null && !hidden.contains("\"players\"") && hidden.contains("conduit motd"), "nullPlayers() hides the counts: " + hidden);
-        require(logged.stream().anyMatch(line -> line.contains("[/vt] cannot be typed")), "an alias no player could type is skipped: " + logged);
+        require(proxy.runtime().commands().hasCommand("/vt"), "an alias with a leading slash is registered, for a player's //vt");
         require(logged.contains("plugin.vtest: vtest initializing") && logged.contains("plugin.vlib: vlib component log"),
             "an injected slf4j Logger and ComponentLogger write to the plugin's Conduit logger: " + logged);
 

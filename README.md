@@ -207,10 +207,14 @@ is created `rwx------`.
 * `/conduit info` (default) and `/conduit help` — permission-filtered list
 
 No built-in command has a short alias; the `/<server>` shortcuts above are the only extra names Conduit
-registers. Plugins may register aliases of their own. Command names are case-insensitive.
+registers. Plugins may register aliases of their own. Command names are case-insensitive. A name may start
+with a slash, as WorldEdit's do: players type one more (`//wand` runs `/wand`, never `wand`).
 
 Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.player`, `conduit.server.send.mass`, `conduit.info`, `conduit.maintenance.bypass`, `conduit.drain.bypass`, …
 `/send <your own name> <server>` needs only `conduit.server.send`; `conduit.server.send.player` is for moving somebody else.
+Maintenance lets in the names on its allowlist and players a permission plugin grants `conduit.maintenance.bypass`
+or `conduit.admin`, asked once the plugin has set the player up. Conduit's own default, which allows every
+permission, lets nobody through maintenance.
 
 ## Server list
 
@@ -625,13 +629,16 @@ plugin whose `depend` cannot be met is named in the log with the reason: a depen
 installed, a dependency cycle (`ping -> pong -> ping`), or a dependency that failed for one of those.
 
 Events include proxy start/shutdown, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
-version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer), login (deniable), auth,
+version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer),
+player setup (`PlayerSetupEvent`: after authentication and before anything is decided about the player, so
+a permission plugin loads them here), login (deniable; maintenance refuses before it), auth,
 initial-server choice, server connect (cancellable and redirectable, for the first server too),
 connected/switch/switch-failed (switch-failed also for each first-server candidate that fails, with no
 source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason and a result of
 `Disconnect`, `Redirect` or `Notify`, for a kick while playing and for a login refused during a switch,
-a first connection or a fallback), post-login, disconnect (also for a player let in whom no server took, with
-`completedLogin()` false), chat (cancellable; clients before 1.19 only),
+a first connection or a fallback), post-login, disconnect (exactly once for every player set up, whether they
+played, were let in but taken by no server, were refused, or left during the login; `loginStatus()` says
+which), chat (cancellable; clients before 1.19 only),
 command execute (cancellable), plugin enable/disable, and plugin messages (cancellable, both
 directions). Every event's Javadoc names the thread
 it fires on; events fire synchronously, and player events fire on that player's connection threads, so a
