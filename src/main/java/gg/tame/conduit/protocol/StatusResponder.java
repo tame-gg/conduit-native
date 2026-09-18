@@ -18,12 +18,12 @@ public final class StatusResponder {
   private StatusResponder() { }
   public static byte[] response(ProtocolDefinition protocol, byte[] request, String description) throws IOException {
     return answer(protocol, request, json(Text.of(description), protocol.version().displayName(), protocol.version().number(),
-        false, 0, 0, List.of(), Optional.empty()));
+        false, 0, 0, List.of(), Optional.empty(), protocol.version().number()));
   }
   /** The answer as the proxy and its plugins left it in {@code ping}. */
   public static byte[] response(ProtocolDefinition protocol, byte[] request, ServerListPingEvent ping) throws IOException {
     return answer(protocol, request, json(ping.description(), ping.versionName(), ping.versionProtocol(),
-        ping.playersHidden(), ping.maxPlayers(), ping.onlinePlayers(), ping.samplePlayers(), ping.favicon()));
+        ping.playersHidden(), ping.maxPlayers(), ping.onlinePlayers(), ping.samplePlayers(), ping.favicon(), ping.protocolVersion()));
   }
   /** Throws unless {@code request} is a status request, so nothing is asked of plugins for a malformed one. */
   public static void checkRequest(ProtocolDefinition protocol, byte[] request) throws IOException {
@@ -34,7 +34,8 @@ public final class StatusResponder {
     return packet(protocol.id(ConnectionState.STATUS, PacketDirection.SERVER_TO_CLIENT, PacketKind.STATUS_REQUEST), json.getBytes(java.nio.charset.StandardCharsets.UTF_8), true);
   }
   private static String json(Text description, String versionName, int versionProtocol, boolean hidePlayers, int max,
-                             int online, List<ServerListPingEvent.SamplePlayer> sample, Optional<String> favicon) {
+                             int online, List<ServerListPingEvent.SamplePlayer> sample, Optional<String> favicon,
+                             int clientProtocol) {
     // Every string goes through the one escaper that handles control characters. The old one escaped
     // quotes and backslashes only, so a MOTD with a line break in it was JSON no client could read.
     StringBuilder json = new StringBuilder("{\"version\":{\"name\":");
@@ -55,7 +56,9 @@ public final class StatusResponder {
       }
       json.append('}');
     }
-    json.append(",\"description\":").append(TextCodec.toJson(description));
+    // In the pinging client's own release, which may be one Conduit has no table for: a 1.12 client
+    // gets RGB colours as the nearest named ones, and its hover text under the key it reads.
+    json.append(",\"description\":").append(TextCodec.toJson(description, clientProtocol));
     if (favicon.isPresent()) {
       json.append(",\"favicon\":");
       ComponentCodec.quote(json, favicon.get());

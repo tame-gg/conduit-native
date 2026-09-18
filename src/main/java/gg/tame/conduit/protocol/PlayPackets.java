@@ -44,14 +44,14 @@ public final class PlayPackets {
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT));
       if (protocol.capabilities().legacyPlayChat()) {
-        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, false);
+        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.version().number(), false);
         if (ProtocolEras.chatHasPosition(protocol.version().number())) output.writeByte(1); // system position
         if (ProtocolEras.chatHasSender(protocol.version().number())) {
           output.writeLong(0L); // nil UUID: the sender vanilla uses for system messages
           output.writeLong(0L);
         }
       } else {
-        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, ProtocolEras.textComponentNbt(protocol.version().number()));
+        gg.tame.conduit.text.TextCodec.write(output, message == null ? gg.tame.conduit.api.text.Text.empty() : message, protocol.version().number());
         // 1.19 names the message's chat type by registry id, where 1 is "system"; from 1.19.1 the
         // field is a boolean that only says whether it belongs on the action bar.
         if (ProtocolEras.systemChatTypeId(protocol.version().number())) MinecraftOutput.varInt(output, 1);

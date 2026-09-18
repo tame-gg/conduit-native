@@ -25,7 +25,7 @@ final class Phase10Tests {
     Text text = Text.of("Hello ").color(TextColor.AQUA).bold()
         .append(Text.of("World").color(TextColor.GREEN).clickRun("/server lobby").hover("Go to lobby"));
     require(text.plain().equals("Hello World"), "plain flatten");
-    String json = TextCodec.toJson(text);
+    String json = TextCodec.toJson(text, 765);
     require(json.contains("\"color\":\"aqua\""), "json color");
     require(json.contains("\"bold\":true"), "json bold");
     require(json.contains("run_command"), "json click");
@@ -40,7 +40,7 @@ final class Phase10Tests {
     require(packet.length > 4, "system chat packet");
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     try (DataOutputStream output = new DataOutputStream(bytes)) {
-      TextCodec.write(output, text, true);
+      TextCodec.write(output, text, 765);
     }
     require(bytes.size() > 8, "nbt component written");
   }

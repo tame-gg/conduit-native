@@ -250,9 +250,9 @@ public final class NativeApiTests {
 
   private static void statusSettingsLoadFromConfig() throws Exception {
     Text motd = StatusSettings.parseMotd("&aGreen &lbold&r plain\\nline & two&k!");
-    require(TextCodec.toJson(motd).equals("{\"text\":\"\",\"extra\":[{\"text\":\"Green \",\"color\":\"green\"},"
-        + "{\"text\":\"bold\",\"color\":\"green\",\"bold\":true},{\"text\":\" plain\\nline & two!\"}]}"),
-        "& codes become components and \\n a line break, got " + TextCodec.toJson(motd));
+    require(TextCodec.toJson(motd, 765).equals("{\"text\":\"\",\"extra\":[{\"text\":\"Green \",\"color\":\"green\"},"
+        + "{\"text\":\"bold\",\"color\":\"green\",\"bold\":true},{\"text\":\" plain\\nline & two\"},{\"text\":\"!\",\"obfuscated\":true}]}"),
+        "& codes become components and \\n a line break, got " + TextCodec.toJson(motd, 765));
     require(StatusSettings.parseMotd("Conduit").equals(Text.of("Conduit")), "a MOTD with no codes is plain text");
 
     Path dir = TempFiles.dir("conduit-status-config");
@@ -704,8 +704,8 @@ public final class NativeApiTests {
         require(client.ends(), "and the session ends");
         PlayerKickedFromServerEvent kicked = proxy.recorder.of(PlayerKickedFromServerEvent.class).getFirst();
         require(!kicked.duringConnect() && kicked.server().getName().equals("lobby"), "kicked from the server it was on");
-        require(kicked.reason().orElseThrow().equals(Text.of("multiplayer.disconnect.kicked").color(TextColor.RED)),
-            "with the reason as far as Text can hold it, got " + kicked.reason());
+        require(kicked.reason().orElseThrow().equals(Text.translatable("multiplayer.disconnect.kicked").color(TextColor.RED)),
+            "with the reason as Text, translation kept, got " + kicked.reason());
         require(kicked.result() instanceof KickResult.Disconnect, "a listener that sets null or throws leaves the default");
       }
     }

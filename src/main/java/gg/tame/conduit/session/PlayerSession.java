@@ -247,7 +247,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    */
   @Override public void disconnect(Text reason) {
     Text shown = reason == null ? Text.empty() : reason;
-    disconnectWith((output, nbt) -> gg.tame.conduit.text.TextCodec.write(output, shown, nbt));
+    disconnectWith((output, nbt) -> gg.tame.conduit.text.TextCodec.write(output, shown, clientProtocol, nbt));
   }
   /**
    * Disconnects with a reason a backend wrote, as the JSON it came in. Going through Text would lose
@@ -577,8 +577,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         this, server, java.util.Optional.of(reason), true, tell)).result();
     // The backend's own component while nobody changed it, because Text would lose its translations.
     String json = switch (result) {
-      case KickResult.Disconnect disconnect -> gg.tame.conduit.text.TextCodec.toJson(disconnect.reason());
-      case KickResult.Notify notify when notify != tell -> gg.tame.conduit.text.TextCodec.toJson(notify.message());
+      case KickResult.Disconnect disconnect -> gg.tame.conduit.text.TextCodec.toJson(disconnect.reason(), clientProtocol);
+      case KickResult.Notify notify when notify != tell -> gg.tame.conduit.text.TextCodec.toJson(notify.message(), clientProtocol);
       default -> refused.reasonJson();
     };
     return new Refusal(result, reason, json);

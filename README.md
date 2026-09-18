@@ -242,8 +242,9 @@ display-max-players = 100
 favicon = "server-icon.png"
 ```
 
-`motd` takes `&` codes: `&0`-`&9` and `&a`-`&f` colours (which, as in the game, clear bold and italic),
-`&l` bold, `&o` italic, `&r` plain; `\n` starts the second line; `&k`, `&m` and `&n` are dropped. It is
+`motd` takes `&` codes: `&0`-`&9` and `&a`-`&f` colours (which, as in the game, clear every decoration),
+`&l` bold, `&o` italic, `&n` underlined, `&m` strikethrough, `&k` obfuscated, `&r` plain; `\n` starts the
+second line. It is
 the plain `"Conduit"` when unset. `display-max-players` (default 100) is only the number shown after the
 slash: Conduit has no join cap. `favicon` is a 64x64 PNG, relative to the config file; one that cannot be
 read, is the wrong size, or is over about 20 KB is logged at load and the list shows no icon. The answer

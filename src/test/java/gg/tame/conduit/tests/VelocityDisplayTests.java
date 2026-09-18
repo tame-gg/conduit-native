@@ -290,7 +290,7 @@ public final class VelocityDisplayTests {
   }
 
   /** A scripted 1.12.2 client. Everything the proxy sends it is kept. */
-  private static final class Client implements AutoCloseable {
+  static final class Client implements AutoCloseable {
     private final Socket socket;
     private final List<byte[]> received = Collections.synchronizedList(new ArrayList<>());
 

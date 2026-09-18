@@ -109,9 +109,11 @@ public final class AllTests {
     CommandForwardingTests.run();
     KickDeliveryTests.run();
     DisplayApiTests.run();
+    TextFidelityTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     VelocityDisplayTests.run();
+    VelocityTextTests.run();
     VelocityLifecycleTests.run();
     LoginLifecycleTests.run();
     VelocityEventsTests.run();

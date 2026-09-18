@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
 
@@ -40,44 +41,44 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
   /**
    * Reads a configured MOTD into Text, using the formatting codes server owners already write.
    *
-   * <p>{@code &0}-{@code &9} and {@code &a}-{@code &f} pick a colour and, as in the game, clear bold
-   * and italic; {@code &l} is bold, {@code &o} italic, {@code &r} back to plain. {@code \n} starts
-   * the second line. {@code &k}, {@code &m} and {@code &n} are dropped, because Text has nothing to
-   * carry them in. An {@code &} before anything else is kept as it is.
+   * <p>{@code &0}-{@code &9} and {@code &a}-{@code &f} pick a colour and, as in the game, clear every
+   * decoration; {@code &l} is bold, {@code &o} italic, {@code &n} underlined, {@code &m}
+   * strikethrough, {@code &k} obfuscated, {@code &r} back to plain. {@code \n} starts the second line.
+   * An {@code &} before anything else is kept as it is.
    */
   public static Text parseMotd(String raw) {
     List<Text> segments = new ArrayList<>();
     StringBuilder run = new StringBuilder();
     TextColor color = null;
-    boolean bold = false;
-    boolean italic = false;
+    EnumSet<Text.Decoration> on = EnumSet.noneOf(Text.Decoration.class);
     for (int index = 0; index < raw.length(); index++) {
       char character = raw.charAt(index);
       char next = index + 1 < raw.length() ? Character.toLowerCase(raw.charAt(index + 1)) : 0;
       if (character == '\\' && next == 'n') { run.append('\n'); index++; continue; }
       if (character != '&' || "0123456789abcdefklmnor".indexOf(next) < 0) { run.append(character); continue; }
       index++;
-      if ("kmn".indexOf(next) >= 0) continue;
-      addSegment(segments, run, color, bold, italic);
+      addSegment(segments, run, color, on);
       int colour = "0123456789abcdef".indexOf(next);
-      // TextColor is declared in the order of these codes, black through white.
-      if (colour >= 0) { color = TextColor.values()[colour]; bold = false; italic = false; }
-      else if (next == 'l') bold = true;
-      else if (next == 'o') italic = true;
-      else { color = null; bold = false; italic = false; }
+      int decoration = "lonmk".indexOf(next);
+      if (colour >= 0) { color = TextColor.named().get(colour); on.clear(); }
+      else if (decoration >= 0) on.add(DECORATION_CODES.get(decoration));
+      else { color = null; on.clear(); }
     }
-    addSegment(segments, run, color, bold, italic);
+    addSegment(segments, run, color, on);
     if (segments.isEmpty()) return Text.empty();
     // A MOTD with no codes is one plain component, exactly what the list was sent before codes.
     return segments.size() == 1 ? segments.getFirst() : Text.join(segments.toArray(Text[]::new));
   }
 
-  private static void addSegment(List<Text> segments, StringBuilder run, TextColor color, boolean bold, boolean italic) {
+  /** The decorations {@code l}, {@code o}, {@code n}, {@code m} and {@code k} turn on, in that order. */
+  private static final List<Text.Decoration> DECORATION_CODES = List.of(Text.Decoration.BOLD, Text.Decoration.ITALIC,
+      Text.Decoration.UNDERLINED, Text.Decoration.STRIKETHROUGH, Text.Decoration.OBFUSCATED);
+
+  private static void addSegment(List<Text> segments, StringBuilder run, TextColor color, EnumSet<Text.Decoration> on) {
     if (run.isEmpty()) return;
     Text segment = Text.of(run.toString());
     if (color != null) segment = segment.color(color);
-    if (bold) segment = segment.bold();
-    if (italic) segment = segment.italic();
+    for (Text.Decoration decoration : on) segment = segment.decorate(decoration);
     segments.add(segment);
     run.setLength(0);
   }

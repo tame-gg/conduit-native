@@ -55,6 +55,34 @@ public final class ProtocolEras {
     return protocol >= TEXT_COMPONENT_NBT_FROM;
   }
 
+  // What a text component can say, by release. The component's shape in JSON and NBT is the same
+  // in every release that has both; these are the fields and forms that came and went.
+
+  /** First protocol whose components take an insertion (1.8). */
+  public static final int TEXT_INSERTION_FROM = 47;
+  /** First protocol whose clicks can copy to the clipboard (1.15); an older client drops the action. */
+  public static final int TEXT_COPY_TO_CLIPBOARD_FROM = 573;
+  /**
+   * First protocol with RGB colours (1.16), which is also where a show-text hover moved its text from
+   * {@code value}, which is all 1.8-1.15 read, to {@code contents}.
+   */
+  public static final int TEXT_RGB_FROM = 735;
+  /** First protocol whose translations take a fallback (1.19.4). */
+  public static final int TEXT_FALLBACK_FROM = 762;
+  /**
+   * First protocol whose components name events {@code click_event} and {@code hover_event} (1.21.5),
+   * with a click's value under a key per action and a hover's text back under {@code value}. A
+   * 1.21.5 client also refuses the whole component over an open-URL click that is not http(s), a
+   * command with a character chat cannot hold, or a page that is not a positive number.
+   */
+  public static final int TEXT_SNAKE_CASE_EVENTS_FROM = 770;
+
+  public static boolean textInsertion(int protocol) { return protocol >= TEXT_INSERTION_FROM; }
+  public static boolean textCopyToClipboard(int protocol) { return protocol >= TEXT_COPY_TO_CLIPBOARD_FROM; }
+  public static boolean textRgb(int protocol) { return protocol >= TEXT_RGB_FROM; }
+  public static boolean textFallback(int protocol) { return protocol >= TEXT_FALLBACK_FROM; }
+  public static boolean textSnakeCaseEvents(int protocol) { return protocol >= TEXT_SNAKE_CASE_EVENTS_FROM; }
+
   /**
    * First protocol whose Player Info Update has the show-hat action (1.21.4). 1.21.2 and 1.21.3 end
    * at list priority, and a real 1.21.3 client given the hat's byte was disconnected with "found 1

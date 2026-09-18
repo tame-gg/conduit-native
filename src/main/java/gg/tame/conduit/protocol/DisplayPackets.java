@@ -106,7 +106,7 @@ public final class DisplayPackets {
   /** Adds {@code bar} to the client with everything it currently shows. Adding one it has replaces it. */
   public static Optional<byte[]> bossBarAdd(ProtocolDefinition protocol, BossBar bar) throws IOException {
     return bossBar(protocol, bar.id(), BOSS_ADD, output -> {
-      TextCodec.write(output, bar.name(), nbt(protocol));
+      TextCodec.write(output, bar.name(), protocol.version().number());
       output.writeFloat(bar.progress());
       MinecraftOutput.varInt(output, color(bar.color()));
       MinecraftOutput.varInt(output, overlay(bar.overlay()));
@@ -125,7 +125,7 @@ public final class DisplayPackets {
   public static Optional<byte[]> bossBarUpdate(ProtocolDefinition protocol, BossBar bar, BossBar.Change change) throws IOException {
     return switch (change) {
       case PROGRESS -> bossBar(protocol, bar.id(), BOSS_PROGRESS, output -> output.writeFloat(bar.progress()));
-      case NAME -> bossBar(protocol, bar.id(), BOSS_NAME, output -> TextCodec.write(output, bar.name(), nbt(protocol)));
+      case NAME -> bossBar(protocol, bar.id(), BOSS_NAME, output -> TextCodec.write(output, bar.name(), protocol.version().number()));
       case STYLE -> bossBar(protocol, bar.id(), BOSS_STYLE, output -> {
         MinecraftOutput.varInt(output, color(bar.color()));
         MinecraftOutput.varInt(output, overlay(bar.overlay()));
@@ -138,8 +138,8 @@ public final class DisplayPackets {
   public static Optional<byte[]> playerListHeaderAndFooter(ProtocolDefinition protocol, Text header, Text footer) throws IOException {
     if (!defines(protocol, PacketKind.PLAY_TAB_LIST_HEADER)) return Optional.empty();
     return Optional.of(packet(protocol, PacketKind.PLAY_TAB_LIST_HEADER, output -> {
-      TextCodec.write(output, orEmpty(header), nbt(protocol));
-      TextCodec.write(output, orEmpty(footer), nbt(protocol));
+      TextCodec.write(output, orEmpty(header), protocol.version().number());
+      TextCodec.write(output, orEmpty(footer), protocol.version().number());
     }));
   }
 
@@ -266,7 +266,7 @@ public final class DisplayPackets {
 
   private static void optionalText(DataOutputStream output, ProtocolDefinition protocol, Text text) throws IOException {
     output.writeBoolean(text != null);
-    if (text != null) TextCodec.write(output, text, nbt(protocol));
+    if (text != null) TextCodec.write(output, text, protocol.version().number());
   }
 
   private static List<ProfileProperty> properties(TabListEntry entry) {
@@ -315,12 +315,12 @@ public final class DisplayPackets {
   private static byte[] titleText(ProtocolDefinition protocol, int action, Text text) throws IOException {
     return packet(protocol, PacketKind.PLAY_TITLE, output -> {
       MinecraftOutput.varInt(output, action);
-      TextCodec.write(output, orEmpty(text), nbt(protocol));
+      TextCodec.write(output, orEmpty(text), protocol.version().number());
     });
   }
 
   private static byte[] text(ProtocolDefinition protocol, PacketKind kind, Text text) throws IOException {
-    return packet(protocol, kind, output -> TextCodec.write(output, orEmpty(text), nbt(protocol)));
+    return packet(protocol, kind, output -> TextCodec.write(output, orEmpty(text), protocol.version().number()));
   }
 
   private interface Body { void write(DataOutputStream output) throws IOException; }
@@ -336,10 +336,6 @@ public final class DisplayPackets {
 
   private static boolean defines(ProtocolDefinition protocol, PacketKind kind) {
     return protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, kind);
-  }
-
-  private static boolean nbt(ProtocolDefinition protocol) {
-    return ProtocolEras.textComponentNbt(protocol.version().number());
   }
 
   private static Text orEmpty(Text text) { return text == null ? Text.empty() : text; }

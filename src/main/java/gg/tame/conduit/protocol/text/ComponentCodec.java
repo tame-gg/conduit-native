@@ -54,6 +54,12 @@ public final class ComponentCodec {
   /** A JSON component as a tree of String, List, Map, Integer, Double and Boolean, or null when it does not parse. */
   public static Object parseJson(String json) { return Json.parse(json); }
 
+  /** A component tree, of the kinds {@link #parseJson} returns, as JSON. */
+  public static String toJson(Object tree) { return Json.write(tree); }
+
+  /** A component tree, of the kinds {@link #parseJson} returns, as a nameless network-NBT component. */
+  public static void writeNbt(DataOutput output, Object tree) throws IOException { writeTag(output, tree, true); }
+
   /** Appends {@code value} as a JSON string, escaping quotes, backslashes and control characters. */
   public static void quote(StringBuilder out, String value) { Json.quote(out, value); }
 
