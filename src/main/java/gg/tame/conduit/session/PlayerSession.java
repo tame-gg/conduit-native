@@ -1892,7 +1892,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         close();
         throw exception;
       }
-      synchronized (lock) {
+      // A fallback's caller set SWITCHING itself, over a backend that is already gone, and either
+      // tries the next server or closes. Handing the session back as CONNECTED here pointed it at that
+      // dead backend between attempts, where a /server from the client could start a second switch.
+      if (!fallback) synchronized (lock) {
         if (lifecycle.get() == SessionLifecycle.SWITCHING) {
           lifecycle.set(previous != null ? SessionLifecycle.CONNECTED : SessionLifecycle.CLOSED);
           lock.notifyAll();
