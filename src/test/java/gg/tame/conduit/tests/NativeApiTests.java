@@ -319,7 +319,7 @@ public final class NativeApiTests {
         require(proxy.recorder.of(PlayerAuthenticatedEvent.class).isEmpty(), "no authenticated event offline");
       }
       require(proxy.recorder.await(PlayerDisconnectEvent.class, 1), "disconnect event");
-      require(proxy.recorder.of(PlayerDisconnectEvent.class).size() == 1, "only a player who got PostLogin gets a disconnect event");
+      require(proxy.recorder.of(PlayerDisconnectEvent.class).size() == 1, "a denied login gets no disconnect event");
       require(proxy.runtime.player("kyle").isEmpty(), "gone from the lookup");
     }
   }
@@ -772,6 +772,12 @@ public final class NativeApiTests {
         require(id(reply) == 0, "a Login Disconnect, got id " + id(reply));
         require(text(reply).equals(untranslated), "the last refusal as its server wrote it, not the generic message, got " + text(reply));
       }
+      // Let in by PlayerLoginEvent but taken by no server: its listeners heard nothing more before.
+      require(proxy.recorder.await(PlayerDisconnectEvent.class, 2), "a disconnect event for each player let in");
+      var left = proxy.recorder.of(PlayerDisconnectEvent.class);
+      require(left.stream().anyMatch(event -> event.player().username().equals("walker") && event.completedLogin())
+          && left.stream().anyMatch(event -> event.player().username().equals("turned-away") && !event.completedLogin()),
+          "one who joined and one who never did, got " + left);
     }
   }
 

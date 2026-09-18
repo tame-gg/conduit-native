@@ -707,6 +707,8 @@ public final class VelocityCompatTests {
             dave.awaitClosed("Dave's connection");
           }
           require(backends.stream().noneMatch(line -> line.endsWith("login:Dave")), "a denied connection never dialled a backend: " + backends);
+          // Let in, never joined: plugins still hear that Dave is gone, and the adapter lets go of him.
+          awaitSignal("disconnect:Dave:PRE_SERVER_JOIN");
           // PlayerChooseInitialServerEvent picks Bob's first server; then Bob is kicked.
           try (Client bob = Client.join(proxy.port(), "Bob")) {
             bob.await(frame -> frame[0] == 0x01, "Bob's Join Game");

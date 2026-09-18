@@ -608,7 +608,8 @@ initial-server choice, server connect (cancellable and redirectable, for the fir
 connected/switch/switch-failed (switch-failed also for each first-server candidate that fails, with no
 source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason and a result of
 `Disconnect`, `Redirect` or `Notify`, for a kick while playing and for a login refused during a switch,
-a first connection or a fallback), post-login, disconnect, chat (cancellable; clients before 1.19 only),
+a first connection or a fallback), post-login, disconnect (also for a player let in whom no server took, with
+`completedLogin()` false), chat (cancellable; clients before 1.19 only),
 command execute (cancellable), plugin enable/disable, and plugin messages (cancellable, both
 directions). Every event's Javadoc names the thread
 it fires on; events fire synchronously, and player events fire on that player's connection threads, so a

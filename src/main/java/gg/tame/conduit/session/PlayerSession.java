@@ -340,10 +340,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   public void play() throws IOException {
     // A login listener that kicked the player instead of denying the event closed the session, and
     // the proxy went on to dial a backend for a client that was already gone.
-    if (closed) return;
-    BackendConnection initial;
+    BackendConnection initial = null;
     try {
-      initial = connectInitial();
+      if (!closed) initial = connectInitial();
     } catch (IOException failed) {
       // Every candidate refused, was unreachable, or had its connection cancelled by a plugin. The
       // socket used to close with nothing written, and the player saw "Connection lost" and no reason.
@@ -351,7 +350,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (failed instanceof gg.tame.conduit.login.BackendLoginPipeline.Refused refused) disconnectJson(refused.reasonJson());
       else disconnect("Could not connect you to a server. Please try again later.");
       throw failed;
+    } finally {
+      // Let in, never joined. Listeners that set something up for this player in PlayerLoginEvent
+      // heard nothing more, and whatever they kept for the player was kept for good.
+      if (initial == null) runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerDisconnectEvent(this, false));
     }
+    if (initial == null) return;
     // Login is over. Both links were read under a deadline until here, because a client or a
     // backend that stops halfway through a login parks this thread with two sockets, a connection
     // slot and a throttle lease held; from here on either end may sit quiet as long as it likes.

@@ -184,7 +184,7 @@ plugin's own events. Verified by VCT: priority order, `EventTask.async`, `Contin
 | `PlayerChooseInitialServerEvent`: `setInitialServer` works | Fired | VCT |
 | `ServerPreConnectEvent`: can deny, or redirect with `allowed(otherServer)`; fired for the first connection and for switches. If every first server is denied, the connection is closed without a message. | Fired | VCT (deny, redirect), Maintenance |
 | `ServerConnectedEvent` (with the previous server), `ServerPostConnectEvent` (switches only) | Fired | VCT (ServerConnectedEvent) |
-| `DisconnectEvent` (`SUCCESSFUL_LOGIN` or `PRE_SERVER_JOIN`) | Fired | VCT |
+| `DisconnectEvent`: `SUCCESSFUL_LOGIN` for a player who got `PostLoginEvent`, `PRE_SERVER_JOIN` for one let in by `LoginEvent` whom no server took; a denied login gets none | Fired | VCT |
 | `PluginMessageEvent`: only for channels registered with the `ChannelRegistrar`, in both directions; `handled()` stops forwarding | Fired | VCT |
 | `CommandExecuteEvent`: `denied()` works; `command(...)` and `forwardToServer(...)` are not honoured, and a warning is logged | Fired (partial) | VCT |
 | `PlayerChatEvent`: pre-1.19 clients only (signed chat is relayed untouched); `denied()` works; rewriting the message is not honoured, and a warning is logged | Fired (partial) | VCT |
