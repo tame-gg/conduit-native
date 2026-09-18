@@ -123,6 +123,7 @@ public final class AllTests {
     ServerKickTests.run();
     ResourcePackTests.run();
     LoginFlowTests.run();
+    TabCompleteEventTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

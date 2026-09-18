@@ -111,11 +111,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   /** The backend's login asked the client something, so an answer may still be in flight. */
   private volatile boolean loginQueriesRelayed;
   /**
-   * The command name a client with no command tree last sent the backend to complete, until the
-   * backend's reply has had Conduit's matching commands added. That reply is the only place such a
-   * client learns command names from, and the backend knows none of Conduit's.
+   * What a client with no command tree last sent the backend to complete, until the backend's reply
+   * has been through {@link #withLegacyTabCompletions}. A reply to a command name gets Conduit's
+   * matching commands added: it is the only place such a client learns command names from, and the
+   * backend knows none of Conduit's. Every such reply then goes past PlayerTabCompleteEvent.
    */
-  private volatile String legacyCommandCompletion;
+  private volatile String legacyTabRequest;
   /**
    * True while Conduit, rather than the translator, is the one moving the client out of Play for a
    * reconfiguration, so the client's acknowledgement is Conduit's own reply and must not also be
@@ -1269,7 +1270,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // Only this request's reply may take Conduit's names. A reply can fail to come at all -- Via
       // dropped a 1.20.4 backend's empty one for a real 1.12.2 client -- and a name left pending then
       // went into the next reply, Conduit's own list of servers, which Tab turned into "/server /server".
-      legacyCommandCompletion = null;
+      legacyTabRequest = null;
       var command = gg.tame.conduit.command.ParsedCommand.parseKeepEmpty(request.text());
       if (request.text().startsWith("/") && commands.get(command.name()).isPresent()) {
         List<String> completions = commands.tabComplete(this, request.text());
@@ -1283,9 +1284,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         writeClient(PlayPackets.tabComplete(protocol, request.transactionId(), start, length, completions));
         return true;
       }
-      if (!protocol.capabilities().commandTree() && request.text().startsWith("/") && request.text().indexOf(' ') < 0) {
-        legacyCommandCompletion = request.text();
-      }
+      if (!protocol.capabilities().commandTree()) legacyTabRequest = request.text();
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED)) {
       if (viaEngine() && !conduitOwnsReconfiguration) {
@@ -2280,19 +2279,27 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // The session's own UUID stands in for one that cannot be read.
     }
   }
-  /** Adds Conduit's matching command names to the backend's reply to a pre-1.13 command-name Tab. */
-  private byte[] withProxyCommandNames(byte[] packet) {
-    String typed = legacyCommandCompletion;
+  /**
+   * The backend's reply to a pre-1.13 Tab press, with Conduit's matching command names added to a
+   * command-name one, as PlayerTabCompleteEvent's listeners leave it.
+   */
+  private byte[] withLegacyTabCompletions(byte[] packet) {
+    String typed = legacyTabRequest;
     if (typed == null || clientState.state() != ConnectionState.PLAY) return packet;
     try {
       if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PlayPackets.packetId(packet), PacketKind.PLAY_TAB_COMPLETE)) {
         return packet;
       }
-      legacyCommandCompletion = null;
+      legacyTabRequest = null;
       List<String> backendMatches = PlayPackets.legacyTabMatches(packet);
-      java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>(backendMatches);
-      for (String name : commands.tabComplete(this, typed)) merged.add("/" + name);
-      return merged.size() == backendMatches.size() ? packet : PlayPackets.tabComplete(protocol, -1, 0, 0, List.copyOf(merged));
+      List<String> suggestions = new java.util.ArrayList<>(backendMatches);
+      if (typed.startsWith("/") && typed.indexOf(' ') < 0) {
+        for (String name : commands.tabComplete(this, typed)) if (!suggestions.contains("/" + name)) suggestions.add("/" + name);
+      }
+      runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerTabCompleteEvent(this, typed, suggestions));
+      // A plugin's null would end the session in the encoder.
+      suggestions.removeIf(java.util.Objects::isNull);
+      return suggestions.equals(backendMatches) ? packet : PlayPackets.tabComplete(protocol, -1, 0, 0, suggestions);
     } catch (IOException unreadable) {
       // The backend's reply goes through untouched rather than the session over a completion list.
       return packet;
@@ -2312,7 +2319,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // Last stop before the socket: a recipe list the client cannot parse costs the whole session,
     // and a correct one passes through this untouched.
     outbound = gg.tame.conduit.protocol.RecipeListRepair.apply(protocol, outbound);
-    outbound = withProxyCommandNames(outbound);
+    outbound = withLegacyTabCompletions(outbound);
     if (gg.tame.conduit.protocol.ProfileTrace.enabled()) {
       String where = lifecycle.get() == SessionLifecycle.SWITCHING ? "switch" : "steady";
       gg.tame.conduit.protocol.ProfileTrace.clientbound(where, protocol, clientState.state(), outbound, profile());

@@ -14,6 +14,7 @@ import com.velocitypowered.api.event.player.PlayerSettingsChangedEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
+import com.velocitypowered.api.event.player.TabCompleteEvent;
 import com.velocitypowered.api.event.proxy.ListenerBoundEvent;
 import com.velocitypowered.api.event.proxy.ListenerCloseEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
@@ -285,6 +286,19 @@ final class VelocityEventBridge {
   }
   @Subscribe public void onBrand(gg.tame.conduit.api.event.player.PlayerClientBrandEvent event) {
     if (listening(PlayerClientBrandEvent.class)) environment.events.fire(new PlayerClientBrandEvent(environment.player(event.player()), event.brand()));
+  }
+  /**
+   * The plugins get a copy and their list is read back once they are done. One still running when the
+   * wait runs out could be changing it as it is read, so the client then gets the suggestions as they
+   * were.
+   */
+  @Subscribe public void onTabComplete(gg.tame.conduit.api.event.player.PlayerTabCompleteEvent event) {
+    if (!listening(TabCompleteEvent.class)) return;
+    TabCompleteEvent tab = new TabCompleteEvent(environment.player(event.player()), event.partialMessage(), new java.util.ArrayList<>(event.suggestions()));
+    if (!environment.await(environment.events.fire(tab), "TabCompleteEvent")) return;
+    java.util.List<String> suggestions = new java.util.ArrayList<>(tab.getSuggestions());
+    event.suggestions().clear();
+    event.suggestions().addAll(suggestions);
   }
   /**
    * Waited for, as Velocity waits, but for at most {@link VelocityEnvironment#WAIT_MS}: the shutdown

@@ -685,7 +685,8 @@ source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason
 a first connection or a fallback, including a 1.20.2+ server's refusal in its configuration phase, which
 always ends the session), post-login, disconnect (exactly once for every player set up, whether they
 played, were let in but taken by no server, were refused, or left during the login; `loginStatus()` says
-which), chat (cancellable; clients before 1.19 only),
+which), chat (cancellable; clients before 1.19 only), tab completion (`PlayerTabCompleteEvent`: change the
+backend's answer to a Tab press; clients before 1.13 only),
 command execute (cancellable), plugin enable/disable, and plugin messages (cancellable, both
 directions). Every event's Javadoc names the thread
 it fires on; events fire synchronously, and player events fire on that player's connection threads, so a
