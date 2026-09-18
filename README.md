@@ -171,10 +171,13 @@ Local Paper does not care. Lobby → survival on a 26.2 client failed because Pl
 Player-facing output is clean and polished: hierarchy, colors, and concise wording —
 Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or address leaks.
 
-* `/server` — `You are currently connected to: …` plus a scannable list (`●` current, `○` others); `/server <name>` switches
-* `/lobby`, `/survival`, … — slash aliases for configured names (when not reserved)
-* `/send` — `current` / player / mass moves (`✓ Sent …` / `✕ … is unavailable.`)
-* `/glist`, `/plist`, `/find`, `/alert`, `/ping`, `/hub`, `/gkick`
+* `/server` — `You are currently connected to: …` plus a scannable list (`●` current, `○` others)
+* `/server <name>` — switch; unique prefixes resolve (`surv` → `survival`), ambiguous ones list the matches
+* `/lobby`, `/survival`, … — one shortcut per configured backend, except where the name is already a Conduit command (`server`, `send`, `glist`, `plist`, `find`, `alert`, `ping`, `hub`, `gkick`, `conduit`)
+* `/send <player> <server>` — move one player
+* `/send <server> <server>` — move everyone on a backend (bounded concurrency; a player who fails to move stays put)
+* `/send current <server>` — move yourself
+* `/glist`, `/plist <server>`, `/find <player>`, `/alert <message>`, `/ping`, `/hub`, `/gkick <player> [reason]`
 * `/conduit` — branded version line plus current server and counts
 * `/conduit servers` — name + Online/Offline status (more detail than `/server`, still compact)
 * `/conduit health` — cached backend health with hysteresis counters
@@ -182,11 +185,23 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/conduit drain|undrain <server>` — rolling-restart drain
 * `/conduit doctor` / `/conduit diagnostics` — operator checks (no secrets)
 * `/conduit attack <on|off|status>` — runtime attack-mode tightening
+* `/conduit cache invalidate <address>` — drop a mod-handshake cache entry
+* `/conduit uptime`, `/conduit metrics` — operator readouts
+* `/conduit dump` — counters, version and server names to a text file; safe to paste into an issue
+* `/conduit heap` — JVM heap dump. **Contains the forwarding secret, session tokens and player data.** Treat the `.hprof` as a credential
+
+Both write to `dumps/` beside `conduit.toml` — never the shell's working directory — with a timestamped
+name no command argument can influence. `dumps/` is in the shipped `.gitignore`; on POSIX the directory
+is created `rwx------`.
 * `/conduit reload` — live-safe reload; lists exact restart-required keys
 * `/conduit plugins` — proxy plugins only (does not shadow Paper `/plugins`)
-* `/conduit help` — short permission-filtered list
+* `/conduit info` (default) and `/conduit help` — permission-filtered list
+
+No built-in command has a short alias; the `/<server>` shortcuts above are the only extra names Conduit
+registers. Plugins may register aliases of their own. Command names are case-insensitive.
 
 Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.player`, `conduit.server.send.mass`, `conduit.info`, `conduit.maintenance.bypass`, `conduit.drain.bypass`, …
+`/send <your own name> <server>` needs only `conduit.server.send`; `conduit.server.send.player` is for moving somebody else.
 
 ## Operations (Phase 1)
 
@@ -347,14 +362,20 @@ Permission nodes (replaceable `PermissionProvider`; default is permissive):
 * `conduit.admin`
 * `conduit.command.plugins` / `glist` / `find` / `alert` / `ping` / `hub` / `gkick` / `plist`
 * `conduit.command.dump` / `heap` / `reload` / `uptime`
+* `conduit.command.maintenance` / `drain` / `health` / `doctor` / `diagnostics`
+* `conduit.attack`, `conduit.cache`
+
+`conduit.admin` satisfies any `/conduit` subcommand node on its own.
 
 `/send` never lists backend addresses. Mass moves run with bounded concurrency; a failed player stays on the source backend.
 
 Proxy commands are intercepted and not forwarded to Paper. Other commands are forwarded.
 
-On protocol 765, Conduit merges `/server`, `/conduit`, and `/send` into the backend **Declare Commands**
-tree (brigadier node indexes are rewritten). If a backend tree cannot be decoded, the original
-backend packet is forwarded unchanged (those proxy commands may still execute but can appear red).
+On protocol 765, Conduit merges `/server`, `/conduit`, and `/send` — plus every `/conduit`
+subcommand, the `/<server>` shortcuts, and any command a plugin registered, aliases included —
+into the backend **Declare Commands** tree (brigadier node indexes are rewritten). If a backend
+tree cannot be decoded, the original backend packet is forwarded unchanged (those proxy commands
+may still execute but can appear red).
 
 ## Canonical authenticated profile
 
@@ -508,7 +529,47 @@ api-version: 1
 
 `api-version` is the Conduit API integer, not a Minecraft protocol. Incompatible plugins are rejected.
 
+Optional `depend: [other-plugin]` orders loading; a plugin whose dependencies are missing is skipped.
+
+```java
+package example;
+
+import gg.tame.conduit.api.command.CommandManager;
+import gg.tame.conduit.api.event.Subscribe;
+import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
+import gg.tame.conduit.api.plugin.ConduitPlugin;
+import gg.tame.conduit.api.text.Text;
+import java.time.Duration;
+
+public final class ExamplePlugin extends ConduitPlugin {
+  @Override public void onEnable() {
+    proxy().commands().register(this, CommandManager.Command.builder("example")
+        .alias("ex")
+        .permission("example.use")
+        .handler((source, arguments) -> source.sendMessage(Text.of("hello " + source.username())))
+        .completer((source, arguments) -> java.util.List.of("here", "there"))
+        .build());
+    proxy().events().register(this, this);
+    getScheduler().buildTask(this, () -> getLogger().info("tick"))
+        .delay(Duration.ofSeconds(5)).repeat(Duration.ofMinutes(1)).schedule();
+  }
+
+  @Subscribe public void onConnected(PlayerServerConnectedEvent event) {
+    getLogger().info(event.player().username() + " reached " + event.target().getName());
+  }
+}
+```
+
+A `@Subscribe` method takes exactly one event and may declare a supertype of the ones it wants (`Event`
+itself catches everything); a parameter that is not an `Event` is rejected at registration. Settings go in
+`plugins/<id>/`, which `dataDirectory()` returns; `SimplePluginConfiguration.load(path, defaults)` reads a
+`key=value` file there, creating it from the defaults and appending any key it is missing.
+
 Lifecycle: discover → validate → classload → dependency order → onLoad/onEnable. Disable unregisters events, commands, and scheduler tasks and closes the plugin classloader. Data lives in `plugins/<id>/`.
+
+A jar that fails any of those steps is logged and skipped — a bad descriptor, a duplicate id, a main class
+that will not initialize, or an `onEnable` that throws never stops the proxy from starting or the other
+plugins from loading, and the rejected jar's classloader is closed so the file is not left locked.
 
 Events include proxy start/shutdown, login/auth/disconnect, server connect/connected/switch/failed (cancellable connect), chat/command execute, plugin enable/disable, plugin messaging.
 

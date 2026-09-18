@@ -403,9 +403,9 @@ final class ProfileTests {
     int[] before = header(original);
     int[] after = header(merged);
     require(before[0] == 0x10 && after[0] == 0x10, "packet id preserved");
-    // Proxy literals: conduit(10), glist, plist(5), find, alert, ping, hub, gkick,
-    // server(5), send(6), slash-servers(5) → 41 nodes and 15 root children.
-    require(after[1] == before[1] + 41, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
+    // Proxy literals: conduit(17), glist, plist(5), find, alert, ping, hub, gkick,
+    // server(5), send(6), slash-servers(5) → 48 nodes and 15 root children.
+    require(after[1] == before[1] + 48, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
     require(after[3] == before[3] + 15, "root gained exactly fifteen children");
     for (int index = 0; index < before[3]; index++) {
       require(rootChild(original, index) == rootChild(merged, index), "existing root child " + index + " unchanged");

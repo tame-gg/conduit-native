@@ -24,7 +24,25 @@ public final class Main {
       listener.runtime().bindConfigPath(configPath);
       System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
       listener.probeBackends();
+      consoleCommands(listener.runtime());
       listener.serve();
     }
+  }
+
+  /** Commands typed at the proxy's own terminal. Daemon: it must not hold shutdown open. */
+  private static void consoleCommands(gg.tame.conduit.runtime.ConduitRuntime runtime) {
+    Thread reader = new Thread(() -> {
+      var console = new gg.tame.conduit.command.ConsoleCommandSource();
+      try (var input = new java.io.BufferedReader(new java.io.InputStreamReader(System.in))) {
+        for (String line = input.readLine(); line != null; line = input.readLine()) {
+          if (line.isBlank()) continue;
+          try {
+            if (!runtime.commandManager().dispatch(console, line)) console.sendMessage("Unknown command. Try /conduit help");
+          } catch (RuntimeException failure) { gg.tame.conduit.log.ConduitLog.error("console command failed", failure); }
+        }
+      } catch (java.io.IOException closed) { }
+    }, "conduit-console");
+    reader.setDaemon(true);
+    reader.start();
   }
 }

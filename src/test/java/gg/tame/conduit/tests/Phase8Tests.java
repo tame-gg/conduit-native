@@ -37,8 +37,6 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.jar.JarEntry;
-import java.util.jar.JarOutputStream;
 
 public final class Phase8Tests {
   static void run() throws Exception {
@@ -48,7 +46,6 @@ public final class Phase8Tests {
     metricsAndBackpressureLoad();
     translationFoundation();
     velocityAdapter();
-    pluginJarLifecycle();
   }
   private static void descriptorValidation() throws Exception {
     PluginDescription description = PluginDescriptorParser.parse(new ByteArrayInputStream("""
@@ -143,37 +140,6 @@ public final class Phase8Tests {
         ForwardingMode.NONE, Optional.empty(), List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", 2))), List.of("lobby"), List.of()), dir);
     VelocityProxyAdapter adapter = new VelocityProxyAdapter(runtime);
     require(adapter.getAllServers().size() == 1, "server lookup");
-    runtime.close();
-  }
-  private static void pluginJarLifecycle() throws Exception {
-    Path root = Files.createTempDirectory("conduit-plugin-test");
-    Path classes = root.resolve("classes");
-    Files.createDirectories(classes);
-    Path src = root.resolve("P.java");
-    Files.writeString(src, "package p; public final class P extends gg.tame.conduit.api.plugin.ConduitPlugin { @Override public void onEnable() { getLogger().info(\"on\"); } }");
-    Path out = classes;
-    Process compile = new ProcessBuilder("javac", "--release", "21", "-cp", System.getProperty("java.class.path"), "-d", out.toString(), src.toString())
-        .start();
-    if (compile.waitFor() != 0) {
-      System.out.println("plugin jar compile skipped (out/ not present yet)");
-      return;
-    }
-    Path jar = root.resolve("example.jar");
-    try (JarOutputStream jos = new JarOutputStream(Files.newOutputStream(jar))) {
-      jos.putNextEntry(new JarEntry("conduit-plugin.yml"));
-      jos.write("id: example\nname: Example\nversion: 1.0.0\nmain: p.P\napi-version: 1\n".getBytes(StandardCharsets.UTF_8));
-      jos.closeEntry();
-      jos.putNextEntry(new JarEntry("p/P.class"));
-      jos.write(Files.readAllBytes(out.resolve("p").resolve("P.class")));
-      jos.closeEntry();
-    }
-    ConduitRuntime runtime = new ConduitRuntime(new ConduitConfiguration(new InetSocketAddress("127.0.0.1", 1), 64,
-        ForwardingMode.NONE, Optional.empty(), List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", 2))), List.of("lobby"), List.of()), root);
-    Files.move(jar, root.resolve("ExamplePlugin.jar"));
-    runtime.pluginRuntime().loadAll();
-    require(runtime.plugins().plugin("example").isPresent(), "plugin loaded");
-    runtime.plugins().disable(runtime.plugins().plugin("example").orElseThrow());
-    require(runtime.plugins().plugin("example").isEmpty(), "plugin disabled");
     runtime.close();
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }

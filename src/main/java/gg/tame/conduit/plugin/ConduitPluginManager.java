@@ -57,7 +57,9 @@ public final class ConduitPluginManager implements PluginManager {
         if (tryExternal(jar)) continue;
         pending.add(read(jar));
       }
-      catch (Exception exception) { ConduitLog.error("rejected plugin jar " + jar.getFileName() + ": " + exception.getMessage()); }
+      // LinkageError too: a main class whose static initializer throws, or whose supertype is not in
+      // the jar, comes out of Class.forName as an Error. One such jar used to abort startup.
+      catch (Exception | LinkageError rejected) { ConduitLog.error("rejected plugin jar " + jar.getFileName() + ": " + rejected); }
     }
     pending = resolve(pending);
     for (Pending item : pending) enable(item);
@@ -86,10 +88,17 @@ public final class ConduitPluginManager implements PluginManager {
         throw new IOException("plugin " + description.id() + " requires API " + description.apiVersion() + " (proxy is " + Conduit.API_VERSION + ")");
       }
       URLClassLoader loader = new URLClassLoader(new URL[] { normalized.toUri().toURL() }, ConduitPlugin.class.getClassLoader());
-      Class<?> type = Class.forName(description.mainClass(), true, loader);
-      if (!ConduitPlugin.class.isAssignableFrom(type)) throw new IOException("main class must extend ConduitPlugin");
-      ConduitPlugin plugin = (ConduitPlugin) type.getDeclaredConstructor().newInstance();
-      return new Pending(description, plugin, loader);
+      try {
+        Class<?> type = Class.forName(description.mainClass(), true, loader);
+        if (!ConduitPlugin.class.isAssignableFrom(type)) throw new IOException("main class must extend ConduitPlugin");
+        ConduitPlugin plugin = (ConduitPlugin) type.getDeclaredConstructor().newInstance();
+        return new Pending(description, plugin, loader);
+      } catch (Exception | LinkageError failed) {
+        // The loader holds the jar open, so a rejected plugin that kept one left the file locked
+        // on Windows: the operator could not delete or replace the jar without restarting.
+        closeLoader(loader);
+        throw failed;
+      }
     }
   }
   private List<Pending> resolve(List<Pending> pending) {
@@ -97,6 +106,7 @@ public final class ConduitPluginManager implements PluginManager {
     for (Pending item : pending) {
       if (byId.putIfAbsent(item.description.id(), item) != null) {
         ConduitLog.error("duplicate plugin id " + item.description.id());
+        closeLoader(item.loader);
       }
     }
     List<Pending> ordered = new ArrayList<>();
@@ -111,6 +121,7 @@ public final class ConduitPluginManager implements PluginManager {
       }
       if (next == null) {
         ConduitLog.error("unresolved plugin dependencies: " + remaining.stream().map(item -> item.description.id()).toList());
+        for (Pending dropped : remaining) closeLoader(dropped.loader);
         break;
       }
       remaining.remove(next);
@@ -135,8 +146,15 @@ public final class ConduitPluginManager implements PluginManager {
       }
       events.fire(new PluginEnableEvent(pending.plugin));
       ConduitLog.info("Enabled plugin " + pending.description.id() + " " + pending.description.version());
-    } catch (Exception exception) {
-      ConduitLog.error("failed to enable plugin " + pending.description.id(), exception);
+    } catch (Exception | LinkageError failure) {
+      ConduitLog.error("failed to enable plugin " + pending.description.id(), failure);
+      // It never reached the plugins map, so disable() will never run for it. Anything it managed
+      // to register before it threw would otherwise stay live with no owner able to take it back.
+      plugins.remove(pending.description.id());
+      if (proxy instanceof ConduitRuntime runtime) runtime.pluginCatalog().remove(pending.description.id());
+      events.unregister(pending.plugin);
+      scheduler.cancel(pending.plugin);
+      commands.unregisterAll(pending.plugin);
       closeLoader(pending.loader);
     }
   }

@@ -3,6 +3,7 @@ package gg.tame.conduit.command;
 import gg.tame.conduit.api.plugin.Plugin;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -14,22 +15,35 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   private final Map<String, RegisteredCommand> commands = new LinkedHashMap<>();
   private final Map<Plugin, List<RegisteredCommand>> owned = new ConcurrentHashMap<>();
   public synchronized void register(RegisteredCommand command) {
-    put(command.name(), command);
-    for (String alias : command.aliases()) put(alias, command);
+    // Every key is checked before any is installed: a collision on the second alias used to leave
+    // the name and the aliases before it registered, so a rejected command was half usable.
+    List<String> keys = new ArrayList<>(1 + command.aliases().size());
+    keys.add(command.name());
+    keys.addAll(command.aliases());
+    for (String key : keys) {
+      if (commands.containsKey(key)) throw new IllegalArgumentException("command already registered: " + key);
+    }
+    for (String key : keys) commands.put(key, command);
   }
   @Override public synchronized void register(Plugin plugin, RegisteredCommand command) {
     register(command);
     owned.computeIfAbsent(plugin, ignored -> new ArrayList<>()).add(command);
   }
-  public synchronized void unregister(String name) {
+  /** Removes a command by any of its names; returns it, or null when nothing matched. */
+  public synchronized RegisteredCommand unregister(String name) {
     RegisteredCommand command = commands.get(normalize(name));
-    if (command == null) return;
+    if (command == null) return null;
     commands.entrySet().removeIf(entry -> entry.getValue() == command);
+    return command;
   }
   @Override public synchronized void unregister(Plugin plugin, String name) {
-    unregister(name);
     List<RegisteredCommand> list = owned.get(plugin);
-    if (list != null) list.removeIf(command -> command.name().equals(normalize(name)));
+    RegisteredCommand command = commands.get(normalize(name));
+    // Scoped to the caller: one plugin unregistering "server" must not take out another plugin's
+    // command or a built-in. Removal from the owned list is by identity, so unregistering by an
+    // alias no longer leaves the command behind for unregisterAll to trip over.
+    if (command == null || list == null || !list.remove(command)) return;
+    unregister(command.name());
   }
   @Override public synchronized void unregisterAll(Plugin plugin) {
     List<RegisteredCommand> list = owned.remove(plugin);
@@ -42,9 +56,8 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     RegisteredCommand command;
     synchronized (this) { command = commands.get(parsed.name()); }
     if (command == null) return false;
-    if (command.permission() != null && !command.permission().isBlank() && !source.hasPermission(command.permission())) {
-      source.sendMessage(gg.tame.conduit.api.text.Text.of("You don't have permission to use this command.")
-          .color(gg.tame.conduit.api.text.TextColor.RED));
+    if (!permitted(source, command)) {
+      Messages.permission(source);
       return true;
     }
     command.executor().execute(source, parsed.arguments());
@@ -61,7 +74,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     RegisteredCommand command;
     synchronized (this) { command = commands.get(parsed.name()); }
     if (command == null || command.completer() == null) return List.of();
-    if (command.permission() != null && !command.permission().isBlank() && !source.hasPermission(command.permission())) return List.of();
+    if (!permitted(source, command)) return List.of();
     String prefix = parsed.arguments().isEmpty() ? "" : parsed.arguments().getLast();
     List<String> raw = command.completer().complete(source, parsed.arguments());
     if (prefix.isEmpty()) return raw;
@@ -70,16 +83,23 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     for (String value : raw) if (value.toLowerCase(Locale.ROOT).startsWith(needle)) filtered.add(value);
     return filtered;
   }
-  private void put(String key, RegisteredCommand command) {
-    if (commands.putIfAbsent(key, command) != null) throw new IllegalArgumentException("command already registered: " + key);
+  /** Every name a client can type, names and aliases alike, in registration order. */
+  public synchronized List<String> names() { return List.copyOf(new LinkedHashSet<>(commands.keySet())); }
+  private static boolean permitted(CommandSource source, RegisteredCommand command) {
+    String permission = command.permission();
+    return permission == null || permission.isBlank() || source.hasPermission(permission);
   }
   private List<String> prefixes(CommandSource source, String prefix) {
     String needle = prefix.toLowerCase(Locale.ROOT);
     List<String> names = new ArrayList<>();
-    for (RegisteredCommand command : new LinkedHashMap<>(commands).values()) {
-      if (names.contains(command.name())) continue;
-      if (command.permission() != null && !command.permission().isBlank() && !source.hasPermission(command.permission())) continue;
-      if (command.name().startsWith(needle)) names.add(command.name());
+    synchronized (this) {
+      // Keyed, not named: an alias is what the player typed, so completing "/al" to the primary
+      // name is right, but "/tp" must offer "tp" and not go looking for a command called "tp".
+      for (Map.Entry<String, RegisteredCommand> entry : commands.entrySet()) {
+        if (!entry.getKey().startsWith(needle)) continue;
+        if (!permitted(source, entry.getValue())) continue;
+        if (!names.contains(entry.getKey())) names.add(entry.getKey());
+      }
     }
     return names;
   }

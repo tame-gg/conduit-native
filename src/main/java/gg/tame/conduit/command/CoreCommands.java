@@ -28,6 +28,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 /** Built-in Conduit commands. Clean, polished proxy UX — not a dashboard. */
 public final class CoreCommands {
   private static final int MASS_SWITCH_CONCURRENCY = 16;
+  /** Every /conduit subcommand, in help order. Drives both tab completion and the client graph. */
+  public static final List<String> CONDUIT_SUBCOMMANDS = List.of("info", "plugins", "servers", "uptime",
+      "dump", "heap", "reload", "metrics", "health", "maintenance", "drain", "undrain", "doctor",
+      "diagnostics", "attack", "cache", "help");
   private static final Set<String> RESERVED = Set.of(
       "server", "send", "glist", "plist", "find", "alert", "ping", "hub", "gkick", "conduit");
   private CoreCommands() {}
@@ -106,7 +110,9 @@ public final class CoreCommands {
       return;
     }
     if (!(source instanceof TrackedPlayer player)) {
-      Messages.unavailable(source, name);
+      // Not "the server is unavailable" -- the console is not on a server. Saying otherwise sent
+      // operators to check a backend that was fine.
+      Messages.failure(source, "Only a player can switch servers. Use /send <player> " + name + ".");
       return;
     }
     if (runtime != null) {
@@ -125,7 +131,7 @@ public final class CoreCommands {
       }
     }
     Messages.connecting(source, name);
-    player.transferTo(name);
+    if (!player.transferTo(name)) Messages.unavailable(source, name);
   }
 
   private static void glist(CommandSource source, PlayerManager players, ServerRegistry registry) {
@@ -196,7 +202,11 @@ public final class CoreCommands {
   }
 
   private static void hub(CommandSource source, ConduitRuntime runtime) {
-    if (!(source instanceof TrackedPlayer player) || runtime == null) {
+    if (!(source instanceof TrackedPlayer player)) {
+      Messages.failure(source, "Only a player can use /hub.");
+      return;
+    }
+    if (runtime == null) {
       Messages.failure(source, "Unable to resolve hub server.");
       return;
     }
@@ -246,7 +256,7 @@ public final class CoreCommands {
       case "uptime" -> source.sendMessage(Text.of("Uptime: ").color(Messages.LABEL)
           .append(Text.of(formatUptime(runtime == null ? 0 : runtime.uptimeMillis())).color(Messages.BODY)));
       case "dump" -> dump(source, runtime, registry);
-      case "heap" -> heap(source);
+      case "heap" -> heap(source, runtime);
       case "reload" -> reload(source, runtime);
       case "metrics" -> source.sendMessage(Text.of(ConduitMetrics.current().snapshot().toString()).color(Messages.LABEL));
       case "health" -> health(source, runtime, registry);
@@ -330,6 +340,12 @@ public final class CoreCommands {
     if (source.hasPermission(Permissions.SERVER_SEND) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       source.sendMessage(Text.of("/send <player|server|current> <server>").color(Messages.BODY));
     }
+    helpLine(source, Permissions.GLIST, "/glist");
+    helpLine(source, Permissions.PLIST, "/plist <server>");
+    helpLine(source, Permissions.FIND, "/find <player>");
+    helpLine(source, Permissions.ALERT, "/alert <message>");
+    helpLine(source, Permissions.PING, "/ping");
+    helpLine(source, Permissions.GKICK, "/gkick <player> [reason]");
     if (source.hasPermission(Permissions.CONDUIT_INFO) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       source.sendMessage(Text.of("/conduit").color(Messages.BODY));
       source.sendMessage(Text.of("/conduit servers").color(Messages.BODY));
@@ -360,6 +376,12 @@ public final class CoreCommands {
     }
     if (source.hasPermission(Permissions.HUB) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       source.sendMessage(Text.of("/hub").color(Messages.BODY));
+    }
+  }
+
+  private static void helpLine(CommandSource source, String permission, String usage) {
+    if (source.hasPermission(permission) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      source.sendMessage(Text.of(usage).color(Messages.BODY));
     }
   }
 
@@ -479,13 +501,42 @@ public final class CoreCommands {
       Messages.info(source, "Usage: /conduit cache invalidate <source>");
       return;
     }
+    Optional<InetAddress> address = literalAddress(arguments.get(1));
+    if (address.isEmpty()) {
+      Messages.failure(source, "Not an IP address: " + arguments.get(1));
+      return;
+    }
+    boolean removed = runtime.modded().invalidateCache(address.get());
+    if (removed) Messages.success(source, "Mod handshake cache invalidated for source.");
+    else Messages.info(source, "No cache entries for that source.");
+  }
+
+  /**
+   * A literal address, or nothing. The cache is keyed by the address Conduit accepted a connection
+   * from, so a host name is never the right answer here -- and passing one to
+   * {@link InetAddress#getByName} would turn a command into a name lookup of an operator-supplied
+   * string. IPv4 is parsed here and built with {@code getByAddress}, which never resolves; anything
+   * containing a colon is an IPv6 literal, which getByName validates without resolving either.
+   */
+  private static Optional<InetAddress> literalAddress(String text) {
     try {
-      InetAddress address = InetAddress.getByName(arguments.get(1));
-      boolean removed = runtime.modded().invalidateCache(address);
-      if (removed) Messages.success(source, "Mod handshake cache invalidated for source.");
-      else Messages.info(source, "No cache entries for that source.");
-    } catch (Exception exception) {
-      Messages.failure(source, "Invalid source address.");
+      if (text.indexOf(':') >= 0) return Optional.of(InetAddress.getByName(text));
+      String[] parts = text.split("[.]", -1);
+      if (parts.length != 4) return Optional.empty();
+      byte[] octets = new byte[4];
+      for (int index = 0; index < 4; index++) {
+        String part = parts[index];
+        if (part.isEmpty() || part.length() > 3) return Optional.empty();
+        for (int digit = 0; digit < part.length(); digit++) {
+          if (part.charAt(digit) < '0' || part.charAt(digit) > '9') return Optional.empty();
+        }
+        int octet = Integer.parseInt(part);
+        if (octet > 255) return Optional.empty();
+        octets[index] = (byte) octet;
+      }
+      return Optional.of(InetAddress.getByAddress(octets));
+    } catch (java.net.UnknownHostException notALiteral) {
+      return Optional.empty();
     }
   }
 
@@ -615,9 +666,9 @@ public final class CoreCommands {
       return;
     }
     try {
-      Path dir = Path.of("dumps");
-      Files.createDirectories(dir);
-      Path file = dir.resolve("conduit-" + Instant.now().toString().replace(':', '-') + ".txt");
+      Path file = diagnosticsDirectory(runtime).resolve("conduit-" + stamp() + ".txt");
+      // Counters, versions and server names. No addresses, no config, no player data: this is the
+      // one dump an operator is meant to be able to paste into an issue.
       StringBuilder body = new StringBuilder();
       body.append("Conduit ").append(Conduit.VERSION).append('\n');
       body.append("uptimeMs=").append(runtime == null ? 0 : runtime.uptimeMillis()).append('\n');
@@ -625,20 +676,25 @@ public final class CoreCommands {
       for (String name : registry.names()) body.append("server=").append(name).append('\n');
       Files.writeString(file, body.toString());
       Messages.success(source, "Wrote dump to " + file.toAbsolutePath());
+      Messages.info(source, "Counters and server names only - no addresses, secrets, or player data.");
     } catch (IOException exception) {
       Messages.failure(source, "Dump failed.");
     }
   }
 
-  private static void heap(CommandSource source) {
+  private static void heap(CommandSource source, ConduitRuntime runtime) {
     if (!source.hasPermission(Permissions.HEAP) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
       Messages.permission(source);
       return;
     }
+    // Said before the file exists, so the operator is told what they are about to create even if
+    // the dump then fails. A committed .hprof is how a real session-service URL, player name and
+    // auth token left this project once already.
+    source.sendMessage(Text.of("A heap dump contains everything this process holds in memory: "
+        + "forwarding secret, session tokens, player data. Treat the file as a credential - "
+        + "do not commit it or attach it to an issue.").color(Messages.WARN));
     try {
-      Path dir = Path.of("dumps");
-      Files.createDirectories(dir);
-      Path file = dir.resolve("heap-" + Instant.now().toString().replace(':', '-') + ".hprof");
+      Path file = diagnosticsDirectory(runtime).resolve("heap-" + stamp() + ".hprof");
       Class<?> hotspot = Class.forName("com.sun.management.HotSpotDiagnosticMXBean");
       Object bean = ManagementFactory.newPlatformMXBeanProxy(
           ManagementFactory.getPlatformMBeanServer(),
@@ -650,6 +706,25 @@ public final class CoreCommands {
       Messages.failure(source, "Heap dump unavailable.");
     }
   }
+
+  /**
+   * Where both dumps go. Beside the proxy's own config rather than wherever the shell happened to
+   * be when it was started, and always named {@code dumps} so the shipped .gitignore keeps matching
+   * it at any depth. No command argument reaches this path: the file name is a timestamp.
+   */
+  private static Path diagnosticsDirectory(ConduitRuntime runtime) throws IOException {
+    Path base = runtime == null ? Path.of(".") : runtime.configDirectory();
+    Path dir = base.resolve("dumps").toAbsolutePath().normalize();
+    Files.createDirectories(dir);
+    try {
+      // A heap dump is world-readable by default, and on shared hosting that is the whole secret.
+      Files.setPosixFilePermissions(dir, java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"));
+    } catch (UnsupportedOperationException | IOException windowsOrRestricted) {
+      // Windows has no POSIX view; its inherited ACL already keeps this to the account.
+    }
+    return dir;
+  }
+  private static String stamp() { return Instant.now().toString().replace(':', '-'); }
 
   private static void send(CommandSource source, ServerRegistry registry, PlayerManager players, ConduitRuntime runtime, List<String> arguments) {
     if (arguments.size() != 2) {
@@ -680,15 +755,18 @@ public final class CoreCommands {
       }
       Messages.connecting(source, dest);
       if (player.transferTo(dest)) Messages.success(source, "Sent " + player.username() + " to " + dest + ".");
+      else Messages.unavailable(source, dest);
       return;
     }
     Optional<TrackedPlayer> player = players.getByUsername(from);
     if (player.isPresent()) {
-      if (!source.hasPermission(Permissions.SERVER_SEND_OTHERS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
+      TrackedPlayer target = player.get();
+      // Moving yourself is /send's own permission. Only moving somebody else needs the other node.
+      if (target != source
+          && !source.hasPermission(Permissions.SERVER_SEND_OTHERS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
         Messages.permission(source);
         return;
       }
-      TrackedPlayer target = player.get();
       if (dest.equalsIgnoreCase(target.currentBackend())) {
         source.sendMessage(Text.of(target.username()).color(Messages.BODY)
             .append(Text.of(" is already connected to ").color(Messages.LABEL))
@@ -789,9 +867,7 @@ public final class CoreCommands {
 
   private static List<String> completeConduit(List<String> arguments) {
     if (arguments.size() > 1) return List.of();
-    return prefix(List.of("info", "plugins", "servers", "uptime", "dump", "heap", "reload", "metrics",
-            "health", "maintenance", "drain", "undrain", "doctor", "diagnostics", "attack", "cache", "help"),
-        arguments.isEmpty() ? "" : arguments.getFirst());
+    return prefix(CONDUIT_SUBCOMMANDS, arguments.isEmpty() ? "" : arguments.getFirst());
   }
 
   private static List<String> prefix(List<String> values, String prefix) {

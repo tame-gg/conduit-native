@@ -17,7 +17,9 @@ public record ParsedCommand(String name, List<String> arguments) {
     String name = parts[0].toLowerCase(Locale.ROOT);
     List<String> arguments = new ArrayList<>();
     for (int index = 1; index < parts.length; index++) {
-      if (!keepTrailing && parts[index].isEmpty()) continue;
+      // Runs of spaces are collapsed either way. Only the trailing empty token is real: it is how
+      // "/send lobby " says the player has started a second argument. "/send  lobby" is one.
+      if (parts[index].isEmpty() && !(keepTrailing && index == parts.length - 1)) continue;
       arguments.add(parts[index]);
     }
     return new ParsedCommand(name, List.copyOf(arguments));

@@ -1,13 +1,10 @@
 package gg.tame.conduit.command;
 
 import gg.tame.conduit.protocol.ConnectionState;
-import gg.tame.conduit.protocol.MinecraftInput;
 import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
 import gg.tame.conduit.protocol.PlayPackets;
 import gg.tame.conduit.protocol.ProtocolDefinition;
-import java.io.ByteArrayInputStream;
-import java.io.DataInputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,6 +27,15 @@ public final class CommandGraphs {
    * packet unchanged.
    */
   public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames) throws IOException {
+    return mergeProxyCommands(protocol, packet, serverNames, List.of());
+  }
+  /**
+   * As above, plus a childless literal for every name in {@code extraNames} the proxy commands do
+   * not already cover -- what {@link CommandManager#names()} returns, so a plugin's command and its
+   * aliases are in the tree a 1.13+ client parses against instead of being highlighted as unknown.
+   */
+  public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
+      List<String> extraNames) throws IOException {
     int id = PlayPackets.packetId(packet);
     int cursor = varIntLength(packet, 0);
     int count = readVarInt(packet, cursor);
@@ -53,7 +59,7 @@ public final class CommandGraphs {
     if ((flags & 0x08) != 0) header += varIntLength(packet, header);
     if (header > rootIndexStart) throw new IOException("command tree root node overruns the packet");
 
-    List<CommandGraph.LiteralCommand> literals = proxyLiterals(serverNames);
+    List<CommandGraph.LiteralCommand> literals = proxyLiterals(serverNames, extraNames);
     int added = 0;
     for (CommandGraph.LiteralCommand literal : literals) added += 1 + literal.children().size();
 
@@ -116,17 +122,19 @@ public final class CommandGraphs {
     return start;
   }
   public static byte[] proxyOnly(ProtocolDefinition protocol, List<String> serverNames) throws IOException {
+    return proxyOnly(protocol, serverNames, List.of());
+  }
+  public static byte[] proxyOnly(ProtocolDefinition protocol, List<String> serverNames, List<String> extraNames) throws IOException {
     CommandGraph graph = CommandGraph.decode(rootOnly());
-    graph.addLiteralCommands(proxyLiterals(serverNames));
+    graph.addLiteralCommands(proxyLiterals(serverNames, extraNames));
     return graph.encode(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS));
   }
-  private static List<CommandGraph.LiteralCommand> proxyLiterals(List<String> serverNames) {
+  private static List<CommandGraph.LiteralCommand> proxyLiterals(List<String> serverNames, List<String> extraNames) {
     List<String> sendChildren = new ArrayList<>();
     sendChildren.add("current");
     sendChildren.addAll(serverNames);
-    List<String> conduitChildren = List.of("info", "plugins", "servers", "uptime", "dump", "heap", "reload", "metrics", "health", "help");
     List<CommandGraph.LiteralCommand> literals = new ArrayList<>();
-    literals.add(new CommandGraph.LiteralCommand("conduit", conduitChildren));
+    literals.add(new CommandGraph.LiteralCommand("conduit", CoreCommands.CONDUIT_SUBCOMMANDS));
     literals.add(new CommandGraph.LiteralCommand("glist", List.of()));
     literals.add(new CommandGraph.LiteralCommand("plist", serverNames));
     literals.add(new CommandGraph.LiteralCommand("find", List.of()));
@@ -136,16 +144,20 @@ public final class CommandGraphs {
     literals.add(new CommandGraph.LiteralCommand("gkick", List.of()));
     literals.add(new CommandGraph.LiteralCommand("server", serverNames));
     literals.add(new CommandGraph.LiteralCommand("send", sendChildren));
-    for (String name : serverNames) {
-      String key = name.toLowerCase(java.util.Locale.ROOT);
-      if (key.equals("server") || key.equals("send") || key.equals("conduit") || key.equals("glist")
-          || key.equals("plist") || key.equals("find") || key.equals("alert") || key.equals("ping")
-          || key.equals("hub") || key.equals("gkick")) {
-        continue;
-      }
-      literals.add(new CommandGraph.LiteralCommand(key, List.of()));
-    }
+    java.util.LinkedHashSet<String> emitted = new java.util.LinkedHashSet<>();
+    for (CommandGraph.LiteralCommand literal : literals) emitted.add(literal.name());
+    // /<server> shortcuts first, then whatever else is registered -- plugin commands and their
+    // aliases. A name the built-ins already own is theirs: a second literal for it would give the
+    // root two children of the same name and the client would parse against the childless one.
+    for (String name : serverNames) addLiteral(literals, emitted, name);
+    for (String name : extraNames) addLiteral(literals, emitted, name);
     return List.copyOf(literals);
+  }
+  private static void addLiteral(List<CommandGraph.LiteralCommand> literals, java.util.Set<String> emitted, String name) {
+    if (name == null) return;
+    String key = name.toLowerCase(java.util.Locale.ROOT);
+    if (key.isBlank() || !emitted.add(key)) return;
+    literals.add(new CommandGraph.LiteralCommand(key, List.of()));
   }
   private static byte[] rootOnly() throws IOException {
     var bytes = new java.io.ByteArrayOutputStream();
@@ -156,11 +168,5 @@ public final class CommandGraphs {
       gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 0);
     }
     return bytes.toByteArray();
-  }
-  private static byte[] body(byte[] packet) throws IOException {
-    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
-      MinecraftInput.varInt(input);
-      return input.readAllBytes();
-    }
   }
 }
