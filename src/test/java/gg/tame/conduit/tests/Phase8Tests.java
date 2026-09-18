@@ -7,8 +7,6 @@ import gg.tame.conduit.api.event.player.PlayerChatEvent;
 import gg.tame.conduit.api.event.plugin.PluginEnableEvent;
 import gg.tame.conduit.api.plugin.ConduitPlugin;
 import gg.tame.conduit.api.plugin.PluginDescription;
-import gg.tame.conduit.compat.velocity.VelocityCompatibility;
-import gg.tame.conduit.compat.velocity.VelocityProxyAdapter;
 import gg.tame.conduit.config.BackendServer;
 import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ForwardingMode;
@@ -45,7 +43,6 @@ public final class Phase8Tests {
     commandBuilder();
     metricsAndBackpressureLoad();
     translationFoundation();
-    velocityAdapter();
   }
   private static void descriptorValidation() throws Exception {
     PluginDescription description = PluginDescriptorParser.parse(new ByteArrayInputStream("""
@@ -132,15 +129,6 @@ public final class Phase8Tests {
     require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "765-766 translated");
     try { new Protocol765To776Translator().clientToBackend(gg.tame.conduit.protocol.ConnectionState.PLAY, new byte[] {0}); throw new AssertionError("fake translation"); }
     catch (UnsupportedOperationException expected) { }
-  }
-  private static void velocityAdapter() throws Exception {
-    require(VelocityCompatibility.STATUS.contains("PARTIAL"), "compat status");
-    Path dir = TempFiles.dir("conduit-plugins-empty");
-    ConduitRuntime runtime = new ConduitRuntime(new ConduitConfiguration(new InetSocketAddress("127.0.0.1", 1), 64,
-        ForwardingMode.NONE, Optional.empty(), List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", 2))), List.of("lobby"), List.of()), dir);
-    VelocityProxyAdapter adapter = new VelocityProxyAdapter(runtime);
-    require(adapter.getAllServers().size() == 1, "server lookup");
-    runtime.close();
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }
   /** 1.20.4 Login Success for the same player: zero UUID, name, no properties. */

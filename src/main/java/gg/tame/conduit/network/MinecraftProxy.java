@@ -79,10 +79,7 @@ public final class MinecraftProxy implements AutoCloseable {
     // Found by name so that core never imports a Velocity type.
     try {
       Class<?> boot = Class.forName("gg.tame.conduit.compat.velocity.VelocityBoot");
-      java.lang.reflect.Method install;
-      try { install = boot.getMethod("install", gg.tame.conduit.api.ConduitProxy.class); }
-      catch (NoSuchMethodException older) { install = boot.getMethod("install", ConduitRuntime.class); }
-      install.invoke(null, runtime);
+      boot.getMethod("install", gg.tame.conduit.api.ConduitProxy.class).invoke(null, runtime);
     } catch (ClassNotFoundException ignored) {
     } catch (ReflectiveOperationException exception) {
       ConduitLog.error("Velocity compatibility layer failed to install", exception);

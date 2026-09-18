@@ -39,7 +39,6 @@ public final class ConduitPluginManager implements PluginManager {
   private final ConduitEventManager events;
   private final ConduitScheduler scheduler;
   private final CommandManager commands;
-  private final List<ExternalJarHandler> extraHandlers = new CopyOnWriteArrayList<>();
   private final List<PluginLoader> loaders = new CopyOnWriteArrayList<>();
   private volatile boolean loaded;
   public ConduitPluginManager(Path pluginsDirectory, ConduitProxy proxy, ConduitEventManager events, ConduitScheduler scheduler, CommandManager commands) {
@@ -49,8 +48,6 @@ public final class ConduitPluginManager implements PluginManager {
     this.scheduler = scheduler;
     this.commands = commands;
   }
-  /** Older seam for a format that runs its own lifecycle. New formats use {@link #registerLoader}. */
-  public void registerHandler(ExternalJarHandler handler) { extraHandlers.add(handler); }
   @Override public void registerLoader(PluginLoader loader) {
     if (loader == null) throw new IllegalArgumentException("loader is required");
     if (loaded) throw new IllegalStateException("plugins are already loaded; register loaders from the proxy bootstrap");
@@ -74,9 +71,8 @@ public final class ConduitPluginManager implements PluginManager {
       try {
         Path normalized = jar.toAbsolutePath().normalize();
         if (!normalized.startsWith(pluginsDirectory.toAbsolutePath().normalize())) throw new IOException("plugin path escaped plugins directory");
-        Claim claim = claim(normalized);
-        if (claim.handler != null) { claim.handler.load(normalized); continue; }
-        pending.add(claim.loader != null ? foreign(claim.loader, normalized) : read(normalized));
+        PluginLoader loader = claim(normalized);
+        pending.add(loader != null ? foreign(loader, normalized) : read(normalized));
       }
       // LinkageError too: a main class whose static initializer throws, or whose supertype is not in
       // the jar, comes out of Class.forName as an Error. One such jar used to abort startup.
@@ -84,14 +80,12 @@ public final class ConduitPluginManager implements PluginManager {
     }
     for (Pending item : resolve(pending)) enable(item);
   }
-  private record Claim(ExternalJarHandler handler, PluginLoader loader) {}
-  /** Decides who reads the jar, then lets go of it: a loader must not find it already open. */
-  private Claim claim(Path jar) throws IOException {
+  /** The format loader that claims the jar, or null for a native plugin. Closes the jar before any loader opens it. */
+  private PluginLoader claim(Path jar) throws IOException {
     try (JarFile file = new JarFile(jar.toFile())) {
-      for (ExternalJarHandler handler : extraHandlers) if (handler.accepts(file)) return new Claim(handler, null);
-      for (PluginLoader loader : loaders) if (loader.accepts(file)) return new Claim(null, loader);
+      for (PluginLoader loader : loaders) if (loader.accepts(file)) return loader;
     }
-    return new Claim(null, null);
+    return null;
   }
   private Pending foreign(PluginLoader loader, Path jar) throws Exception {
     PluginLoader.Loaded result = loader.load(jar);
@@ -231,9 +225,6 @@ public final class ConduitPluginManager implements PluginManager {
   public void disableAll() {
     List<Plugin> enabled = new ArrayList<>(plugins());
     for (Plugin plugin : enabled.reversed()) disable(plugin);
-    for (ExternalJarHandler handler : extraHandlers) {
-      try { handler.shutdown(); } catch (RuntimeException exception) { ConduitLog.error("plugin format shutdown failed", exception); }
-    }
   }
   private static void close(AutoCloseable resources) {
     try { resources.close(); } catch (Exception exception) { ConduitLog.warn("could not release plugin resources: " + exception); }

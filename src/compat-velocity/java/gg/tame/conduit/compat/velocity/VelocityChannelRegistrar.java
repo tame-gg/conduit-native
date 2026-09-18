@@ -2,16 +2,17 @@ package gg.tame.conduit.compat.velocity;
 
 import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.ChannelRegistrar;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/** The channels Velocity plugins listen on: only their messages raise a Velocity PluginMessageEvent. */
 final class VelocityChannelRegistrar implements ChannelRegistrar {
-  private final Set<String> channels = ConcurrentHashMap.newKeySet();
+  private final ConcurrentHashMap<String, ChannelIdentifier> channels = new ConcurrentHashMap<>();
   @Override public void register(ChannelIdentifier... identifiers) {
-    for (ChannelIdentifier identifier : identifiers) channels.add(identifier.getId());
+    for (ChannelIdentifier identifier : identifiers) channels.put(identifier.getId(), identifier);
   }
   @Override public void unregister(ChannelIdentifier... identifiers) {
     for (ChannelIdentifier identifier : identifiers) channels.remove(identifier.getId());
   }
-  boolean registered(String id) { return channels.contains(id); }
+  /** The identifier a plugin registered for {@code channel}, or null when none did. */
+  ChannelIdentifier find(String channel) { return channel == null ? null : channels.get(channel); }
 }

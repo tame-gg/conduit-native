@@ -1,110 +1,98 @@
 package gg.tame.conduit.compat.velocity;
 
-import com.velocitypowered.api.plugin.Plugin;
-import gg.tame.conduit.log.ConduitLog;
-import gg.tame.conduit.plugin.ExternalJarHandler;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.velocitypowered.api.plugin.meta.PluginDependency;
+import gg.tame.conduit.api.plugin.PluginDescription;
+import gg.tame.conduit.api.plugin.PluginLoader;
+import java.io.IOException;
 import java.io.InputStream;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.net.URL;
-import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.jar.JarFile;
-import java.util.logging.Logger;
+import java.util.zip.ZipEntry;
 
-final class VelocityPluginLoader implements ExternalJarHandler {
+/**
+ * Reads Velocity plugin jars: {@code velocity-plugin.json} at the jar root, which is what the
+ * velocity-api annotation processor writes from a plugin's {@code @Plugin}. Conduit's plugin
+ * manager then orders, enables and disables what this returns.
+ */
+final class VelocityPluginLoader implements PluginLoader {
+  static final String METADATA = "velocity-plugin.json";
   private final VelocityEnvironment environment;
   VelocityPluginLoader(VelocityEnvironment environment) { this.environment = environment; }
-  @Override public boolean accepts(JarFile jar) {
-    return jar.getEntry("velocity-plugin.json") != null || jar.getEntry("velocity-plugin.toml") != null;
-  }
-  @Override public void load(Path jar) throws Exception {
-    Path normalized = jar.toAbsolutePath().normalize();
+
+  @Override public String format() { return "velocity"; }
+  @Override public boolean accepts(JarFile jar) { return jar.getEntry(METADATA) != null; }
+
+  @Override public Loaded load(Path jar) throws Exception {
     VelocityPluginHost.Description description;
-    try (JarFile file = new JarFile(normalized.toFile())) {
-      var entry = file.getEntry("velocity-plugin.json");
-      if (entry == null) throw new IllegalArgumentException("velocity-plugin.json required");
+    try (JarFile file = new JarFile(jar.toFile())) {
+      ZipEntry entry = file.getEntry(METADATA);
+      if (entry == null) throw new IOException("missing " + METADATA);
       try (InputStream input = file.getInputStream(entry)) {
-        description = parseJson(new String(input.readAllBytes(), StandardCharsets.UTF_8), normalized);
+        description = parse(new String(input.readAllBytes(), StandardCharsets.UTF_8), jar);
       }
     }
-    URLClassLoader loader = new URLClassLoader(new URL[] { normalized.toUri().toURL() }, VelocityBoot.class.getClassLoader());
-    Class<?> type = Class.forName(description.main(), true, loader);
-    Plugin annotation = type.getAnnotation(Plugin.class);
-    if (annotation != null && (description.getId() == null || description.getId().isBlank())) {
-      description = new VelocityPluginHost.Description(annotation.id(), annotation.name(), annotation.version(), description.main(), normalized);
+    VelocityClassLoader loader = new VelocityClassLoader(jar.toUri().toURL(), environment.loaders);
+    try {
+      // Found now so a jar whose main class is missing is rejected with the rest; initialized in onLoad.
+      Class<?> main = Class.forName(description.main(), false, loader);
+      List<String> required = new ArrayList<>();
+      List<String> optional = new ArrayList<>();
+      for (PluginDependency dependency : description.dependencies()) (dependency.isOptional() ? optional : required).add(dependency.getId());
+      PluginDescription nativeDescription = new PluginDescription(description.id(),
+          description.name() == null ? description.id() : description.name(),
+          description.version() == null ? "unknown" : description.version(), description.main(), 1, required, optional);
+      return new Loaded(nativeDescription, new VelocityPluginHandle(environment, description, loader, main), loader);
+    } catch (Exception | LinkageError failed) {
+      loader.close();
+      throw failed;
     }
-    Object instance = construct(type, description);
-    VelocityPluginHost.Container container = new VelocityPluginHost.Container(description, instance);
-    environment.plugins().add(container);
-    environment.runtime().pluginCatalog().put(new gg.tame.conduit.plugin.PluginCatalog.Entry(
-        description.getId(),
-        description.getName().orElse(description.getId()),
-        description.getVersion().orElse(""),
-        gg.tame.conduit.plugin.PluginCatalog.Kind.VELOCITY));
-    environment.events().register(instance, instance);
-    ConduitLog.info("Enabled Velocity plugin " + description.getId() + " " + description.getVersion().orElse(""));
   }
-  @Override public void shutdown() { environment.shutdown(); }
-  private Object construct(Class<?> type, VelocityPluginHost.Description description) throws Exception {
-    Logger logger = Logger.getLogger("velocity-plugin." + description.getId());
-    Constructor<?> chosen = null;
-    for (Constructor<?> constructor : type.getDeclaredConstructors()) {
-      if (chosen == null || constructor.getParameterCount() > chosen.getParameterCount()) chosen = constructor;
+
+  static VelocityPluginHost.Description parse(String json, Path source) {
+    JsonObject root;
+    try {
+      root = JsonParser.parseString(json).getAsJsonObject();
+    } catch (RuntimeException malformed) {
+      throw new IllegalArgumentException(METADATA + " is not a JSON object: " + malformed.getMessage(), malformed);
     }
-    if (chosen == null) throw new IllegalStateException("no constructor");
-    chosen.setAccessible(true);
-    Object[] args = new Object[chosen.getParameterCount()];
-    Class<?>[] types = chosen.getParameterTypes();
-    VelocityPluginHost.Container pending = new VelocityPluginHost.Container(description, null);
-    for (int i = 0; i < types.length; i++) args[i] = inject(types[i], logger, pending);
-    Object instance = chosen.newInstance(args);
-    for (Field field : type.getDeclaredFields()) {
-      if (!isInject(field)) continue;
-      field.setAccessible(true);
-      field.set(instance, inject(field.getType(), logger, pending));
+    String id = text(root, "id");
+    if (id == null || !com.velocitypowered.api.plugin.PluginDescription.ID_PATTERN.matcher(id).matches()) {
+      throw new IllegalArgumentException(METADATA + " has no valid plugin id (lowercase, starts with a letter, at most 64 characters): " + id);
     }
-    return instance;
+    String main = text(root, "main");
+    if (main == null || main.isBlank()) throw new IllegalArgumentException(METADATA + " of " + id + " names no main class");
+    List<String> authors = new ArrayList<>();
+    for (JsonElement author : array(root, "authors")) authors.add(author.getAsString());
+    List<PluginDependency> dependencies = new ArrayList<>();
+    for (JsonElement element : array(root, "dependencies")) {
+      if (!element.isJsonObject()) throw new IllegalArgumentException(METADATA + " of " + id + " has a malformed dependency");
+      JsonObject dependency = element.getAsJsonObject();
+      String dependsOn = text(dependency, "id");
+      if (dependsOn == null || dependsOn.isBlank()) throw new IllegalArgumentException(METADATA + " of " + id + " has a dependency without an id");
+      boolean optional = dependency.has("optional") && dependency.get("optional").getAsBoolean();
+      dependencies.add(new PluginDependency(dependsOn, text(dependency, "version"), optional));
+    }
+    return new VelocityPluginHost.Description(id, text(root, "name"), text(root, "version"), text(root, "description"),
+        text(root, "url"), List.copyOf(authors), List.copyOf(dependencies), source, main);
   }
-  private Object inject(Class<?> type, Logger logger, VelocityPluginHost.Container container) {
-    if (type.isInstance(environment.proxy()) || type == com.velocitypowered.api.proxy.ProxyServer.class) {
-      return environment.proxy();
-    }
-    if (type == Logger.class) return logger;
-    if (type == org.slf4j.Logger.class) return org.slf4j.LoggerFactory.getLogger(logger.getName());
-    if (type == com.velocitypowered.api.plugin.PluginContainer.class || type.isInstance(container)) return container;
-    if (Path.class.isAssignableFrom(type)) {
-      try {
-        Path data = Path.of("plugins", container.getDescription().getId());
-        java.nio.file.Files.createDirectories(data);
-        return data;
-      } catch (java.io.IOException exception) {
-        throw new IllegalStateException(exception);
-      }
-    }
-    throw new IllegalArgumentException("cannot inject " + type.getName());
+  private static String text(JsonObject object, String key) {
+    JsonElement value = object.get(key);
+    if (value == null || value.isJsonNull()) return null;
+    if (!value.isJsonPrimitive()) throw new IllegalArgumentException(METADATA + " field " + key + " must be a string");
+    String text = value.getAsString();
+    return text.isBlank() ? null : text;
   }
-  private static boolean isInject(java.lang.reflect.AnnotatedElement element) {
-    for (java.lang.annotation.Annotation annotation : element.getAnnotations()) {
-      String name = annotation.annotationType().getName();
-      if (name.equals("javax.inject.Inject") || name.equals("jakarta.inject.Inject") || name.equals("com.google.inject.Inject")) {
-        return true;
-      }
-    }
-    return false;
-  }
-  private static VelocityPluginHost.Description parseJson(String json, Path source) {
-    return new VelocityPluginHost.Description(field(json, "id"), field(json, "name"), field(json, "version"), field(json, "main"), source);
-  }
-  private static String field(String json, String key) {
-    String needle = "\"" + key + "\"";
-    int at = json.indexOf(needle);
-    if (at < 0) return "";
-    int colon = json.indexOf(':', at);
-    int quote = json.indexOf('"', colon + 1);
-    int end = json.indexOf('"', quote + 1);
-    if (quote < 0 || end < 0) return "";
-    return json.substring(quote + 1, end);
+  private static JsonArray array(JsonObject object, String key) {
+    JsonElement value = object.get(key);
+    if (value == null || value.isJsonNull()) return new JsonArray();
+    if (!value.isJsonArray()) throw new IllegalArgumentException(METADATA + " field " + key + " must be an array");
+    return value.getAsJsonArray();
   }
 }

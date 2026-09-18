@@ -1,5 +1,7 @@
 package gg.tame.conduit.compat.velocity;
 
+import com.google.common.io.ByteArrayDataOutput;
+import com.google.common.io.ByteStreams;
 import com.velocitypowered.api.network.HandshakeIntent;
 import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.network.ProtocolVersion;
@@ -23,85 +25,111 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
+import net.kyori.adventure.dialog.DialogLike;
 import net.kyori.adventure.identity.Identity;
+import net.kyori.adventure.inventory.Book;
 import net.kyori.adventure.key.Key;
+import net.kyori.adventure.sound.Sound;
+import net.kyori.adventure.sound.SoundStop;
 import net.kyori.adventure.text.Component;
-import net.kyori.adventure.text.event.HoverEvent;
 
-final class VelocityPlayer implements Player {
+/** A Conduit player as a Velocity Player. What Conduit does not track throws rather than guesses. */
+final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   private final VelocityEnvironment environment;
-  private final gg.tame.conduit.api.player.Player nativePlayer;
-  VelocityPlayer(VelocityEnvironment environment, gg.tame.conduit.api.player.Player nativePlayer) {
+  private final gg.tame.conduit.api.player.Player player;
+  /** The server before the current one, from the last switch Conduit reported. */
+  volatile VelocityRegisteredServer previousServer;
+  /** Whether Conduit reported this player logged in, for DisconnectEvent's login status. */
+  volatile boolean loggedIn;
+
+  VelocityPlayer(VelocityEnvironment environment, gg.tame.conduit.api.player.Player player) {
     this.environment = environment;
-    this.nativePlayer = nativePlayer;
+    this.player = player;
   }
-  gg.tame.conduit.api.player.Player nativePlayer() { return nativePlayer; }
-  @Override public String getUsername() { return nativePlayer.username(); }
-  @Override public UUID getUniqueId() { return nativePlayer.uniqueId(); }
-  @Override public boolean isOnlineMode() { return nativePlayer.authenticated(); }
-  @Override public Tristate getPermissionValue(String permission) {
-    return nativePlayer.hasPermission(permission) ? Tristate.TRUE : Tristate.FALSE;
+  gg.tame.conduit.api.player.Player nativePlayer() { return player; }
+
+  @Override public String getUsername() { return player.username(); }
+  @Override public UUID getUniqueId() { return player.uniqueId(); }
+  @Override public Identity identity() { return Identity.identity(player.uniqueId()); }
+  @Override public boolean isOnlineMode() { return player.authenticated(); }
+  @Override public Tristate getPermissionValue(String permission) { return Tristate.fromBoolean(player.hasPermission(permission)); }
+  @Override public void deliver(Component message) { player.sendMessage(Texts.toConduit(message)); }
+  @Override public void disconnect(Component reason) { player.disconnect(Texts.toConduit(reason)); }
+
+  /** Conduit knows the address, not the port, when the address is forwarded; the port is then 0. */
+  @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress(player.remoteAddress(), 0); }
+  @Override public Optional<InetSocketAddress> getVirtualHost() { return Optional.ofNullable(player.virtualHost()); }
+  @Override public Optional<String> getRawVirtualHost() { return getVirtualHost().map(InetSocketAddress::getHostString); }
+  @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.getProtocolVersion(player.protocolVersion()); }
+  @Override public boolean isActive() { return environment.conduit.player(player.uniqueId()).filter(live -> live == player).isPresent(); }
+  @Override public ProtocolState getProtocolState() {
+    try { return ProtocolState.valueOf(player.connectionState()); }
+    catch (IllegalArgumentException unknown) { throw Unsupported.api("Player.getProtocolState for state " + player.connectionState()); }
   }
-  @Override public void sendMessage(Component message) { nativePlayer.sendMessage(Texts.toConduit(message)); }
-  @Override public void disconnect(Component reason) { nativePlayer.disconnect(Texts.plain(reason)); }
+
   @Override public Optional<ServerConnection> getCurrentServer() {
-    var current = nativePlayer.currentServer();
-    if (!current.isPresent()) return Optional.empty();
-    return Optional.of(new VelocityServerConnection(environment.wrapServer(current.orElse(null)), this));
+    if (!player.currentServer().isPresent()) return Optional.empty();
+    VelocityRegisteredServer current = environment.server(player.currentServer().orElse(null));
+    return current == null ? Optional.empty() : Optional.of(new VelocityServerConnection(current, this, previousServer));
   }
   @Override public ConnectionRequestBuilder createConnectionRequest(RegisteredServer server) {
-    return new VelocityConnectionRequest(this, server);
+    return new VelocityConnectionRequest(environment, this, server);
   }
   @Override public boolean sendPluginMessage(ChannelIdentifier identifier, byte[] data) {
-    nativePlayer.sendPluginMessage(identifier.getId(), data);
+    player.sendPluginMessage(identifier.getId(), data.clone());
     return true;
   }
   @Override public boolean sendPluginMessage(ChannelIdentifier identifier, PluginMessageEncoder encoder) {
-    return UnsupportedApis.unsupported("Player.sendPluginMessage(encoder)");
+    return sendPluginMessage(identifier, encode(encoder));
   }
-  @Override public Identity identity() { return Identity.identity(nativePlayer.uniqueId()); }
-  @Override public InetSocketAddress getRemoteAddress() { return new InetSocketAddress("0.0.0.0", 0); }
-  @Override public Optional<InetSocketAddress> getVirtualHost() { return Optional.empty(); }
-  @Override public Optional<String> getRawVirtualHost() { return Optional.empty(); }
-  @Override public boolean isActive() { return true; }
-  @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.UNKNOWN; }
-  @Override public ProtocolState getProtocolState() {
-    try { return ProtocolState.valueOf(nativePlayer.connectionState()); }
-    catch (IllegalArgumentException ignored) { return ProtocolState.PLAY; }
+  static byte[] encode(PluginMessageEncoder encoder) {
+    ByteArrayDataOutput output = ByteStreams.newDataOutput();
+    encoder.encode(output);
+    return output.toByteArray();
   }
-  @Override public HandshakeIntent getHandshakeIntent() { return HandshakeIntent.LOGIN; }
-  @Override public Locale getEffectiveLocale() { return Locale.US; }
-  @Override public void setEffectiveLocale(Locale locale) { }
-  @Override public PlayerSettings getPlayerSettings() { return UnsupportedApis.unsupported("Player.getPlayerSettings"); }
-  @Override public boolean hasSentPlayerSettings() { return false; }
-  @Override public Optional<ModInfo> getModInfo() { return Optional.empty(); }
-  @Override public long getPing() { return -1; }
-  @Override public List<GameProfile.Property> getGameProfileProperties() { return List.of(); }
-  @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { }
   @Override public GameProfile getGameProfile() { return new GameProfile(getUniqueId(), getUsername(), List.of()); }
-  @Override public void clearPlayerListHeaderAndFooter() { }
-  @Override public Component getPlayerListHeader() { return Component.empty(); }
-  @Override public Component getPlayerListFooter() { return Component.empty(); }
-  @Override public TabList getTabList() { return UnsupportedApis.unsupported("Player.getTabList"); }
-  @Override public void spoofChatInput(String input) { }
-  @Override public void sendResourcePack(String url) { UnsupportedApis.unsupported("Player.sendResourcePack"); }
-  @Override public void sendResourcePack(String url, byte[] hash) { UnsupportedApis.unsupported("Player.sendResourcePack"); }
-  @Override public void sendResourcePackOffer(ResourcePackInfo pack) { UnsupportedApis.unsupported("Player.sendResourcePackOffer"); }
-  @Override public ResourcePackInfo getAppliedResourcePack() { return null; }
-  @Override public ResourcePackInfo getPendingResourcePack() { return null; }
-  @Override public Collection<ResourcePackInfo> getAppliedResourcePacks() { return List.of(); }
-  @Override public Collection<ResourcePackInfo> getPendingResourcePacks() { return List.of(); }
-  @Override public String getClientBrand() { return "Conduit"; }
-  @Override public void addCustomChatCompletions(Collection<String> completions) { }
-  @Override public void removeCustomChatCompletions(Collection<String> completions) { }
-  @Override public void setCustomChatCompletions(Collection<String> completions) { }
-  @Override public void transferToHost(InetSocketAddress address) { UnsupportedApis.unsupported("Player.transferToHost"); }
-  @Override public void storeCookie(Key key, byte[] data) { UnsupportedApis.unsupported("Player.storeCookie"); }
-  @Override public void requestCookie(Key key) { UnsupportedApis.unsupported("Player.requestCookie"); }
-  @Override public void setServerLinks(List<ServerLink> links) { }
-  @Override public IdentifiedKey getIdentifiedKey() { return null; }
-  @Override public HoverEvent<HoverEvent.ShowEntity> asHoverEvent(java.util.function.UnaryOperator<HoverEvent.ShowEntity> op) {
-    return Player.super.asHoverEvent(op);
-  }
+  @Override public long getPing() { return -1; }
+
+  // Not tracked by Conduit's API.
+  @Override public HandshakeIntent getHandshakeIntent() { throw Unsupported.api("Player.getHandshakeIntent"); }
+  @Override public Locale getEffectiveLocale() { throw Unsupported.api("Player.getEffectiveLocale"); }
+  @Override public void setEffectiveLocale(Locale locale) { throw Unsupported.api("Player.setEffectiveLocale"); }
+  @Override public PlayerSettings getPlayerSettings() { throw Unsupported.api("Player.getPlayerSettings"); }
+  @Override public boolean hasSentPlayerSettings() { throw Unsupported.api("Player.hasSentPlayerSettings"); }
+  @Override public Optional<ModInfo> getModInfo() { throw Unsupported.api("Player.getModInfo"); }
+  @Override public String getClientBrand() { throw Unsupported.api("Player.getClientBrand"); }
+  @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
+  @Override public List<GameProfile.Property> getGameProfileProperties() { throw Unsupported.api("Player.getGameProfileProperties"); }
+  @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { throw Unsupported.api("Player.setGameProfileProperties"); }
+  @Override public void clearPlayerListHeaderAndFooter() { throw Unsupported.api("Player.clearPlayerListHeaderAndFooter"); }
+  @Override public Component getPlayerListHeader() { throw Unsupported.api("Player.getPlayerListHeader"); }
+  @Override public Component getPlayerListFooter() { throw Unsupported.api("Player.getPlayerListFooter"); }
+  @Override public TabList getTabList() { throw Unsupported.api("Player.getTabList"); }
+  @Override public void spoofChatInput(String input) { throw Unsupported.api("Player.spoofChatInput"); }
+  @Override public void sendResourcePack(String url) { throw Unsupported.api("Player.sendResourcePack"); }
+  @Override public void sendResourcePack(String url, byte[] hash) { throw Unsupported.api("Player.sendResourcePack"); }
+  @Override public void sendResourcePackOffer(ResourcePackInfo pack) { throw Unsupported.api("Player.sendResourcePackOffer"); }
+  @Override public ResourcePackInfo getAppliedResourcePack() { throw Unsupported.api("Player.getAppliedResourcePack"); }
+  @Override public ResourcePackInfo getPendingResourcePack() { throw Unsupported.api("Player.getPendingResourcePack"); }
+  @Override public Collection<ResourcePackInfo> getAppliedResourcePacks() { throw Unsupported.api("Player.getAppliedResourcePacks"); }
+  @Override public Collection<ResourcePackInfo> getPendingResourcePacks() { throw Unsupported.api("Player.getPendingResourcePacks"); }
+  @Override public void addCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.addCustomChatCompletions"); }
+  @Override public void removeCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.removeCustomChatCompletions"); }
+  @Override public void setCustomChatCompletions(Collection<String> completions) { throw Unsupported.api("Player.setCustomChatCompletions"); }
+  @Override public void transferToHost(InetSocketAddress address) { throw Unsupported.api("Player.transferToHost"); }
+  @Override public void storeCookie(Key key, byte[] data) { throw Unsupported.api("Player.storeCookie"); }
+  @Override public void requestCookie(Key key) { throw Unsupported.api("Player.requestCookie"); }
+  @Override public void setServerLinks(List<ServerLink> links) { throw Unsupported.api("Player.setServerLinks"); }
+  // Player and Unsupported.ChatOnly both default these; the class has to pick.
+  @Override public void playSound(Sound sound) { throw Unsupported.api("Player.playSound"); }
+  @Override public void playSound(Sound sound, double x, double y, double z) { throw Unsupported.api("Player.playSound"); }
+  @Override public void playSound(Sound sound, Sound.Emitter emitter) { throw Unsupported.api("Player.playSound"); }
+  @Override public void stopSound(SoundStop stop) { throw Unsupported.api("Player.stopSound"); }
+  @Override public void openBook(Book book) { throw Unsupported.api("Player.openBook"); }
+  @Override public void showDialog(DialogLike dialog) { throw Unsupported.api("Player.showDialog"); }
+  @Override public void closeDialog() { throw Unsupported.api("Player.closeDialog"); }
+
+  @Override public boolean equals(Object other) { return other instanceof VelocityPlayer that && that.player == player; }
+  @Override public int hashCode() { return System.identityHashCode(player); }
+  @Override public String toString() { return "VelocityPlayer[" + getUsername() + "]"; }
 }

@@ -1,105 +1,107 @@
 package gg.tame.conduit.compat.velocity;
 
-import gg.tame.conduit.api.event.Subscribe;
-import gg.tame.conduit.api.event.player.PlayerAuthenticatedEvent;
-import gg.tame.conduit.api.event.player.PlayerDisconnectEvent;
-import gg.tame.conduit.api.event.player.PlayerLoginEvent;
-import gg.tame.conduit.api.event.player.PlayerPostLoginEvent;
-import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
-import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
-import gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent;
-import gg.tame.conduit.api.event.proxy.ProxyShutdownEvent;
-import gg.tame.conduit.api.event.proxy.ProxyStartEvent;
+import gg.tame.conduit.api.ConduitProxy;
 import gg.tame.conduit.api.plugin.ConduitPlugin;
 import gg.tame.conduit.api.plugin.PluginDescription;
-import gg.tame.conduit.plugin.ExternalJarHandler;
-import gg.tame.conduit.runtime.ConduitRuntime;
-import com.velocitypowered.api.event.connection.DisconnectEvent;
-import com.velocitypowered.api.event.connection.LoginEvent;
-import com.velocitypowered.api.event.connection.PostLoginEvent;
-import com.velocitypowered.api.event.player.ServerConnectedEvent;
-import com.velocitypowered.api.event.player.ServerPreConnectEvent;
-import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
-import com.velocitypowered.api.proxy.Player;
-import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
+/**
+ * Everything one Conduit proxy's Velocity layer shares. Built on the native API only.
+ *
+ * <p>Threads: Velocity plugin code never runs on a player's connection thread. Event handlers,
+ * command bodies, completions and task bodies run on {@link #work}, a pool of daemon platform
+ * threads owned here. A connection thread that needs a plugin's answer (may this player log in?)
+ * waits for it, for at most {@link #WAIT_MS}.
+ */
 final class VelocityEnvironment {
-  private final ConduitRuntime runtime;
-  private final VelocityProxyServer proxy;
-  private final VelocityEventBus events;
-  private final VelocityPluginHost plugins;
-  private final VelocityCommandHost commands;
-  private final VelocitySchedulerHost scheduler;
-  private final VelocityPluginLoader loader;
-  private final ConcurrentHashMap<gg.tame.conduit.api.player.Player, Player> players = new ConcurrentHashMap<>();
-  private final ConduitPlugin bridgePlugin;
-  VelocityEnvironment(ConduitRuntime runtime) {
-    this.runtime = runtime;
-    this.events = new VelocityEventBus();
-    this.plugins = new VelocityPluginHost();
-    this.scheduler = new VelocitySchedulerHost();
-    this.commands = new VelocityCommandHost(runtime, this);
-    this.proxy = new VelocityProxyServer(runtime, this);
-    this.loader = new VelocityPluginLoader(this);
-    this.bridgePlugin = new ConduitPlugin() {};
-    bridgePlugin.attach(new PluginDescription("velocity-compat", "Velocity Compatibility", "1", "internal", 1, List.of()),
-        runtime, Logger.getLogger("velocity-compat"), Path.of("plugins", "velocity-compat"), runtime.scheduler());
+  static final long WAIT_MS = 10_000;
+
+  final ConduitProxy conduit;
+  final Logger log = Logger.getLogger("velocity");
+  final ExecutorService work;
+  final Set<VelocityClassLoader> loaders = VelocityClassLoader.newRegistry();
+  final VelocityPluginHost plugins = new VelocityPluginHost();
+  final VelocityEventBus events = new VelocityEventBus(this);
+  final VelocityChannelRegistrar channels = new VelocityChannelRegistrar();
+  final VelocityCommandHost commands = new VelocityCommandHost(this);
+  final VelocitySchedulerHost scheduler = new VelocitySchedulerHost(this);
+  final VelocityConsole console;
+  final VelocityProxyServer proxy;
+  /** Owns the adapter's one native listener; the adapter is not itself a plugin in /plugins. */
+  final ConduitPlugin owner = new ConduitPlugin() { };
+  private final ConcurrentHashMap<gg.tame.conduit.api.player.Player, VelocityPlayer> players = new ConcurrentHashMap<>();
+  private final ConcurrentHashMap<String, VelocityRegisteredServer> servers = new ConcurrentHashMap<>();
+
+  VelocityEnvironment(ConduitProxy conduit) {
+    this.conduit = conduit;
+    AtomicInteger threads = new AtomicInteger();
+    this.work = Executors.newCachedThreadPool(runnable -> {
+      Thread thread = new Thread(runnable, "conduit-velocity-" + threads.incrementAndGet());
+      thread.setDaemon(true);
+      return thread;
+    });
+    this.console = new VelocityConsole(conduit.console());
+    this.proxy = new VelocityProxyServer(this);
+    owner.attach(new PluginDescription("velocity-compat", "Velocity compatibility", conduit.version(),
+        VelocityBoot.class.getName(), 1, List.of()), conduit, log, null, conduit.scheduler());
   }
-  ConduitRuntime runtime() { return runtime; }
-  VelocityProxyServer proxy() { return proxy; }
-  VelocityEventBus events() { return events; }
-  VelocityPluginHost plugins() { return plugins; }
-  VelocityCommandHost commands() { return commands; }
-  VelocitySchedulerHost scheduler() { return scheduler; }
-  ExternalJarHandler loader() { return loader; }
-  Player wrap(gg.tame.conduit.api.player.Player player) {
-    return players.computeIfAbsent(player, nativePlayer -> new VelocityPlayer(this, nativePlayer));
+
+  /**
+   * One wrapper per joined player, dropped at DisconnectEvent. A player still logging in gets a
+   * fresh one each time: a login that is refused or never reaches a backend raises no
+   * disconnect, and a cached wrapper for it would never be released.
+   */
+  VelocityPlayer player(gg.tame.conduit.api.player.Player player) {
+    if (player == null) return null;
+    VelocityPlayer known = players.get(player);
+    if (known != null) return known;
+    boolean joined = conduit.player(player.uniqueId()).filter(live -> live == player).isPresent();
+    return joined ? players.computeIfAbsent(player, key -> new VelocityPlayer(this, key)) : new VelocityPlayer(this, player);
   }
-  VelocityRegisteredServer wrapServer(gg.tame.conduit.api.server.RegisteredServer server) {
-    return server == null ? null : new VelocityRegisteredServer(this, server);
+  void forget(gg.tame.conduit.api.player.Player player) { players.remove(player); }
+
+  /** One wrapper per server name while its address stays the same, so plugins can compare them. */
+  VelocityRegisteredServer server(gg.tame.conduit.api.server.RegisteredServer server) {
+    if (server == null) return null;
+    return servers.compute(server.getName().toLowerCase(Locale.ROOT), (name, known) ->
+        known != null && known.nativeServer().getAddress().equals(server.getAddress()) ? known : new VelocityRegisteredServer(this, server));
   }
-  void attachNativeEvents() {
-    runtime.events().register(bridgePlugin, this);
+  gg.tame.conduit.api.server.RegisteredServer nativeServer(com.velocitypowered.api.proxy.server.RegisteredServer server) {
+    if (server instanceof VelocityRegisteredServer ours) return ours.nativeServer();
+    if (server == null) throw new IllegalArgumentException("server is required");
+    // A RegisteredServer the plugin built itself: only its name can identify a real one.
+    return conduit.servers().getServer(server.getServerInfo().getName())
+        .orElseThrow(() -> new IllegalArgumentException("server " + server.getServerInfo().getName() + " is not registered with the proxy"));
   }
-  void shutdown() {
-    plugins.disableAll();
-    scheduler.shutdown();
+
+  /** Fires on the adapter's threads and waits, bounded, for every handler to finish. */
+  <E> E fireAndWait(E event) {
+    await(events.fire(event), event.getClass().getSimpleName());
+    return event;
   }
-  @Subscribe public void onStart(ProxyStartEvent event) {
-    events.fire(new ProxyInitializeEvent());
-  }
-  @Subscribe public void onStop(ProxyShutdownEvent event) {
-    events.fire(new com.velocitypowered.api.event.proxy.ProxyShutdownEvent());
-    shutdown();
-  }
-  @Subscribe public void onLogin(PlayerLoginEvent event) {
-    LoginEvent velocity = new LoginEvent(wrap(event.player()));
-    events.fire(velocity);
-    if (!velocity.getResult().isAllowed()) {
-      event.player().disconnect(velocity.getResult().getReasonComponent().map(Texts::plain).orElse("Disconnected"));
+  /** False when the wait ran out; the caller then carries on with the event as the handlers left it. */
+  boolean await(CompletableFuture<?> future, String what) {
+    try {
+      future.get(WAIT_MS, TimeUnit.MILLISECONDS);
+      return true;
+    } catch (TimeoutException slow) {
+      log.warning("Velocity plugins took over " + WAIT_MS + " ms to handle " + what + "; continuing without them");
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+    } catch (Exception failed) {
+      log.log(Level.WARNING, "Velocity handling of " + what + " failed", failed);
     }
+    return false;
   }
-  @Subscribe public void onAuth(PlayerAuthenticatedEvent event) { wrap(event.player()); }
-  @Subscribe public void onPostLogin(PlayerPostLoginEvent event) {
-    events.fire(new PostLoginEvent(wrap(event.player())));
-  }
-  @Subscribe public void onDisconnect(PlayerDisconnectEvent event) {
-    Player wrapped = wrap(event.player());
-    events.fire(new DisconnectEvent(wrapped, DisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN));
-    players.remove(event.player());
-  }
-  @Subscribe public void onConnect(PlayerServerConnectEvent event) {
-    var target = wrapServer(event.target());
-    var previous = event.source().map(this::wrapServer).orElse(null);
-    ServerPreConnectEvent velocity = new ServerPreConnectEvent(wrap(event.player()), target, previous);
-    events.fire(velocity);
-    if (!velocity.getResult().isAllowed()) event.setCancelled(true);
-  }
-  @Subscribe public void onConnected(PlayerServerConnectedEvent event) {
-    events.fire(new ServerConnectedEvent(wrap(event.player()), wrapServer(event.target()), event.source().map(this::wrapServer).orElse(null)));
-  }
-  @Subscribe public void onSwitchFailed(PlayerServerSwitchFailedEvent event) { }
 }

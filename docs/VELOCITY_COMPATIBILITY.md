@@ -1,49 +1,198 @@
-# Velocity compatibility on Conduit
+# Velocity plugin compatibility
 
-Conduit is not Velocity. This layer lets **some** plugins compiled against
-`com.velocitypowered:velocity-api` run on Conduit by adapting to the native API.
+Conduit is not Velocity. It can run many plugins built against the published
+`com.velocitypowered:velocity-api` (3.4.0) through a compatibility adapter, but not every Velocity
+plugin will work. Each call listed below is marked **supported**, **partial**, or **unsupported**,
+and names the test or real plugin that verifies it. If a feature is not listed, it does not work.
 
-Status of this tree: **PARTIAL — verified with a Velocity-API plugin compiled in-repo (Phase9)**.
-Not verified with LuckPerms, ViaVersion, or other production Velocity plugins.
+Where these marks come from: **VCT** is `VelocityCompatTests`, which compiles purpose-built plugins
+against the real velocity-api (its annotation processor writes their `velocity-plugin.json`), loads
+them from jars into a real `MinecraftProxy`, and drives them with a scripted 1.8 client and two
+scripted backends. **P9** is `Phase9Tests`. The **real plugins** are listed at the end.
 
-Build:
+The adapter is a clean-room implementation. It was written from velocity-api's public interfaces,
+its Javadoc, the public documentation and observable behaviour. No code from Velocity's proxy,
+BungeeCord, Waterfall or Paper is used or ported.
 
-```powershell
-./scripts/fetch-velocity-compat.ps1
-./scripts/test.ps1
+## Architecture and isolation boundary
+
+```
+Conduit core  ->  native API (gg.tame.conduit.api)  ->  Velocity adapter (src/compat-velocity)  ->  Velocity plugins
 ```
 
-`slf4j-nop` is included so Velocity plugins that inject `org.slf4j.Logger` do not pull a real logging backend into tests.
+- **The adapter uses only the native API.** Everything under `gg.tame.conduit.compat.velocity`
+  imports only `gg.tame.conduit.api.*`: the proxy, players, servers, commands, events, scheduler,
+  permissions and text. It plugs in through a single extension point,
+  `PluginManager.registerLoader(PluginLoader)`. Core finds `VelocityBoot` by class name and calls
+  `install(ConduitProxy)`, so core never imports a Velocity type.
+- **Conduit's lifecycle manages Velocity plugins.** Each Velocity plugin is loaded as a native
+  plugin: Conduit's plugin manager orders, enables, lists (`[velocity]`) and disables it, and
+  releases every command and task the plugin registered.
+- **Plugins cannot link to Conduit.** Each plugin jar has its own class loader, and that loader
+  hides every `gg.tame.conduit.*` class and resource. A plugin can link against the velocity-api
+  and the libraries shipped with it, and against the jars of other Velocity plugins (so a plugin can
+  use its dependency's API). It cannot link against Conduit, not even the native API (VCT:
+  `/vtest internals`).
+- **Plugins only ever receive Velocity API types.** Every object handed to a plugin implements
+  Velocity API interfaces only, and none of its public methods takes or returns a Conduit type
+  (VCT checks this with reflection).
+- **This is not a sandbox.** Plugins run in the proxy's JVM with full rights, and deep reflection
+  can reach anything, exactly as with native Conduit plugins. The boundary above controls what
+  plugins link against and which API they are given. It is not a security boundary.
 
-| API | Status | Notes |
+**Threads.** Velocity plugin code never runs on a player's connection thread. Event handlers,
+command bodies, tab completions and scheduled task bodies all run on the adapter's own pool of
+daemon platform threads. When a connection thread needs a plugin's answer (deny this login?
+redirect this connect?), it waits at most 10 seconds and then continues with the event as the
+plugin left it, logging a warning.
+
+**Class path.** The proxy class path supplies what velocity-api's POM declares and plugins expect
+the proxy to provide:
+- Adventure 4.26.1, including MiniMessage and `adventure-text-logger-slf4j`
+- Mojang Brigadier, Guava, Gson and snakeyaml 1.33
+- Guice 6.0.0, for its `@Inject` annotation only; Guice's injector is never run
+- slf4j bound to `java.util.logging`
+
+The jars are fetched by `scripts/fetch-velocity-compat.ps1`. Configurate, toml4j and caffeine are
+**not** on the class path.
+
+## Loading plugins
+
+| Behaviour | Status | Verified by |
 |---|---|---|
-| `ProxyServer.getPlayer/getAllPlayers/getPlayerCount` | SUPPORTED | Native player index |
-| `ProxyServer.getServer/getAllServers/matchServer` | SUPPORTED | Configured backends |
-| `ProxyServer.registerServer/unregisterServer` | SUPPORTED | Native ServerManager |
-| `ProxyServer.createRawRegisteredServer` | PARTIAL | Not in the live server map |
-| `Player.getUsername/getUniqueId/isOnlineMode` | SUPPORTED | Authenticated profile |
-| `Player.sendMessage(Component)` | PARTIAL | Plain-text Adventure serialize only |
-| `Player.disconnect(Component)` | PARTIAL | Plain-text reason |
-| `Player.createConnectionRequest` | SUPPORTED | Native `connect` |
-| `Player.sendPluginMessage(ChannelIdentifier, byte[])` | SUPPORTED | Protocol adapter |
-| `Player.getCurrentServer` | SUPPORTED | |
-| `Player` tab list, resource packs, cookies, sounds, dialogs, settings | UNSUPPORTED | Throws |
-| `RegisteredServer.getServerInfo/getPlayersConnected` | SUPPORTED | |
-| `RegisteredServer.ping` | UNSUPPORTED | |
-| `CommandManager` + `SimpleCommand` | SUPPORTED | Aliases, execute, suggest |
-| `BrigadierCommand` | UNSUPPORTED | Needs a Conduit brigadier graph |
-| `EventManager.register` + `@Subscribe` | SUPPORTED | Velocity annotation, not native |
-| `ProxyInitializeEvent` / `ProxyShutdownEvent` | SUPPORTED | Bridged from native |
-| `LoginEvent` / `PostLoginEvent` / `DisconnectEvent` | SUPPORTED | LoginEvent deny disconnects |
-| `ServerPreConnectEvent` / `ServerConnectedEvent` | SUPPORTED | Cancel maps to native cancel |
-| `EventTask` continuations | UNSUPPORTED | Handlers run synchronously |
-| `Scheduler.buildTask` | SUPPORTED | Isolated pool, not socket threads |
-| `PluginManager` / `PluginContainer` | PARTIAL | Load/list/disable; no `addToClasspath` |
-| `ChannelRegistrar` | PARTIAL | In-memory register only |
-| `ProxyConfig` | PARTIAL | Best-effort; no Velocity config file |
-| `ConsoleCommandSource` | PARTIAL | Logs to stdout |
-| Adventure rich text / MiniMessage | PARTIAL | Flattened to plain string |
-| Scoreboard, BossBar, ResourcePackInfo | UNSUPPORTED | |
-| Velocity internals (`com.velocitypowered.proxy`) | UNSUPPORTED | Never implemented |
+| `velocity-plugin.json` at the jar root (written by velocity-api's annotation processor from `@Plugin`): id, name, version, description, url, authors, dependencies, main | Supported | VCT, P9, real plugins |
+| Rejects without affecting the proxy: malformed JSON, invalid id, missing main class, throwing constructor, uninjectable parameter, missing required dependency. The jar is unlocked straight away. | Supported | VCT `brokenPluginsAreRejected` |
+| Required dependencies are enabled first, and a missing one rejects the plugin. Optional ones are enabled first when present. | Supported | VCT (vlib→vtest, needy, optdep) |
+| A plugin can use the classes of other Velocity plugins | Supported | VCT (`vtest` calls `vlib.VLib`) |
+| Constructed when enabled, at startup in dependency order. The main instance is registered as a listener automatically. | Supported | VCT |
+| `ProxyInitializeEvent` when the proxy starts | Supported | VCT, P9, real plugins |
+| `ProxyShutdownEvent` exactly once: when the proxy stops, or when Conduit disables that plugin alone. Its listeners, commands, tasks, executor and class loader are then released. | Supported | VCT |
+| `velocity-plugin.toml`, and jars without `velocity-plugin.json` | Unsupported | a jar without the file is offered to the native loader |
 
-Never faked: ping, brigadier, tab list, and resource packs throw `UnsupportedOperationException`.
+## Constructor injection
+
+Conduit does its own injection; Guice is not used. The main class is built from one constructor:
+the one marked `@Inject` (`javax.inject`, `jakarta.inject` or `com.google.inject`), otherwise its
+only constructor, otherwise its no-argument constructor. After that, `@Inject` fields (including
+final ones) and `@Inject` methods are filled in, superclass first. Static members are left alone.
+
+| Injectable type | Status | Verified by |
+|---|---|---|
+| `ProxyServer`, `org.slf4j.Logger`, `@DataDirectory Path`, `PluginContainer`, `PluginDescription` | Supported | VCT |
+| `ComponentLogger` (Adventure), `java.util.logging.Logger`, `EventManager`, `CommandManager`, `PluginManager` | Supported | VCT (ComponentLogger, EventManager, PluginManager, CommandManager) |
+| The plugin's own concrete classes, built the same way, as bStats' `Metrics.Factory` is | Supported | VCT, velocity-hub |
+| Loggers write to the plugin's Conduit logger `plugin.<id>`. `@DataDirectory` is `<plugins dir>/<id>`. | Supported | VCT |
+| `com.google.inject.Injector`, Guice modules, providers, bindings, `@Named` qualifiers, and any other type | Unsupported: the plugin is rejected with a message that names the type | MiniMOTD, VCT `badinject` |
+
+## ProxyServer
+
+| API | Status | Verified by |
+|---|---|---|
+| `getPlayer(String/UUID)`, `getAllPlayers`, `getPlayerCount`, `matchPlayer` | Supported | VCT |
+| `getServer`, `getAllServers`, `matchServer`, `registerServer` (a taken name throws), `unregisterServer` | Supported | VCT |
+| `sendMessage(Component)`: broadcasts to every player and the console | Supported | VCT |
+| `getCommandManager`, `getEventManager`, `getScheduler`, `getChannelRegistrar`, `getPluginManager`, `getConsoleCommandSource` | Supported | VCT |
+| `getVersion` (name `Conduit`), `getBoundAddress` | Supported | VCT |
+| `shutdown()` stops the real proxy. `isShuttingDown()` | Supported | VCT (`/vlibstop`) |
+| `shutdown(Component)`: Conduit kicks players with its configured message | Unsupported (throws) | |
+| `getConfiguration()`: `getServers`, `isOnlineMode`, `getAttemptConnectionOrder` (routing's initial servers) | Partial | VCT |
+| `getConfiguration()`: every other setting (MOTD, max players, query, forced hosts, compression, rate limits, timeouts, favicon) | Unsupported (throws) | Maintenance hits `getShowMaxPlayers` |
+| `createRawRegisteredServer`, `closeListeners`, `createResourcePackBuilder` | Unsupported (throws) | |
+
+## Players and servers
+
+| API | Status | Verified by |
+|---|---|---|
+| `getUsername`, `getUniqueId`, `identity`, `isOnlineMode`, `isActive`, `getProtocolVersion`, `getProtocolState`, `getVirtualHost` | Supported | VCT |
+| `hasPermission` / `getPermissionValue`: answers from Conduit's permission provider, so the result is TRUE or FALSE and never UNDEFINED | Partial | VCT, Maintenance |
+| `getRemoteAddress`: the address is correct, but the port is always 0 because Conduit's API does not carry it | Partial | VCT |
+| `getRawVirtualHost`: host name only, with FML markers removed | Partial | |
+| `getGameProfile`: id and name only, no properties such as skins | Partial | VCT |
+| `getPing`: always `-1`, which the API defines as "unknown" | Partial | |
+| `sendMessage(Component)`, `sendRichMessage` (MiniMessage) | Partial: keeps colour (hex snapped to the nearest named colour), bold, italic, run-command clicks and text hovers; other decorations and events are dropped, and translatable, keybind, score and selector components are sent as plain text | VCT, Maintenance |
+| `disconnect(Component)`: a real kick screen, with the same formatting kept | Supported | VCT |
+| `createConnectionRequest(...).connect()`: `SUCCESS`, `ALREADY_CONNECTED`, `CONNECTION_IN_PROGRESS`, `CONNECTION_CANCELLED`, and `SERVER_DISCONNECTED` for any failure, with its reason | Supported | VCT, velocity-hub |
+| `connectWithIndication`, `fireAndForget`: on failure the player is told "Unable to connect to &lt;server&gt;" | Supported | VCT |
+| `getCurrentServer`, and on `ServerConnection`: `getServer`, `getServerInfo`, `getPlayer`, `getPreviousServer` (from the last switch) | Supported | VCT |
+| `sendPluginMessage` to the client (`Player`), or to the backend (`ServerConnection`, and `RegisteredServer` through a player connected to it); byte-array and encoder forms | Supported | VCT |
+| `RegisteredServer`: `getServerInfo`, `getPlayersConnected`, `sendMessage` | Supported | VCT |
+| `RegisteredServer.ping` | Unsupported (throws) | |
+| Titles, action bar, boss bars, sounds, books, dialogs, signed-message chat, resource packs, tab list and its header/footer, cookies, transfer, server links, custom chat completions, `spoofChatInput`, `getPlayerSettings`, `getEffectiveLocale`, `getClientBrand`, `getModInfo`, `getIdentifiedKey`, `getHandshakeIntent`, game profile properties | Unsupported: every one throws `UnsupportedOperationException` naming the API, including Adventure methods that are silent no-ops by default | VCT (`sendActionBar`) |
+
+## Commands
+
+| API | Status | Verified by |
+|---|---|---|
+| `SimpleCommand`: execute, suggest, `hasPermission`, aliases, `alias()` of the invocation | Supported | VCT, Maintenance, velocity-hub |
+| `RawCommand`: the argument string arrives with runs of spaces collapsed | Partial | VCT |
+| `BrigadierCommand`: parsed, permission-checked, executed and completed on the proxy with the Brigadier library, and syntax errors are shown to the player | Partial: clients are sent only the command's literal name, not its argument nodes, which is also true of Conduit's own commands; completion is not covered by a test | VCT (execute and syntax error) |
+| `metaBuilder`, `register`, `unregister`, `getCommandMeta`, `getAliases` (Velocity-registered aliases only), `hasCommand` (any proxy command, including Conduit's own and native plugins') | Supported | VCT |
+| `executeAsync` as a player or the console: fires `CommandExecuteEvent` first, and returns false when there is no proxy command of that name | Partial: an unknown command is not forwarded to the backend | VCT |
+| `executeImmediatelyAsync`, `offerSuggestions` | Supported | VCT |
+| `offerBrigadierSuggestions`; `CommandMeta` hints | Unsupported (throws); hints are ignored | |
+| When a command's `hasPermission` returns false, the player is told "You do not have permission"; Velocity would forward the command to the backend instead | Partial | |
+
+**Name conflicts.**
+- A Velocity plugin that registers a name Conduit uses for a built-in command takes that name
+  over, and Conduit logs a warning. The built-ins are `/hub`, `/server`, `/send`, `/glist` and the
+  others, including each `/<server>` shortcut. When the plugin goes away, the built-in comes back.
+- `/conduit` is reserved and cannot be registered.
+- A name that another plugin already holds throws `IllegalArgumentException`, as Velocity's
+  contract requires.
+- Verified by velocity-hub, which takes over `/hub` and `/lobby`.
+
+## Events
+
+`@Subscribe` methods can take the event, or the event and a `Continuation`. They can return void or
+`EventTask`. Methods declared in superclasses count too. Handlers run highest `priority` first.
+`PostOrder` values other than `NORMAL` map to fixed priorities (FIRST, EARLY, LATE, LAST). A handler
+that is still running async, or has not resumed its continuation, holds back the next one. A
+handler that throws is logged, and the other handlers still run. The functional
+`register(plugin, Class, priority, EventHandler)` form works, and so do `fire`/`fireAndForget` for a
+plugin's own events. Verified by VCT: priority order, `EventTask.async`, `Continuation`,
+`PostOrder.LAST`, and a functional handler.
+
+| Velocity event | Status | Verified by |
+|---|---|---|
+| `ProxyInitializeEvent`, `ProxyShutdownEvent` | Fired | VCT |
+| `LoginEvent`: denying it shows the reason on the client's disconnect screen, and no backend is ever contacted | Fired | VCT |
+| `PostLoginEvent`: fired after the first backend is connected, whereas Velocity fires it before | Fired (partial) | VCT |
+| `PlayerChooseInitialServerEvent`: `setInitialServer` works | Fired | VCT |
+| `ServerPreConnectEvent`: can deny, or redirect with `allowed(otherServer)`; fired for the first connection and for switches. If every first server is denied, the connection is closed without a message. | Fired | VCT (deny, redirect), Maintenance |
+| `ServerConnectedEvent` (with the previous server), `ServerPostConnectEvent` (switches only) | Fired | VCT (ServerConnectedEvent) |
+| `DisconnectEvent` (`SUCCESSFUL_LOGIN` or `PRE_SERVER_JOIN`) | Fired | VCT |
+| `PluginMessageEvent`: only for channels registered with the `ChannelRegistrar`, in both directions; `handled()` stops forwarding | Fired | VCT |
+| `CommandExecuteEvent`: `denied()` works; `command(...)` and `forwardToServer(...)` are not honoured, and a warning is logged | Fired (partial) | VCT |
+| `PlayerChatEvent`: pre-1.19 clients only (signed chat is relayed untouched); `denied()` works; rewriting the message is not honoured, and a warning is logged | Fired (partial) | VCT |
+| `ProxyPingEvent` (server-list MOTD, player counts), `ProxyReloadEvent`, `PreLoginEvent`, `GameProfileRequestEvent`, `PermissionsSetupEvent`, `KickedFromServerEvent`, `TabCompleteEvent`, `PlayerAvailableCommandsEvent`, `PostCommandInvocationEvent`, `PlayerSettingsChangedEvent`, `PlayerClientBrandEvent`, `PlayerModInfoEvent`, `PlayerChannel(Un)RegisterEvent`, `ConnectionHandshakeEvent`, resource pack, cookie and configuration-phase events, `ServerLoginPluginMessageEvent`, `ServerRegisteredEvent`/`ServerUnregisteredEvent`, `Listener(Bound/Close)Event`, `ProxyPreShutdownEvent`, `ProxyQueryEvent`, `PreTransferEvent` | **Never fired.** A listener for one is still registered, but Conduit logs a warning naming the handler that will never be called. | VCT (`ProxyPingEvent`), Maintenance, MiniMOTD |
+
+`ProxyPingEvent` is the most visible gap: MOTD plugins, and the MOTD parts of maintenance plugins,
+have no effect on Conduit.
+
+## Scheduler, messaging, plugins, console
+
+| API | Status | Verified by |
+|---|---|---|
+| `Scheduler.buildTask` (Runnable or Consumer), `delay`, `repeat`, `clearDelay`, `clearRepeat`, `schedule`, `ScheduledTask.cancel`, `status`, `tasksByPlugin`. Conduit's scheduler keeps the time, so tasks die with the plugin; bodies run on adapter threads, and a repeating task skips a run instead of overlapping itself. | Supported | VCT |
+| `ChannelRegistrar.register/unregister` (`MinecraftChannelIdentifier`, `LegacyChannelIdentifier`) | Supported | VCT |
+| `PluginManager`: `fromInstance`, `getPlugin`, `getPlugins` (Velocity plugins only), `isLoaded`, `addToClasspath` | Supported | VCT |
+| `PluginContainer`: `getDescription`, `getInstance`, `getExecutorService` (shut down at disable) | Supported | VCT |
+| `ConsoleCommandSource`: has every permission; messages go to Conduit's console | Supported | VCT (runs a command as the console) |
+
+## Real plugins tried
+
+Each was downloaded from the project's own Modrinth page and run unmodified, outside the
+repository, through a real Conduit with scripted sessions. bStats reporting was disabled for these
+runs.
+
+| Plugin | Version | License | SHA-256 | Result |
+|---|---|---|---|---|
+| [velocity-hub](https://modrinth.com/plugin/velocity-hub-command) (stellarcielo) | 1.10-SNAPSHOT | MIT | `e7a348beb3ce74d36494e4d31fbb4df56f7f0a5f6314be417056f07fb4ad8f77` | **Works.** It takes over `/hub` and `/lobby`, which send the player to the configured hub and detect "already connected". Its `ProxyInitializeEvent` and `PostLoginEvent` handlers run. It needed the plugin's own `Metrics.Factory` to be injected (now supported). It writes its config to `plugins/velocity-hub` under the working directory rather than to `@DataDirectory`; that is the plugin's own choice. |
+| [Maintenance](https://modrinth.com/plugin/maintenance) (kennytv) | 5.1.0 | GPL-3.0 | `06f7d8fe346a5c35d1a2c38db1f12ea841bdc70df9496a20bf4c5accd972c8a5` | **Partly works.** It loads, and `/maintenance` help, `status`, `on/off` and the whitelist work, with formatted chat. It needs snakeyaml from the proxy (now supplied). With maintenance on, a player without `maintenance.*` permissions is not given the kick message: its `LoginEvent` and `ServerPreConnectEvent` handlers call `ProxyConfig.getShowMaxPlayers`, which is unsupported and throws. Its MOTD features need `ProxyPingEvent` (never fired), and it also listens for `ProxyReloadEvent` (never fired). |
+| [MiniMOTD](https://modrinth.com/plugin/minimotd) (jpenilla) | 2.2.5 | MIT | `b5d01ae7596b951f842d105d8a70552bf75761ced2bd413739d627c59b058ed5` | **Rejected cleanly.** Its constructor needs `com.google.inject.Injector`, and Conduit does not run Guice. Its only feature would need `ProxyPingEvent` anyway. |
+
+## Build
+
+```powershell
+./scripts/test.ps1 -Only gg.tame.conduit.tests.VelocityCompatTests
+```

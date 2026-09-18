@@ -13,29 +13,37 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import net.kyori.adventure.text.Component;
 
-final class VelocityRegisteredServer implements RegisteredServer {
+/** A backend registered with Conduit. Equal to another wrapper of the same name and address. */
+final class VelocityRegisteredServer implements RegisteredServer, Unsupported.ChatOnly {
   private final VelocityEnvironment environment;
-  private final gg.tame.conduit.api.server.RegisteredServer nativeServer;
+  private final gg.tame.conduit.api.server.RegisteredServer server;
   private final ServerInfo info;
-  VelocityRegisteredServer(VelocityEnvironment environment, gg.tame.conduit.api.server.RegisteredServer nativeServer) {
+  VelocityRegisteredServer(VelocityEnvironment environment, gg.tame.conduit.api.server.RegisteredServer server) {
     this.environment = environment;
-    this.nativeServer = nativeServer;
-    this.info = new ServerInfo(nativeServer.getName(), nativeServer.getAddress());
+    this.server = server;
+    this.info = new ServerInfo(server.getName(), server.getAddress());
   }
-  gg.tame.conduit.api.server.RegisteredServer nativeServer() { return nativeServer; }
+  gg.tame.conduit.api.server.RegisteredServer nativeServer() { return server; }
+
   @Override public ServerInfo getServerInfo() { return info; }
   @Override public Collection<Player> getPlayersConnected() {
     List<Player> players = new ArrayList<>();
-    for (var player : environment.runtime().players().all()) {
-      if (nativeServer.getName().equalsIgnoreCase(player.currentServer().name())) players.add(environment.wrap(player));
-    }
-    return players;
+    for (var player : server.players()) players.add(environment.player(player));
+    return List.copyOf(players);
   }
-  @Override public CompletableFuture<ServerPing> ping() { return UnsupportedApis.unsupported("RegisteredServer.ping"); }
-  @Override public CompletableFuture<ServerPing> ping(PingOptions pingOptions) { return ping(); }
-  @Override public boolean sendPluginMessage(ChannelIdentifier identifier, byte[] data) { return false; }
-  @Override public boolean sendPluginMessage(ChannelIdentifier identifier, PluginMessageEncoder encoder) { return false; }
-  @Override public void sendMessage(Component message) {
+  @Override public CompletableFuture<ServerPing> ping() { throw Unsupported.api("RegisteredServer.ping"); }
+  @Override public CompletableFuture<ServerPing> ping(PingOptions options) { throw Unsupported.api("RegisteredServer.ping"); }
+  /** Through a player on the server, as there is no other connection to it; false with nobody there. */
+  @Override public boolean sendPluginMessage(ChannelIdentifier identifier, byte[] data) {
+    return server.sendPluginMessage(identifier.getId(), data.clone());
+  }
+  @Override public boolean sendPluginMessage(ChannelIdentifier identifier, PluginMessageEncoder encoder) {
+    return sendPluginMessage(identifier, VelocityPlayer.encode(encoder));
+  }
+  @Override public void deliver(Component message) {
     for (Player player : getPlayersConnected()) player.sendMessage(message);
   }
+  @Override public boolean equals(Object other) { return other instanceof VelocityRegisteredServer that && that.info.equals(info); }
+  @Override public int hashCode() { return info.hashCode(); }
+  @Override public String toString() { return "VelocityRegisteredServer[" + info.getName() + "]"; }
 }

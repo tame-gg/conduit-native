@@ -13,8 +13,6 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
 import com.velocitypowered.api.scheduler.Scheduler;
 import com.velocitypowered.api.util.ProxyVersion;
-import gg.tame.conduit.Conduit;
-import gg.tame.conduit.runtime.ConduitRuntime;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -24,81 +22,81 @@ import java.util.Optional;
 import java.util.UUID;
 import net.kyori.adventure.text.Component;
 
-final class VelocityProxyServer implements ProxyServer {
-  private final ConduitRuntime runtime;
+/** The ProxyServer handed to Velocity plugins. Its public surface is the Velocity API and nothing else. */
+final class VelocityProxyServer implements ProxyServer, Unsupported.ChatOnly {
   private final VelocityEnvironment environment;
-  private final VelocityConsole console = new VelocityConsole();
-  private final VelocityChannelRegistrar channels = new VelocityChannelRegistrar();
   private final VelocityProxyConfig config;
-  VelocityProxyServer(ConduitRuntime runtime, VelocityEnvironment environment) {
-    this.runtime = runtime;
+  VelocityProxyServer(VelocityEnvironment environment) {
     this.environment = environment;
-    this.config = new VelocityProxyConfig(runtime);
+    this.config = new VelocityProxyConfig(environment);
   }
-  @Override public void shutdown(Component reason) { shutdown(); }
-  @Override public void shutdown() { runtime.close(); }
-  @Override public boolean isShuttingDown() { return false; }
-  @Override public void closeListeners() { }
+
   @Override public Optional<Player> getPlayer(String username) {
-    return runtime.player(username).map(environment::wrap);
+    return username == null ? Optional.empty() : environment.conduit.player(username).map(environment::player);
   }
   @Override public Optional<Player> getPlayer(UUID uniqueId) {
-    return runtime.player(uniqueId).map(environment::wrap);
+    return uniqueId == null ? Optional.empty() : environment.conduit.player(uniqueId).map(environment::player);
   }
   @Override public Collection<Player> getAllPlayers() {
     List<Player> players = new ArrayList<>();
-    for (var player : runtime.players().all()) players.add(environment.wrap(player));
+    for (var player : environment.conduit.players().all()) players.add(environment.player(player));
     return List.copyOf(players);
   }
-  @Override public int getPlayerCount() { return getAllPlayers().size(); }
+  @Override public int getPlayerCount() { return environment.conduit.players().all().size(); }
+  @Override public Collection<Player> matchPlayer(String partialName) {
+    String prefix = partialName.toLowerCase(Locale.ROOT);
+    return getAllPlayers().stream().filter(player -> player.getUsername().toLowerCase(Locale.ROOT).startsWith(prefix)).toList();
+  }
+
   @Override public Optional<RegisteredServer> getServer(String name) {
-    return runtime.servers().getServer(name).map(environment::wrapServer);
+    return name == null ? Optional.empty() : environment.conduit.servers().getServer(name).map(environment::server);
   }
   @Override public Collection<RegisteredServer> getAllServers() {
     List<RegisteredServer> servers = new ArrayList<>();
-    for (var server : runtime.servers().getServers()) servers.add(environment.wrapServer(server));
+    for (var server : environment.conduit.servers().getServers()) servers.add(environment.server(server));
     return List.copyOf(servers);
   }
-  @Override public Collection<Player> matchPlayer(String partialName) {
-    String needle = partialName.toLowerCase(Locale.ROOT);
-    List<Player> matches = new ArrayList<>();
-    for (Player player : getAllPlayers()) if (player.getUsername().toLowerCase(Locale.ROOT).startsWith(needle)) matches.add(player);
-    return matches;
-  }
   @Override public Collection<RegisteredServer> matchServer(String partialName) {
-    String needle = partialName.toLowerCase(Locale.ROOT);
-    List<RegisteredServer> matches = new ArrayList<>();
-    for (RegisteredServer server : getAllServers()) {
-      if (server.getServerInfo().getName().toLowerCase(Locale.ROOT).startsWith(needle)) matches.add(server);
-    }
-    return matches;
-  }
-  @Override public RegisteredServer createRawRegisteredServer(ServerInfo server) {
-    return environment.wrapServer(new gg.tame.conduit.api.server.RegisteredServer() {
-      @Override public String getName() { return server.getName(); }
-      @Override public InetSocketAddress getAddress() { return server.getAddress(); }
-      @Override public boolean isOnline() { return false; }
-      @Override public java.util.concurrent.CompletableFuture<Boolean> connect(gg.tame.conduit.api.player.Player player) {
-        return player.connect(this);
-      }
-    });
+    String prefix = partialName.toLowerCase(Locale.ROOT);
+    return getAllServers().stream().filter(server -> server.getServerInfo().getName().toLowerCase(Locale.ROOT).startsWith(prefix)).toList();
   }
   @Override public RegisteredServer registerServer(ServerInfo server) {
-    return environment.wrapServer(runtime.servers().register(server.getName(), server.getAddress()));
+    if (environment.conduit.servers().getServer(server.getName()).isPresent()) {
+      throw new IllegalArgumentException("a server named " + server.getName() + " is already registered");
+    }
+    return environment.server(environment.conduit.servers().register(server.getName(), server.getAddress()));
   }
   @Override public void unregisterServer(ServerInfo server) {
-    runtime.servers().unregister(server.getName());
+    var registered = environment.conduit.servers().getServer(server.getName())
+        .orElseThrow(() -> new IllegalArgumentException("no server named " + server.getName() + " is registered"));
+    if (!registered.getAddress().equals(server.getAddress())) {
+      throw new IllegalArgumentException("server " + server.getName() + " is registered with a different address");
+    }
+    environment.conduit.servers().unregister(server.getName());
   }
-  @Override public ConsoleCommandSource getConsoleCommandSource() { return console; }
-  @Override public PluginManager getPluginManager() { return environment.plugins(); }
-  @Override public EventManager getEventManager() { return environment.events(); }
-  @Override public CommandManager getCommandManager() { return environment.commands(); }
-  @Override public Scheduler getScheduler() { return environment.scheduler(); }
-  @Override public ChannelRegistrar getChannelRegistrar() { return channels; }
-  @Override public InetSocketAddress getBoundAddress() { return new InetSocketAddress("127.0.0.1", 25565); }
+  @Override public RegisteredServer createRawRegisteredServer(ServerInfo server) { throw Unsupported.api("ProxyServer.createRawRegisteredServer"); }
+
+  /** A broadcast: every player, and the console. */
+  @Override public void deliver(Component message) {
+    for (Player player : getAllPlayers()) player.sendMessage(message);
+    environment.console.sendMessage(message);
+  }
+
+  @Override public ConsoleCommandSource getConsoleCommandSource() { return environment.console; }
+  @Override public PluginManager getPluginManager() { return environment.plugins; }
+  @Override public EventManager getEventManager() { return environment.events; }
+  @Override public CommandManager getCommandManager() { return environment.commands; }
+  @Override public Scheduler getScheduler() { return environment.scheduler; }
+  @Override public ChannelRegistrar getChannelRegistrar() { return environment.channels; }
   @Override public ProxyConfig getConfiguration() { return config; }
-  @Override public ProxyVersion getVersion() { return new ProxyVersion("Conduit", "tame.gg", Conduit.VERSION); }
-  @Override public ResourcePackInfo.Builder createResourcePackBuilder(String url) {
-    return UnsupportedApis.unsupported("ProxyServer.createResourcePackBuilder");
-  }
+  @Override public ProxyVersion getVersion() { return new ProxyVersion("Conduit", "tame.gg", environment.conduit.version()); }
+
+  /** Conduit kicks players with the configured shutdown message; a plugin cannot supply its own. */
+  @Override public void shutdown(Component reason) { throw Unsupported.api("ProxyServer.shutdown(Component) (use shutdown())"); }
+  @Override public void shutdown() { environment.conduit.shutdown(); }
+  @Override public boolean isShuttingDown() { return environment.conduit.shuttingDown(); }
+  @Override public void closeListeners() { throw Unsupported.api("ProxyServer.closeListeners"); }
+  @Override public InetSocketAddress getBoundAddress() { return environment.conduit.boundAddress(); }
+  @Override public ResourcePackInfo.Builder createResourcePackBuilder(String url) { throw Unsupported.api("ProxyServer.createResourcePackBuilder"); }
+  @Override public String toString() { return "Conduit " + environment.conduit.version(); }
 }
