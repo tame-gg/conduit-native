@@ -8,11 +8,18 @@ import gg.tame.conduit.config.OpsSettings;
 import gg.tame.conduit.config.SecuritySettings;
 import gg.tame.conduit.login.LoginStart;
 import gg.tame.conduit.network.MinecraftProxy;
+import gg.tame.conduit.protocol.ConnectionState;
 import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.protocol.MinecraftOutput;
+import gg.tame.conduit.protocol.PacketDirection;
+import gg.tame.conduit.protocol.PacketKind;
 import gg.tame.conduit.protocol.PluginMessage;
 import gg.tame.conduit.protocol.ProtocolDefinition;
+import gg.tame.conduit.protocol.ProtocolTranslator;
+import gg.tame.conduit.protocol.RecipeListRepair;
+import gg.tame.conduit.protocol.Translators;
+import gg.tame.conduit.protocol.translate.TranslationException;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -49,6 +56,7 @@ public final class MalformedInputTests {
     malformedVarIntsAndLengthsAreRefused();
     loginStartRefusesNamesNoPlayerCouldHave();
     deeplyNestedTextIsRefusedNotRecursedInto();
+    nestedPeerNbtAndCommandTreesAreRefused();
     theProxySurvivesHostileConnections();
     System.out.println("MalformedInputTests OK");
   }
@@ -150,12 +158,110 @@ public final class MalformedInputTests {
   }
 
   /** A root compound holding a compound named "" holding another, {@code depth} in all. */
-  private static byte[] nestedCompounds(int depth) {
+  private static byte[] nestedCompounds(int depth) { return nestedCompounds(depth, false); }
+
+  /** As above, with the root's own (empty) name in front when {@code named}, as 1.13 and disk-style NBT write it. */
+  private static byte[] nestedCompounds(int depth, boolean named) {
     ByteArrayOutputStream nbt = new ByteArrayOutputStream();
     nbt.write(0x0A);
+    if (named) { nbt.write(0); nbt.write(0); }
     for (int level = 1; level < depth; level++) { nbt.write(0x0A); nbt.write(0); nbt.write(0); }
     for (int level = 0; level < depth; level++) nbt.write(0);
     return nbt.toByteArray();
+  }
+
+  /** A list of {@code lists} lists, each declaring 65,536 TAG_End: five bytes for each inner list. */
+  private static byte[] listsOfEnds(int lists, boolean named) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    DataOutputStream nbt = new DataOutputStream(bytes);
+    nbt.writeByte(9);
+    if (named) nbt.writeShort(0);
+    nbt.writeByte(9);
+    nbt.writeInt(lists);
+    for (int list = 0; list < lists; list++) { nbt.writeByte(0); nbt.writeInt(65_536); }
+    return bytes.toByteArray();
+  }
+
+  /**
+   * Every other reader of a peer's NBT recursed once per level with no limit too: a backend's recipe
+   * result, a 1.13 client's creative-mode item, a backend's chunk, entity metadata or player info. And
+   * a list of TAG_End may declare 65,536 elements that take no bytes at all, so five bytes of a list
+   * of such lists made 65,536 turns of a loop, or 65,536 entries of a text's tree. Those are unreadable
+   * now, each on the path unreadable NBT already took there. The Declare Commands merge took the
+   * backend's child count as an array size: negative, or two billion, it threw past the catch for a
+   * tree it cannot read.
+   */
+  private static void nestedPeerNbtAndCommandTreesAreRefused() throws Exception {
+    // A backend's recipe list, on its way to the client in every 1.13-family session: one Conduit cannot
+    // read is replaced by an empty list, as before.
+    ProtocolDefinition v393 = ProtocolDefinition.forVersion(393);
+    int recipes = v393.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_RECIPES);
+    byte[] none = packet(recipes, out -> MinecraftOutput.varInt(out, 0));
+    byte[] readable = recipeWithResultNbt(recipes, nestedCompounds(3, true));
+    require(RecipeListRepair.apply(v393, readable) == readable, "a recipe list with shallow result NBT is left alone");
+    require(java.util.Arrays.equals(RecipeListRepair.apply(v393, recipeWithResultNbt(recipes, nestedCompounds(20_000, true))), none),
+        "a result 20,000 compounds deep is an unreadable recipe list");
+    require(java.util.Arrays.equals(RecipeListRepair.apply(v393, recipeWithResultNbt(recipes, listsOfEnds(2_048, true))), none),
+        "and so is one of 2,048 lists of 65,536 TAG_End");
+
+    // A 1.13 client's creative-mode item toward a 1.20.4 backend: an item the translator cannot read ends
+    // the session with a TranslationException, as before.
+    ProtocolTranslator translator = Translators.forPair(393, 765);
+    int creative = v393.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CREATIVE_SLOT);
+    try {
+      translator.clientToBackend(ConnectionState.PLAY, packet(creative, out -> {
+        out.writeShort(36); out.writeShort(1); out.writeByte(1); out.write(nestedCompounds(20_000, true));
+      }));
+      throw new AssertionError("an item 20,000 compounds deep was translated");
+    } catch (TranslationException refused) { }
+    require(translator.clientToBackend(ConnectionState.PLAY, packet(creative, out -> {
+      out.writeShort(36); out.writeShort(1); out.writeByte(1); out.write(nestedCompounds(3, true));
+    })) != null, "a shallow one still is");
+
+    // A 1.20.3+ backend's text: TAG_End lists are refused rather than read as millions of nulls.
+    try {
+      gg.tame.conduit.protocol.text.ComponentCodec.nbtBytesToJson(listsOfEnds(64, false));
+      throw new AssertionError("64 lists of 65,536 TAG_End were read as text");
+    } catch (IOException expected) { }
+    require(gg.tame.conduit.protocol.text.ComponentCodec.nbtBytesToJson(new byte[] {9, 0, 0, 0, 0, 0}).equals("[]"), "an empty list still reads");
+
+    // A backend's Declare Commands with a root that claims -1 or 2^31-1 children.
+    ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
+    int declare = v765.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS);
+    for (int children : new int[] {-1, Integer.MAX_VALUE}) {
+      byte[] tree = packet(declare, out -> {
+        MinecraftOutput.varInt(out, 1); out.writeByte(0); MinecraftOutput.varInt(out, children); MinecraftOutput.varInt(out, 0);
+      });
+      try {
+        gg.tame.conduit.command.CommandGraphs.mergeProxyCommands(v765, tree, List.of("lobby"));
+        throw new AssertionError("a root with " + children + " children was merged");
+      } catch (IOException expected) { }
+    }
+  }
+
+  /** Declare Recipes with one shapeless recipe and no ingredients, whose result is stone carrying {@code nbt}. */
+  private static byte[] recipeWithResultNbt(int packetId, byte[] nbt) throws IOException {
+    return packet(packetId, out -> {
+      MinecraftOutput.varInt(out, 1);
+      MinecraftOutput.string(out, "conduit:test");
+      MinecraftOutput.string(out, "crafting_shapeless");
+      MinecraftOutput.string(out, "");
+      MinecraftOutput.varInt(out, 0);
+      out.writeShort(1);
+      out.writeByte(1);
+      out.write(nbt);
+    });
+  }
+
+  private interface Body { void write(DataOutputStream out) throws IOException; }
+
+  private static byte[] packet(int id, Body body) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream out = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(out, id);
+      body.write(out);
+    }
+    return bytes.toByteArray();
   }
 
   /**

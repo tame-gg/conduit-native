@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.protocol.item;
 
+import gg.tame.conduit.protocol.NetworkNbt;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataInput;
@@ -147,15 +148,21 @@ public final class ItemNbt {
       if (type == 0) return;
       String name = input.readUTF();
       output.writeUTF(name);
-      copyPayload(input, output, type);
+      copyPayload(input, output, type, 2);
     }
   }
 
   private static void skipPayload(DataInput input, int type) throws IOException {
-    copyPayload(input, null, type);
+    copyPayload(input, null, type, 2);
   }
 
-  private static void copyPayload(DataInput input, DataOutput output, int type) throws IOException {
+  /**
+   * {@code depth} counts the lists and compounds this value sits in, the item's root compound and
+   * itself included. Past the client's limit the item is unreadable: a client's creative-mode item or
+   * a backend's slot nested a few thousand levels deep overflowed the reading thread's stack.
+   */
+  private static void copyPayload(DataInput input, DataOutput output, int type, int depth) throws IOException {
+    if ((type == 9 || type == 10) && depth > NetworkNbt.MAX_DEPTH) throw new IOException("nbt nests deeper than " + NetworkNbt.MAX_DEPTH);
     switch (type) {
       case 1 -> copyBytes(input, output, 1);
       case 2 -> copyBytes(input, output, 2);
@@ -176,7 +183,7 @@ public final class ItemNbt {
         if (output != null) output.writeByte(element);
         int length = readInt(input, output);
         if (length < 0 || length > 65536) throw new IOException("nbt list " + length);
-        for (int index = 0; index < length; index++) copyPayload(input, output, element);
+        for (int index = 0; index < length; index++) copyPayload(input, output, element, depth + 1);
       }
       case 10 -> {
         while (true) {
@@ -186,7 +193,7 @@ public final class ItemNbt {
           int nameLength = input.readUnsignedShort();
           if (output != null) output.writeShort(nameLength);
           copyBytes(input, output, nameLength);
-          copyPayload(input, output, child);
+          copyPayload(input, output, child, depth + 1);
         }
       }
       case 11 -> {

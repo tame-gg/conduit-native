@@ -57,6 +57,9 @@ public final class CommandGraphs {
     int header = cursor + 1;
     int childCount = readVarInt(packet, header);
     header += varIntLength(packet, header);
+    // Each child index takes at least a byte. Taken as the array size, a backend's -1 threw a
+    // NegativeArraySizeException and its 2^31-1 an OutOfMemoryError, past the catch for an unreadable tree.
+    if (childCount < 0 || childCount > rootIndexStart - header) throw new IOException("command tree root claims " + childCount + " children");
     int[] children = new int[childCount];
     for (int index = 0; index < childCount; index++) {
       children[index] = readVarInt(packet, header);

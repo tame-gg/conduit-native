@@ -187,6 +187,9 @@ public final class ComponentCodec {
         int element = input.readUnsignedByte();
         int length = input.readInt();
         if (length < 0 || length > 65536) throw new IOException("nbt list " + length);
+        // TAG_End elements take no bytes, so five bytes were 65,536 nulls in the tree, and a list of
+        // such lists billions. A client refuses such a list too.
+        if (element == 0 && length > 0) throw new IOException("nbt list of " + length + " TAG_End");
         List<Object> items = new ArrayList<>(Math.min(length, 64));
         for (int index = 0; index < length; index++) items.add(readTag(input, element, depth + 1));
         // Undo the wrapper a heterogeneous list is stored in: each element is a

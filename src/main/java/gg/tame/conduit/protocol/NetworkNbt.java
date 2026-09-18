@@ -7,6 +7,13 @@ import java.io.IOException;
 
 /** Minimal network NBT writer/skipper for text components. */
 public final class NetworkNbt {
+  /**
+   * The deepest nesting of lists and compounds read from a peer: the client's own limit. Each level
+   * is a recursive call, so a backend's chunk, recipe or player info nested a few thousand levels
+   * deep overflowed the reading thread's stack.
+   */
+  public static final int MAX_DEPTH = 512;
+
   private NetworkNbt() {}
   public static void stringComponent(DataOutput output, String text) throws IOException {
     output.writeByte(10);
@@ -15,7 +22,7 @@ public final class NetworkNbt {
     output.writeUTF(text);
     output.writeByte(0);
   }
-  public static void skip(DataInput input) throws IOException { skipPayload(input, input.readUnsignedByte()); }
+  public static void skip(DataInput input) throws IOException { copyPayload(input, null, input.readUnsignedByte(), 1); }
 
   /**
    * Skips a named (disk-style) NBT value: type, modified UTF-8 name, payload.
@@ -29,12 +36,12 @@ public final class NetworkNbt {
     int nameLength = input.readUnsignedShort();
     if (nameLength < 0 || nameLength > 65535) throw new IOException("nbt name length");
     input.skipBytes(nameLength);
-    skipPayload(input, type);
+    copyPayload(input, null, type, 1);
   }
   public static void copy(DataInput input, DataOutput output) throws IOException {
     int type = input.readUnsignedByte();
     output.writeByte(type);
-    copyPayload(input, output, type);
+    copyPayload(input, output, type, 1);
   }
 
   /** Copies a named (disk-style) NBT value: type, modified UTF-8 name, payload. */
@@ -46,11 +53,12 @@ public final class NetworkNbt {
     output.writeShort(nameLength);
     if (nameLength < 0 || nameLength > 65535) throw new IOException("nbt name length");
     copyBytes(input, output, nameLength);
-    copyPayload(input, output, type);
+    copyPayload(input, output, type, 1);
   }
 
-  private static void skipPayload(DataInput input, int type) throws IOException { copyPayload(input, null, type); }
-  private static void copyPayload(DataInput input, DataOutput output, int type) throws IOException {
+  /** {@code depth} counts the lists and compounds this value sits in, itself included. */
+  private static void copyPayload(DataInput input, DataOutput output, int type, int depth) throws IOException {
+    if ((type == 9 || type == 10) && depth > MAX_DEPTH) throw new IOException("nbt nests deeper than " + MAX_DEPTH);
     switch (type) {
       case 0 -> { }
       case 1 -> copyBytes(input, output, 1);
@@ -65,7 +73,10 @@ public final class NetworkNbt {
         int length = input.readInt();
         writeInt(output, length);
         if (length < 0 || length > 65536) throw new IOException("nbt list");
-        for (int index = 0; index < length; index++) copyPayload(input, output, element);
+        // TAG_End elements take no bytes: five bytes made 65,536 turns of this loop, and a list of such
+        // lists billions. A client refuses such a list too.
+        if (element == 0 && length > 0) throw new IOException("nbt list of " + length + " TAG_End");
+        for (int index = 0; index < length; index++) copyPayload(input, output, element, depth + 1);
       }
       case 10 -> {
         while (true) {
@@ -75,7 +86,7 @@ public final class NetworkNbt {
           int name = input.readUnsignedShort();
           writeShort(output, name);
           copyBytes(input, output, name);
-          copyPayload(input, output, child);
+          copyPayload(input, output, child, depth + 1);
         }
       }
       case 11 -> { int n = input.readInt(); writeInt(output, n); if (n < 0 || n > 262144) throw new IOException("nbt int array"); copyBytes(input, output, n * 4); }
