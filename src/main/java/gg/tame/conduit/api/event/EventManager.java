@@ -20,6 +20,7 @@ public interface EventManager {
    * Registers every {@link Subscribe} method of {@code listener}, owned by {@code plugin}.
    *
    * @throws IllegalArgumentException when a {@code @Subscribe} method does not take exactly one Event
+   * @throws IllegalStateException when {@code plugin} has been disabled
    */
   void register(Plugin plugin, Object listener);
   /** Removes every listener {@code plugin} registered. Disabling a plugin does this for it. */

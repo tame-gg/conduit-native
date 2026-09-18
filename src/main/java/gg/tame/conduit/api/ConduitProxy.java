@@ -33,6 +33,8 @@ public interface ConduitProxy {
    * {@code owner} is disabled; then the default comes back. The last plugin to call this wins. A
    * provider that throws denies the permission it was asked about. Called on whichever thread is
    * checking, often a player's connection thread, so it must answer from memory.
+   *
+   * @throws IllegalStateException when {@code owner} has been disabled
    */
   void setPermissionProvider(Plugin owner, PermissionProvider provider);
   Optional<Player> player(java.util.UUID uniqueId);

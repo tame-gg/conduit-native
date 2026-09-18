@@ -133,8 +133,12 @@ public final class ConduitPluginManager implements PluginManager {
       // leaving every plugin in the cycle unloaded.
       if (next == null) next = pick(remaining, placed, byId.keySet(), false);
       if (next == null) {
-        ConduitLog.error("unresolved plugin dependencies: " + remaining.stream().map(item -> item.description.id()).toList());
-        for (Pending dropped : remaining) close(dropped.resources);
+        // One line listing every plugin left over said nothing about why: a dependency that was
+        // never installed and a cycle between two plugins read the same. Each plugin now says which.
+        for (Pending dropped : remaining) {
+          ConduitLog.error("plugin " + dropped.description.id() + " was not loaded: " + unresolved(dropped, remaining, byId.keySet()));
+          close(dropped.resources);
+        }
         break;
       }
       remaining.remove(next);
@@ -142,6 +146,30 @@ public final class ConduitPluginManager implements PluginManager {
       placed.add(next.description.id());
     }
     return ordered;
+  }
+  /** Why a plugin could not be placed: a dependency not installed, a cycle, or one that waits on those. */
+  private String unresolved(Pending plugin, List<Pending> remaining, Set<String> present) {
+    List<String> missing = plugin.description.dependencies().stream().filter(dep -> !present.contains(dep) && !enabled(dep)).toList();
+    if (!missing.isEmpty()) return "it depends on " + String.join(", ", missing) + ", which " + (missing.size() == 1 ? "is" : "are") + " not installed";
+    Map<String, Pending> left = new LinkedHashMap<>();
+    for (Pending item : remaining) left.put(item.description.id(), item);
+    List<String> cycle = cycleThrough(plugin.description.id(), plugin.description.id(), left, new ArrayList<>(), new HashSet<>());
+    if (cycle != null) return "its dependencies form a cycle: " + String.join(" -> ", cycle);
+    return "it depends on " + String.join(", ", plugin.description.dependencies().stream().filter(left::containsKey).toList())
+        + ", which could not be loaded either";
+  }
+  /** The path of hard dependencies from {@code at} back to {@code start}, or null when there is none. */
+  private static List<String> cycleThrough(String start, String at, Map<String, Pending> left, List<String> path, Set<String> seen) {
+    path.add(at);
+    for (String dep : left.get(at).description.dependencies()) {
+      if (dep.equals(start)) { path.add(start); return path; }
+      if (left.containsKey(dep) && seen.add(dep)) {
+        List<String> found = cycleThrough(start, dep, left, path, seen);
+        if (found != null) return found;
+      }
+    }
+    path.removeLast();
+    return null;
   }
   private Pending pick(List<Pending> remaining, Set<String> placed, Set<String> present, boolean strict) {
     for (Pending item : remaining) {
@@ -218,8 +246,8 @@ public final class ConduitPluginManager implements PluginManager {
   private void release(Plugin plugin) {
     // Tasks first: a task still running is the likeliest thing to register something new.
     scheduler.retire(plugin);
-    events.unregister(plugin);
-    commands.unregisterAll(plugin);
+    events.retire(plugin);
+    commands.retire(plugin);
     if (proxy instanceof ConduitRuntime runtime) runtime.pluginReleased(plugin);
   }
   /** Disables every plugin, newest first, so each goes before anything it depends on. */

@@ -128,14 +128,21 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   @Override public PermissionProvider permissions() { return permissions.provider(); }
   @Override public synchronized void setPermissionProvider(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {
     if (owner == null || provider == null) throw new IllegalArgumentException("owner and provider are required");
+    // Installed after its owner's release, a provider would answer every check for good, from a
+    // plugin whose class loader was closed.
+    if (released.contains(owner)) throw new IllegalStateException("plugin " + owner.description().id() + " is disabled");
     permissions = new PermissionGrant(owner, provider);
   }
   /** Whatever {@code plugin} installed stops answering, before its class loader closes under it. */
   public void pluginReleased(gg.tame.conduit.api.plugin.Plugin plugin) {
     synchronized (this) {
+      released.add(plugin);
       if (permissions.owner() == plugin) permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
     }
   }
+  /** Plugins released, which may not install a provider again. Guarded by {@code this}. */
+  private final java.util.Set<gg.tame.conduit.api.plugin.Plugin> released =
+      java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
   private record PermissionGrant(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {}
   @Override public Optional<Player> player(UUID uniqueId) { return playerViews.get(uniqueId); }
   @Override public Optional<Player> player(String username) { return playerViews.getByUsername(username); }

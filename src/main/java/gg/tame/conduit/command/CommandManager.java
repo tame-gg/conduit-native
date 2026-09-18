@@ -21,6 +21,8 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   private final java.util.Set<RegisteredCommand> builtIns = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
   /** Built-ins a plugin displaced, by the key it took, to come back when that plugin lets go. */
   private final Map<String, RegisteredCommand> displaced = new LinkedHashMap<>();
+  /** Disabled plugins, which may not register again. Weak, so they can still be collected. */
+  private final java.util.Set<Plugin> retired = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
   public synchronized void register(RegisteredCommand command) {
     install(command, null);
     builtIns.add(command);
@@ -31,6 +33,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
    * them. Another plugin's name is never displaced, and neither is /conduit.
    */
   public synchronized void register(Plugin plugin, RegisteredCommand command) {
+    if (retired.contains(plugin)) throw new IllegalStateException("plugin " + plugin.description().id() + " is disabled");
     install(command, plugin);
     owned.computeIfAbsent(plugin, ignored -> new ArrayList<>()).add(command);
   }
@@ -89,6 +92,15 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     List<RegisteredCommand> list = owned.remove(plugin);
     if (list == null) return;
     for (RegisteredCommand command : new ArrayList<>(list)) unregister(command.name());
+  }
+  /**
+   * Removes the plugin's commands and refuses it any more: it has been disabled. A plugin thread
+   * still running at the disable could otherwise register a command after its commands were swept,
+   * and that command outlived the plugin, running code from a closed class loader.
+   */
+  public synchronized void retire(Plugin plugin) {
+    retired.add(plugin);
+    unregisterAll(plugin);
   }
   public boolean dispatch(CommandSource source, String line) {
     ParsedCommand parsed = ParsedCommand.parse(line);

@@ -20,7 +20,15 @@ public final class ConduitEventManager implements EventManager {
   private static final Comparator<Handler> ORDER = Comparator.comparing((Handler handler) -> handler.order).thenComparingLong(handler -> handler.sequence);
   private final Map<Class<?>, CopyOnWriteArrayList<Handler>> handlers = new ConcurrentHashMap<>();
   private final AtomicLong sequence = new AtomicLong();
-  @Override public void register(Plugin plugin, Object listener) {
+  /**
+   * Plugins that were disabled. A task or thread of a plugin still running when it was disabled
+   * could register a listener after the sweep had passed, and that listener then heard every event
+   * for the life of the process, from a class loader that had been closed. Weak, as the scheduler's.
+   * Guarded by {@code this}, with registration, so a registration and a retirement cannot interleave.
+   */
+  private final java.util.Set<Plugin> retired = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+  @Override public synchronized void register(Plugin plugin, Object listener) {
+    if (retired.contains(plugin)) throw new IllegalStateException("plugin " + owner(plugin) + " is disabled");
     List<Handler> found = new ArrayList<>();
     for (Method method : listener.getClass().getMethods()) {
       Subscribe subscribe = method.getAnnotation(Subscribe.class);
@@ -39,8 +47,13 @@ public final class ConduitEventManager implements EventManager {
           .add(new Handler(handler.plugin, handler.listener, handler.method, handler.type, handler.order, sequence.incrementAndGet()));
     }
   }
-  @Override public void unregister(Plugin plugin) {
+  @Override public synchronized void unregister(Plugin plugin) {
     for (CopyOnWriteArrayList<Handler> list : handlers.values()) list.removeIf(handler -> handler.plugin == plugin);
+  }
+  /** Removes the plugin's listeners and refuses it any more: it has been disabled. */
+  public synchronized void retire(Plugin plugin) {
+    retired.add(plugin);
+    unregister(plugin);
   }
   @Override public <E extends Event> E fire(E event) {
     List<Handler> matching = new ArrayList<>();
@@ -65,8 +78,9 @@ public final class ConduitEventManager implements EventManager {
     }
     return event;
   }
-  private static String owner(Handler handler) {
-    try { return handler.plugin.description().id(); } catch (RuntimeException unnamed) { return String.valueOf(handler.plugin); }
+  private static String owner(Handler handler) { return owner(handler.plugin); }
+  private static String owner(Plugin plugin) {
+    try { return plugin.description().id(); } catch (RuntimeException unnamed) { return String.valueOf(plugin); }
   }
   private record Handler(Plugin plugin, Object listener, Method method, Class<?> type, Subscribe.Order order, long sequence) {}
 }

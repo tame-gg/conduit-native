@@ -597,11 +597,15 @@ itself catches everything); a parameter that is not an `Event` is rejected at re
 Lifecycle: discover → validate → classload → dependency order → onLoad/onEnable → `PluginEnableEvent`.
 Disable fires `PluginDisableEvent`, calls `onDisable`, then unregisters the plugin's listeners, commands,
 scheduler tasks and permission provider and closes its classloader; disabling a plugin disables its
-dependents first, and shutdown disables everything in reverse enable order. Data lives in `plugins/<id>/`.
+dependents first, and shutdown disables everything in reverse enable order. From then on the plugin may
+not register a listener, command, task or permission provider again (`IllegalStateException`), so code of
+it still running at the disable cannot bring any of them back. Data lives in `plugins/<id>/`.
 
 A jar that fails any of those steps is logged and skipped — a bad descriptor, a duplicate id, a main class
 that will not initialize, or an `onEnable` that throws never stops the proxy from starting or the other
-plugins from loading, and the rejected jar's classloader is closed so the file is not left locked.
+plugins from loading, and the rejected jar's classloader is closed so the file is not left locked. A
+plugin whose `depend` cannot be met is named in the log with the reason: a dependency that is not
+installed, a dependency cycle (`ping -> pong -> ping`), or a dependency that failed for one of those.
 
 Events include proxy start/shutdown, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
 version and icon are all settable, the counts can be hidden; cancelling leaves the client with no answer), login (deniable), auth,
@@ -619,8 +623,9 @@ that throws is logged and the others still run.
 
 Scheduler tasks run on their own plugin's `conduit-plugin-<id>-N` threads, never on player socket
 threads or another plugin's, so a task that blocks holds up only its own plugin; a repeating task never
-overlaps itself. A task that throws is logged and, if repeating, runs again next time. A disabled plugin's
-threads end once any task still running returns.
+overlaps itself. A task that throws is logged and, if repeating, runs again next time; a task that keeps
+failing is logged in full once, then only counted, at its 2nd, 4th, 8th... failure in a row. A disabled
+plugin's threads end once any task still running returns, and proxy shutdown interrupts any that has not.
 
 `proxy().serverListDefaults()` is the configured `[status]` answer, and `RegisteredServer.ping()` asks a
 backend for its status now instead of reading the cached `status()`.

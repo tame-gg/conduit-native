@@ -92,6 +92,7 @@ public final class AllTests {
     ConcurrencyTests.run();
     CommandApiTests.run();
     NativeApiTests.run();
+    PluginRuntimeTests.run();
     ModLoaderTests.run();
     VelocityCompatTests.run();
     System.out.println("All Conduit foundation tests passed.");

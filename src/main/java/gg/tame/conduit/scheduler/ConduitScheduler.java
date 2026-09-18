@@ -9,6 +9,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -45,6 +46,12 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
    * process against a closed class loader. Weak, so a disabled plugin can still be collected.
    */
   private final Set<Plugin> retired = Collections.newSetFromMap(new WeakHashMap<>());
+  /**
+   * Pools of retired plugins whose last tasks may still be running. Forgotten at retirement, a pool
+   * whose task never returned -- one sleeping in a loop, or waiting on a queue nobody fills -- was
+   * out of reach of close(), so its thread outlived the proxy shutdown. Guarded by {@code lock}.
+   */
+  private final List<ExecutorService> draining = new ArrayList<>();
   private final Object lock = new Object();
   @Override public TaskBuilder buildTask(Plugin plugin, Runnable task) { return new Builder(plugin, task); }
   @Override public void cancel(Plugin plugin) {
@@ -56,6 +63,8 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
     synchronized (lock) {
       retired.add(plugin);
       pool = pools.remove(plugin);
+      draining.removeIf(ExecutorService::isTerminated);
+      if (pool != null) draining.add(pool);
     }
     cancel(plugin);
     // Not shutdownNow: a task still running finishes rather than being interrupted mid-write, and
@@ -66,7 +75,9 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
     timer.shutdownNow();
     synchronized (lock) {
       for (ExecutorService pool : pools.values()) pool.shutdownNow();
+      for (ExecutorService pool : draining) pool.shutdownNow();
       pools.clear();
+      draining.clear();
     }
   }
   /** Live tasks, for tests: a finished one-shot task must not stay here. */
@@ -92,12 +103,20 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
         try {
           if (task.cancelled) return;
           work.run();
+          task.failures = 0;
         }
         // Not only RuntimeException. An Error thrown by a repeating task was swallowed into its
         // future and silently ended every later run: the plugin's timer just stopped.
         catch (Throwable failure) {
           if (failure instanceof VirtualMachineError fatal) throw fatal;
-          ConduitLog.error("plugin task failed: " + plugin.description().id(), failure);
+          // A repeating task that fails every run printed a whole stack trace every run, and at a
+          // short interval that buried everything else in the log. The first failure in a row is
+          // printed in full, and after that only a count, at the 2nd, 4th, 8th... in a row.
+          int inARow = ++task.failures;
+          if (inARow == 1) ConduitLog.error("plugin task failed: " + plugin.description().id(), failure);
+          else if (Integer.bitCount(inARow) == 1) {
+            ConduitLog.error("plugin task failed " + inARow + " times in a row: " + plugin.description().id() + ": " + failure);
+          }
         } finally {
           task.running.set(false);
           // A finished one-shot task was never forgotten, so every one a plugin ever ran stayed here.
@@ -136,6 +155,8 @@ public final class ConduitScheduler implements Scheduler, AutoCloseable {
   private final class Task implements ScheduledTask {
     private final Plugin plugin;
     private final AtomicBoolean running = new AtomicBoolean();
+    /** Failures since the last run that returned. Runs never overlap, but may be on different threads. */
+    private volatile int failures;
     private volatile ScheduledFuture<?> future;
     private volatile boolean cancelled;
     private Task(Plugin plugin) { this.plugin = plugin; }
