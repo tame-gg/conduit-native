@@ -31,6 +31,12 @@ final class VelocityPluginHost implements PluginManager {
     for (Container container : byId.values()) if (container.instance == plugin) return Optional.of(container);
     return Optional.empty();
   }
+  /** The plugin whose jar {@code code}'s class came from, or null. */
+  Container owning(Object code) {
+    if (code == null) return null;
+    for (Container container : byId.values()) if (code.getClass().getClassLoader() == container.loader) return container;
+    return null;
+  }
   Container require(Object plugin) {
     return find(plugin).orElseThrow(() -> new IllegalArgumentException(
         (plugin == null ? "null" : plugin.getClass().getName()) + " is not a Velocity plugin loaded on this proxy"));

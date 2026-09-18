@@ -106,6 +106,7 @@ contains them. The versions follow velocity-api's own POM.
                                  (license and NOTICE inside the jar)
   aopalliance 1.0                Public domain (http://aopalliance.sourceforge.net)
   javax.inject 1                 Apache-2.0, Copyright (C) 2009 The JSR-330 Expert Group
+  jakarta.inject-api 2.0.1       Apache-2.0, Copyright (c) Eclipse Foundation and others
   guava 33.3.1-jre, failureaccess 1.0.2
                                  Apache-2.0, Copyright (C) The Guava Authors
   gson 2.11.0                    Apache-2.0, Copyright 2008 Google Inc.

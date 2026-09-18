@@ -14,6 +14,7 @@ import com.velocitypowered.api.proxy.messages.ChannelIdentifier;
 import com.velocitypowered.api.proxy.messages.PluginMessageEncoder;
 import com.velocitypowered.api.proxy.player.PlayerSettings;
 import com.velocitypowered.api.proxy.player.ResourcePackInfo;
+import com.velocitypowered.api.proxy.player.SkinParts;
 import com.velocitypowered.api.proxy.player.TabList;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.util.GameProfile;
@@ -52,7 +53,11 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public UUID getUniqueId() { return player.uniqueId(); }
   @Override public Identity identity() { return Identity.identity(player.uniqueId()); }
   @Override public boolean isOnlineMode() { return player.authenticated(); }
-  @Override public Tristate getPermissionValue(String permission) { return Tristate.fromBoolean(player.hasPermission(permission)); }
+  /** The function PermissionsSetupEvent gave this player, else Conduit's own yes or no. */
+  @Override public Tristate getPermissionValue(String permission) {
+    var function = environment.permissions.function(player);
+    return function != null ? function.getPermissionValue(permission) : Tristate.fromBoolean(player.hasPermission(permission));
+  }
   @Override public void deliver(Component message) { player.sendMessage(Texts.toConduit(message)); }
   @Override public void disconnect(Component reason) { player.disconnect(Texts.toConduit(reason)); }
 
@@ -94,8 +99,9 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public HandshakeIntent getHandshakeIntent() { throw Unsupported.api("Player.getHandshakeIntent"); }
   @Override public Locale getEffectiveLocale() { throw Unsupported.api("Player.getEffectiveLocale"); }
   @Override public void setEffectiveLocale(Locale locale) { throw Unsupported.api("Player.setEffectiveLocale"); }
-  @Override public PlayerSettings getPlayerSettings() { throw Unsupported.api("Player.getPlayerSettings"); }
-  @Override public boolean hasSentPlayerSettings() { throw Unsupported.api("Player.hasSentPlayerSettings"); }
+  /** Conduit's API does not carry the client's settings: these are the vanilla client's defaults, and say so. */
+  @Override public PlayerSettings getPlayerSettings() { return CLIENT_DEFAULTS; }
+  @Override public boolean hasSentPlayerSettings() { return false; }
   @Override public Optional<ModInfo> getModInfo() { throw Unsupported.api("Player.getModInfo"); }
   @Override public String getClientBrand() { throw Unsupported.api("Player.getClientBrand"); }
   @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
@@ -128,6 +134,18 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public void openBook(Book book) { throw Unsupported.api("Player.openBook"); }
   @Override public void showDialog(DialogLike dialog) { throw Unsupported.api("Player.showDialog"); }
   @Override public void closeDialog() { throw Unsupported.api("Player.closeDialog"); }
+
+  private static final PlayerSettings CLIENT_DEFAULTS = new PlayerSettings() {
+    @Override public Locale getLocale() { return Locale.US; }
+    @Override public byte getViewDistance() { return 12; }
+    @Override public ChatMode getChatMode() { return ChatMode.SHOWN; }
+    @Override public boolean hasChatColors() { return true; }
+    @Override public SkinParts getSkinParts() { return new SkinParts((byte) 0x7F); }
+    @Override public MainHand getMainHand() { return MainHand.RIGHT; }
+    @Override public boolean isClientListingAllowed() { return true; }
+    @Override public boolean isTextFilteringEnabled() { return false; }
+    @Override public ParticleStatus getParticleStatus() { return ParticleStatus.ALL; }
+  };
 
   @Override public boolean equals(Object other) { return other instanceof VelocityPlayer that && that.player == player; }
   @Override public int hashCode() { return System.identityHashCode(player); }

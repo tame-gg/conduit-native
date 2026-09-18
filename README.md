@@ -629,9 +629,14 @@ then go through the same lifecycle as native ones.
 
 ## Velocity compatibility
 
-**PARTIAL — verified with an in-repo plugin compiled against `com.velocitypowered:velocity-api`.**
+**PARTIAL — verified with in-repo plugins compiled against `com.velocitypowered:velocity-api`
+(`VelocityCompatTests`), and with real plugins run unmodified: LuckPerms 5.5.71, MiniMOTD 2.2.5,
+Maintenance 5.1.0, Server Redirect 1.4.3, mclo.gs 3.3.3 and velocity-hub 1.10-SNAPSHOT.** Each
+one's result and its remaining gaps are in `docs/VELOCITY_COMPATIBILITY.md`.
 
-Not verified with LuckPerms, ViaVersion, or other production Velocity plugins.
+This is not full Velocity compatibility. Plugins built around tab lists, boss bars, titles, resource
+packs, voice chat, Bedrock players, packet injection or Velocity's own network pipeline (ViaVersion
+and its relatives) are not expected to work.
 
 Architecture:
 
@@ -651,7 +656,7 @@ Fetch compile-time jars (never a Conduit core dependency):
 ./scripts/fetch-velocity-compat.ps1
 ```
 
-`./scripts/test.ps1` compiles core, then `src/compat-velocity` against `lib/*.jar` (includes `slf4j-jdk14`, so what plugins log through SLF4J reaches Conduit's `java.util.logging` loggers), then runs Phase9 which builds a real Velocity-API plugin and loads it.
+`./scripts/test.ps1` compiles core, then `src/compat-velocity` against `lib/*.jar` (includes `slf4j-jdk14`, so what plugins log through SLF4J reaches Conduit's `java.util.logging` loggers), then runs Phase9 and VelocityCompatTests, which build real Velocity-API plugins and load them.
 
 See `docs/VELOCITY_COMPATIBILITY.md` for the support matrix. Unsupported APIs throw; they are never faked.
 

@@ -36,6 +36,7 @@ final class VelocityEnvironment {
   final VelocityChannelRegistrar channels = new VelocityChannelRegistrar();
   final VelocityCommandHost commands = new VelocityCommandHost(this);
   final VelocitySchedulerHost scheduler = new VelocitySchedulerHost(this);
+  final VelocityPermissions permissions = new VelocityPermissions(this);
   final VelocityConsole console;
   final VelocityProxyServer proxy;
   /** Owns the adapter's one native listener; the adapter is not itself a plugin in /plugins. */
@@ -69,7 +70,10 @@ final class VelocityEnvironment {
     boolean joined = conduit.player(player.uniqueId()).filter(live -> live == player).isPresent();
     return joined ? players.computeIfAbsent(player, key -> new VelocityPlayer(this, key)) : new VelocityPlayer(this, player);
   }
-  void forget(gg.tame.conduit.api.player.Player player) { players.remove(player); }
+  void forget(gg.tame.conduit.api.player.Player player) {
+    players.remove(player);
+    permissions.forget(player);
+  }
 
   /** One wrapper per server name while its address stays the same, so plugins can compare them. */
   VelocityRegisteredServer server(gg.tame.conduit.api.server.RegisteredServer server) {

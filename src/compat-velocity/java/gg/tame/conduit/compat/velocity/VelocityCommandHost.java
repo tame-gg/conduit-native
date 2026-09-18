@@ -57,10 +57,23 @@ final class VelocityCommandHost implements CommandManager {
     Plugin owner = plugin == null ? environment.owner : plugin.handle;
     Registration registration = new Registration(meta, command, owner, plugin);
     List<String> done = new ArrayList<>();
+    List<String> untypeable = new ArrayList<>();
     try {
       for (String raw : meta.getAliases()) {
         String alias = raw.toLowerCase(Locale.ROOT);
-        if (byAlias.containsKey(alias)) throw new IllegalArgumentException("command alias already registered: " + alias);
+        // Velocity takes these (LuckPerms adds "/lpv" so that "//lpv" works); Conduit's command line
+        // strips one slash and splits on spaces, so no player could ever type them here.
+        if (alias.startsWith("/") || alias.chars().anyMatch(Character::isWhitespace)) {
+          untypeable.add(alias);
+          continue;
+        }
+        Registration existing = byAlias.get(alias);
+        if (existing != null) {
+          // A plugin may register its own alias again (mclo.gs registers each Brigadier subcommand
+          // under one meta), and the newer command replaces its older one. Anyone else's is refused.
+          if (existing.plugin == null || existing.plugin != plugin) throw new IllegalArgumentException("command alias already registered: " + alias);
+          forgetAlias(alias);
+        }
         environment.conduit.commands().register(owner, gg.tame.conduit.api.command.CommandManager.Command.builder(alias)
             .handler((source, arguments) -> run(registration, alias, source, arguments))
             .completer((source, arguments) -> suggest(registration, alias, source, arguments))
@@ -72,15 +85,14 @@ final class VelocityCommandHost implements CommandManager {
       for (String alias : done) forgetAlias(alias);
       throw rejected;
     }
+    if (!untypeable.isEmpty()) {
+      environment.log.info("Velocity command aliases " + untypeable + " cannot be typed on Conduit and were not registered");
+    }
   }
   /** The plugin in the meta; failing that, the plugin whose jar the command's code came from. */
   private VelocityPluginHost.Container owner(CommandMeta meta, Command command) {
     if (meta.getPlugin() != null) return environment.plugins.require(meta.getPlugin());
-    Object code = command instanceof BrigadierCommand brigadier ? executor(brigadier.getNode()) : command;
-    for (VelocityPluginHost.Container container : containers()) {
-      if (code != null && code.getClass().getClassLoader() == container.loader) return container;
-    }
-    return null;
+    return environment.plugins.owning(command instanceof BrigadierCommand brigadier ? executor(brigadier.getNode()) : command);
   }
   private static Object executor(CommandNode<CommandSource> node) {
     if (node.getCommand() != null) return node.getCommand();
@@ -89,11 +101,6 @@ final class VelocityCommandHost implements CommandManager {
       if (found != null) return found;
     }
     return null;
-  }
-  private List<VelocityPluginHost.Container> containers() {
-    List<VelocityPluginHost.Container> all = new ArrayList<>();
-    for (var container : environment.plugins.getPlugins()) all.add((VelocityPluginHost.Container) container);
-    return all;
   }
 
   @Override public synchronized void unregister(String alias) {

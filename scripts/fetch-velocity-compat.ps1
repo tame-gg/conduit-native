@@ -18,9 +18,11 @@ $artifacts = @(
   # The SLF4J binding: plugin and library logging goes to java.util.logging, where Conduit's plugin loggers are.
   @{ Url = "$central/org/slf4j/slf4j-jdk14/2.0.16/slf4j-jdk14-2.0.16.jar"; Name = "slf4j-jdk14-2.0.16.jar" },
   @{ Url = "$central/javax/inject/javax.inject/1/javax.inject-1.jar"; Name = "javax.inject-1.jar" },
-  # Guice for its annotations (@com.google.inject.Inject on real plugins); aopalliance is its dependency.
+  # Guice: its annotations (@com.google.inject.Inject on real plugins), and the Injector a plugin can
+  # ask for. aopalliance and jakarta.inject-api are the dependencies it needs at run time.
   @{ Url = "$central/com/google/inject/guice/6.0.0/guice-6.0.0.jar"; Name = "guice-6.0.0.jar" },
   @{ Url = "$central/aopalliance/aopalliance/1.0/aopalliance-1.0.jar"; Name = "aopalliance-1.0.jar" },
+  @{ Url = "$central/jakarta/inject/jakarta.inject-api/2.0.1/jakarta.inject-api-2.0.1.jar"; Name = "jakarta.inject-api-2.0.1.jar" },
   @{ Url = "$central/net/kyori/examination-api/1.3.0/examination-api-1.3.0.jar"; Name = "examination-api-1.3.0.jar" },
   @{ Url = "$central/net/kyori/examination-string/1.3.0/examination-string-1.3.0.jar"; Name = "examination-string-1.3.0.jar" },
   @{ Url = "$central/net/kyori/option/1.1.0/option-1.1.0.jar"; Name = "option-1.1.0.jar" },

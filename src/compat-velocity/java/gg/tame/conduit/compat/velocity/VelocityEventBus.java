@@ -11,12 +11,15 @@ import com.velocitypowered.api.event.connection.DisconnectEvent;
 import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.connection.PluginMessageEvent;
 import com.velocitypowered.api.event.connection.PostLoginEvent;
+import com.velocitypowered.api.event.permission.PermissionsSetupEvent;
+import com.velocitypowered.api.event.player.KickedFromServerEvent;
 import com.velocitypowered.api.event.player.PlayerChatEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.event.player.ServerConnectedEvent;
 import com.velocitypowered.api.event.player.ServerPostConnectEvent;
 import com.velocitypowered.api.event.player.ServerPreConnectEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.proxy.ProxyPingEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -46,7 +49,7 @@ final class VelocityEventBus implements EventManager {
   static final Set<Class<?>> FIRED = Set.of(ProxyInitializeEvent.class, ProxyShutdownEvent.class, LoginEvent.class,
       PostLoginEvent.class, DisconnectEvent.class, PlayerChooseInitialServerEvent.class, ServerPreConnectEvent.class,
       ServerConnectedEvent.class, ServerPostConnectEvent.class, CommandExecuteEvent.class, PluginMessageEvent.class,
-      PlayerChatEvent.class);
+      PlayerChatEvent.class, PermissionsSetupEvent.class, ProxyPingEvent.class, KickedFromServerEvent.class);
 
   private final VelocityEnvironment environment;
   private final CopyOnWriteArrayList<Handler> handlers = new CopyOnWriteArrayList<>();

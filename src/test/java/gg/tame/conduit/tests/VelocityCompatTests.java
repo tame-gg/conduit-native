@@ -8,6 +8,7 @@ import gg.tame.conduit.config.ForwardingMode;
 import gg.tame.conduit.config.HealthSettings;
 import gg.tame.conduit.config.OpsSettings;
 import gg.tame.conduit.config.SecuritySettings;
+import gg.tame.conduit.config.StatusSettings;
 import gg.tame.conduit.crypto.RsaKeys;
 import gg.tame.conduit.network.MinecraftProxy;
 import gg.tame.conduit.protocol.Handshake;
@@ -118,23 +119,29 @@ public final class VelocityCompatTests {
       import com.velocitypowered.api.event.connection.LoginEvent;
       import com.velocitypowered.api.event.connection.PluginMessageEvent;
       import com.velocitypowered.api.event.connection.PostLoginEvent;
+      import com.velocitypowered.api.event.permission.PermissionsSetupEvent;
+      import com.velocitypowered.api.event.player.KickedFromServerEvent;
       import com.velocitypowered.api.event.player.PlayerChatEvent;
       import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
       import com.velocitypowered.api.event.player.ServerConnectedEvent;
       import com.velocitypowered.api.event.player.ServerPreConnectEvent;
       import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
       import com.velocitypowered.api.event.proxy.ProxyPingEvent;
+      import com.velocitypowered.api.event.proxy.ProxyReloadEvent;
       import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
       import com.velocitypowered.api.plugin.Dependency;
       import com.velocitypowered.api.plugin.Plugin;
       import com.velocitypowered.api.plugin.PluginContainer;
       import com.velocitypowered.api.plugin.PluginDescription;
       import com.velocitypowered.api.plugin.annotation.DataDirectory;
+      import com.velocitypowered.api.permission.Tristate;
       import com.velocitypowered.api.proxy.Player;
       import com.velocitypowered.api.proxy.ProxyServer;
       import com.velocitypowered.api.proxy.ServerConnection;
       import com.velocitypowered.api.proxy.server.RegisteredServer;
       import com.velocitypowered.api.proxy.server.ServerInfo;
+      import com.velocitypowered.api.proxy.server.ServerPing;
+      import com.velocitypowered.api.util.Favicon;
       import java.net.InetSocketAddress;
       import com.velocitypowered.api.proxy.messages.MinecraftChannelIdentifier;
       import java.nio.charset.StandardCharsets;
@@ -143,6 +150,7 @@ public final class VelocityCompatTests {
       import java.util.concurrent.TimeUnit;
       import javax.inject.Inject;
       import net.kyori.adventure.text.Component;
+      import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
       import org.slf4j.Logger;
 
       @Plugin(id = "vtest", name = "VTest", version = "1.2.3", authors = {"conduit"}, dependencies = {@Dependency(id = "vlib")})
@@ -151,9 +159,10 @@ public final class VelocityCompatTests {
         private final ProxyServer proxy;
         private final Logger logger;
         @Inject private EventManager events;
+        @Inject private com.google.inject.Injector injector;
         @Inject private final com.velocitypowered.api.plugin.PluginManager pluginManager;
         private com.velocitypowered.api.scheduler.Scheduler scheduler;
-        @Inject void scheduler(com.velocitypowered.api.command.CommandManager commands, ProxyServer server) { this.scheduler = server.getScheduler(); }
+        @Inject void scheduler(com.velocitypowered.api.command.CommandManager commands, com.velocitypowered.api.scheduler.Scheduler injected) { this.scheduler = injected; }
 
         @Inject
         public VTest(ProxyServer proxy, Logger logger, @DataDirectory Path data, PluginContainer container, PluginDescription description,
@@ -171,7 +180,7 @@ public final class VelocityCompatTests {
           logger.info("vtest initializing");
           signal("init:" + (events == proxy.getEventManager()) + ":" + (pluginManager == proxy.getPluginManager()) + ":" + (scheduler == proxy.getScheduler()));
           CommandManager commands = proxy.getCommandManager();
-          commands.register(commands.metaBuilder("vtest").aliases("vt").plugin(this).build(), new Main());
+          commands.register(commands.metaBuilder("vtest").aliases("vt", "/vt").plugin(this).build(), new Main());
           commands.register(commands.metaBuilder("vraw").plugin(this).build(), (RawCommand) invocation ->
               invocation.source().sendMessage(Component.text("raw:" + invocation.alias() + ":" + invocation.arguments())));
           BrigadierCommand brigadier = new BrigadierCommand(BrigadierCommand.literalArgumentBuilder("vbrig")
@@ -181,6 +190,13 @@ public final class VelocityCompatTests {
                     return 1;
                   })));
           commands.register(commands.metaBuilder(brigadier).plugin(this).build(), brigadier);
+          // A plugin's own alias can be registered again, and the newer command wins; another plugin's cannot.
+          commands.register(commands.metaBuilder("vre").plugin(this).build(), (SimpleCommand) invocation -> invocation.source().sendMessage(Component.text("vre first")));
+          commands.register(commands.metaBuilder("vre").plugin(this).build(), (SimpleCommand) invocation -> invocation.source().sendMessage(Component.text("vre second")));
+          boolean taken = false;
+          try { commands.register(commands.metaBuilder("vlibstop").plugin(this).build(), (SimpleCommand) invocation -> { }); }
+          catch (IllegalArgumentException expected) { taken = true; }
+          signal("reregister:" + taken);
           events.register(this, new Listeners());
           events.register(this, DisconnectEvent.class, (short) 5, gone -> signal("functional-disconnect:" + gone.getPlayer().getUsername()));
           proxy.getScheduler().buildTask(this, () -> signal("task")).delay(500, TimeUnit.MILLISECONDS).schedule();
@@ -198,11 +214,27 @@ public final class VelocityCompatTests {
           var config = proxy.getConfiguration();
           signal("config:" + config.isOnlineMode() + ":" + config.getAttemptConnectionOrder() + ":" + config.getServers().size()
               + ":" + proxy.getVersion().getName() + ":" + (proxy.getBoundAddress().getPort() > 0));
+          signal("serverlist:" + config.getShowMaxPlayers() + ":" + plain(config.getMotd()) + ":" + config.getFavicon().map(Favicon::getBase64Url).orElse("none"));
           signal("tasks:" + proxy.getScheduler().tasksByPlugin(this).size());
           proxy.getPluginManager().getPlugin("vtest").orElseThrow().getExecutorService().execute(() -> signal("executor"));
           signal("classpath:" + extendClasspath());
           signal("plugins:" + proxy.getPluginManager().isLoaded("vlib") + ":" + proxy.getPluginManager().fromInstance(this).isPresent()
               + ":" + commands.hasCommand("vt") + ":" + commands.hasCommand("server"));
+          // Guice: the injector holds what Conduit injects, and a child adds the plugin's own bindings.
+          com.google.inject.Injector child = injector.createChildInjector(binder ->
+              binder.bind(String.class).annotatedWith(com.google.inject.name.Names.named("greeting")).toInstance("hi"));
+          Greeter greeter = child.getInstance(Greeter.class);
+          signal("guice:" + (injector.getInstance(ProxyServer.class) == proxy) + ":" + (greeter.proxy == proxy) + ":" + greeter.greeting
+              + ":" + greeter.data.getFileName() + ":" + (greeter.scheduler == proxy.getScheduler())
+              + ":" + (injector.getInstance(PluginContainer.class) == proxy.getPluginManager().fromInstance(this).orElseThrow()));
+        }
+
+        public static final class Greeter {
+          final ProxyServer proxy; final String greeting; final Path data; final com.velocitypowered.api.scheduler.Scheduler scheduler;
+          @com.google.inject.Inject Greeter(ProxyServer proxy, @com.google.inject.name.Named("greeting") String greeting, @DataDirectory Path data,
+                                           com.velocitypowered.api.scheduler.Scheduler scheduler, Logger logger) {
+            this.proxy = proxy; this.greeting = greeting; this.data = data; this.scheduler = scheduler;
+          }
         }
 
         /** Shaped like the bStats factory nearly every plugin bundles: a class of the plugin's own, built by injection. */
@@ -213,6 +245,10 @@ public final class VelocityCompatTests {
             @Inject private Factory(ProxyServer proxy, Logger logger, @DataDirectory Path data) { this.proxy = proxy; this.data = data; }
           }
         }
+
+        static String plain(Component component) { return PlainTextComponentSerializer.plainText().serialize(component); }
+        /** The last server-list connection, for the internals check. */
+        static volatile com.velocitypowered.api.proxy.InboundConnection pinged;
 
         @Subscribe
         public void onShutdown(ProxyShutdownEvent event) { signal("shutdown"); }
@@ -245,6 +281,24 @@ public final class VelocityCompatTests {
               }
               case "send" -> player.createConnectionRequest(proxy.getServer(args[1]).orElseThrow()).connect()
                   .thenAccept(result -> signal("switch:" + result.getStatus()));
+              case "refused" -> {
+                RegisteredServer refuser = proxy.registerServer(new ServerInfo("refuser",
+                    new InetSocketAddress("127.0.0.1", Integer.getInteger("velocity.test.refuser"))));
+                player.createConnectionRequest(refuser).connect().thenAccept(result -> {
+                  proxy.unregisterServer(refuser.getServerInfo());
+                  signal("refused:" + result.getStatus());
+                });
+              }
+              case "ping" -> {
+                proxy.getServer("lobby").orElseThrow().ping().whenComplete((ping, failed) -> signal("backend-ping:" + (failed != null ? failed
+                    : ping.getVersion().getProtocol() + ":" + ping.getVersion().getName() + ":" + ping.getPlayers().map(p -> p.getOnline() + "/" + p.getMax()).orElse("-")
+                    + ":" + Thread.currentThread().getName().startsWith("conduit-velocity-"))));
+                RegisteredServer dead = proxy.registerServer(new ServerInfo("deadping", new InetSocketAddress("127.0.0.1", 1)));
+                dead.ping().whenComplete((ping, failed) -> {
+                  proxy.unregisterServer(dead.getServerInfo());
+                  signal("dead-ping:" + (failed != null));
+                });
+              }
               case "msg" -> {
                 player.sendPluginMessage(CHANNEL, "to-client".getBytes(StandardCharsets.UTF_8));
                 signal("sent-to-server:" + player.getCurrentServer().orElseThrow().sendPluginMessage(CHANNEL, "to-server".getBytes(StandardCharsets.UTF_8)));
@@ -262,6 +316,8 @@ public final class VelocityCompatTests {
                 }
               }
               case "internals" -> source.sendMessage(Component.text(internals()));
+              case "perms" -> signal("perms:" + player.getUsername() + ":" + player.hasPermission("vtest.use") + ":"
+                  + player.getPermissionValue("undefined.node") + ":" + player.getPermissionValue("other.node"));
               case "cached" -> {
                 // White-box, for the test only: how many Player wrappers the adapter is holding on to.
                 try {
@@ -318,7 +374,7 @@ public final class VelocityCompatTests {
           Player anyPlayer = proxy.getAllPlayers().iterator().next();
           Object[] exposed = {proxy, proxy.getCommandManager(), proxy.getEventManager(), proxy.getScheduler(), proxy.getPluginManager(),
               proxy.getChannelRegistrar(), proxy.getConsoleCommandSource(), proxy.getConfiguration(), anyPlayer,
-              anyPlayer.getCurrentServer().orElseThrow(), anyPlayer.getCurrentServer().orElseThrow().getServer()};
+              anyPlayer.getCurrentServer().orElseThrow(), anyPlayer.getCurrentServer().orElseThrow().getServer(), pinged};
           // Declared methods, class by class: getMethods() would also resolve every Velocity API
           // signature, some of which name Adventure classes this class path does not have.
           for (Object object : exposed) {
@@ -346,8 +402,22 @@ public final class VelocityCompatTests {
         }
 
         public final class Listeners {
+          /** Erin's permissions are the plugin's: vtest.* yes, undefined.node undefined, anything else no. */
+          @Subscribe public void permissions(PermissionsSetupEvent event) {
+            if (!(event.getSubject() instanceof Player player)) return;
+            signal("permsetup:" + player.getUsername() + ":" + (event.createFunction(player).getPermissionValue("any") == Tristate.TRUE));
+            if (!player.getUsername().equals("Erin")) return;
+            event.setProvider(subject -> permission -> {
+              if (permission.equals("nside.secret")) signal("perm-thread:" + Thread.currentThread().getName().startsWith("conduit-velocity-"));
+              if (permission.startsWith("vtest.")) return Tristate.TRUE;
+              return permission.equals("undefined.node") ? Tristate.UNDEFINED : Tristate.FALSE;
+            });
+          }
           @Subscribe public void login(LoginEvent event) {
             signal("login:" + event.getPlayer().getUsername());
+            if (event.getPlayer().getUsername().equals("Erin")) {
+              signal("login-perm:" + event.getPlayer().hasPermission("vtest.x") + ":" + event.getPlayer().hasPermission("other"));
+            }
             if (event.getPlayer().getUsername().equals("Denied")) event.setResult(ResultedEvent.ComponentResult.denied(Component.text("no entry")));
           }
           @Subscribe(priority = 100) public EventTask postLoginFirst(PostLoginEvent event) {
@@ -388,8 +458,32 @@ public final class VelocityCompatTests {
           @Subscribe public void disconnect(DisconnectEvent event) {
             signal("disconnect:" + event.getPlayer().getUsername() + ":" + event.getLoginStatus());
           }
+          /** The server list: rewritten for localhost, refused for deny.example. */
+          @Subscribe public void ping(ProxyPingEvent event) {
+            pinged = event.getConnection();
+            String host = event.getConnection().getRawVirtualHost().orElse("?");
+            ServerPing offered = event.getPing();
+            signal("ping:" + host + ":" + event.getConnection().getProtocolVersion().getProtocol() + ":"
+                + offered.getPlayers().map(p -> p.getOnline() + "/" + p.getMax()).orElse("-") + ":" + plain(offered.getDescriptionComponent())
+                + ":" + offered.getFavicon().isPresent());
+            if (host.equals("deny.example")) {
+              event.setResult(ResultedEvent.GenericResult.denied());
+              return;
+            }
+            event.setPing(offered.asBuilder().description(Component.text("velocity motd")).maximumPlayers(42)
+                .samplePlayers(new ServerPing.SamplePlayer("Sampled", new java.util.UUID(0, 7))).build());
+          }
+          /** Kicked from the server they play on: sent to the other one instead, with a message. */
+          @Subscribe public void kicked(KickedFromServerEvent event) {
+            String server = event.getServer().getServerInfo().getName();
+            signal("kicked:" + server + ":" + event.getServerKickReason().map(VTest::plain).orElse("none") + ":"
+                + event.kickedDuringServerConnect() + ":" + event.getResult().getClass().getSimpleName());
+            if (event.kickedDuringServerConnect()) return;
+            event.setResult(KickedFromServerEvent.RedirectPlayer.create(proxy.getServer(server.equals("lobby") ? "survival" : "lobby").orElseThrow(),
+                Component.text("redirected by vtest")));
+          }
           /** Conduit never fires this; registering it must say so. */
-          @Subscribe public void ping(ProxyPingEvent event) { signal("ping"); }
+          @Subscribe public void reload(ProxyReloadEvent event) { signal("reload"); }
         }
       }
       """;
@@ -401,6 +495,7 @@ public final class VelocityCompatTests {
       public final class NsidePlugin extends ConduitPlugin {
         @Override public void onEnable() {
           proxy().commands().register(this, CommandManager.Command.builder("nside").handler((source, arguments) -> source.sendMessage("native ok")).build());
+          proxy().commands().register(this, CommandManager.Command.builder("nsecret").permission("nside.secret").handler((source, arguments) -> source.sendMessage("secret ok")).build());
         }
       }
       """;
@@ -428,9 +523,11 @@ public final class VelocityCompatTests {
 
     Queue<String> backends = new ConcurrentLinkedQueue<>();
     List<Socket> open = new CopyOnWriteArrayList<>();
-    try (ServerSocket lobby = new ServerSocket(0); ServerSocket survival = new ServerSocket(0)) {
+    try (ServerSocket lobby = new ServerSocket(0); ServerSocket survival = new ServerSocket(0); ServerSocket refuser = new ServerSocket(0)) {
       startBackend(lobby, "lobby", backends, open);
       startBackend(survival, "survival", backends, open);
+      startRefuser(refuser, open);
+      System.setProperty("velocity.test.refuser", Integer.toString(refuser.getLocalPort()));
       ConduitConfiguration configuration = configuration(List.of(
           new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort())),
           new BackendServer("survival", new InetSocketAddress("127.0.0.1", survival.getLocalPort()))));
@@ -440,11 +537,13 @@ public final class VelocityCompatTests {
         // Loading and initialization.
         awaitSignal("init:true:true:true");
         awaitSignal("plugins:true:true:true:true");
-        for (String expected : List.of("register:true:true:false", "config:false:[lobby]:2:Conduit:true", "tasks:2", "classpath:true")) {
+        for (String expected : List.of("reregister:true", "register:true:true:false", "config:false:[lobby]:2:Conduit:true", "tasks:2", "classpath:true",
+            "serverlist:77:conduit motd:" + FAVICON)) {
           require(signals.contains(expected), expected + " in " + signals);
         }
         awaitSignal("executor");
         require(signals.contains("metrics:true:true"), "a plugin class with an @Inject constructor is built and injected: " + signals);
+        awaitSignal("guice:true:true:hi:vtest:true:true");
         require(before("vlib-constructed", "constructed:1.2.3:vtest:vtest:plugins"), "dependency constructed first, injection complete: " + signals);
         require(signals.contains("servers:[lobby, survival]"), "registered servers listed: " + signals);
         require(signals.contains("lookup:true:false:1"), "server lookup and matching: " + signals);
@@ -452,8 +551,18 @@ public final class VelocityCompatTests {
         
         var vtest = proxy.runtime().plugins().plugin("vtest").orElseThrow(() -> new AssertionError("vtest is a Conduit plugin"));
         require(proxy.runtime().plugins().plugin("nside").isPresent(), "a native plugin loads beside Velocity plugins");
-        require(logged.stream().anyMatch(line -> line.startsWith("velocity: ") && line.contains("ProxyPingEvent") && line.contains("never fires")),
+        require(logged.stream().anyMatch(line -> line.startsWith("velocity: ") && line.contains("ProxyReloadEvent") && line.contains("never fires")),
             "a listener for an event Conduit never fires is reported: " + logged);
+        require(logged.stream().noneMatch(line -> line.contains("ProxyPingEvent") && line.contains("never fires")), "ProxyPingEvent is fired: " + logged);
+
+        // ProxyPingEvent: the plugin's ServerPing is the answer; a denied one is no answer at all.
+        String answer = statusPing(proxy.port(), "localhost");
+        awaitSignal("ping:localhost:47:0/77:conduit motd:true");
+        require(answer != null && answer.contains("velocity motd") && answer.contains("\"max\":42") && answer.contains("\"name\":\"Sampled\"")
+            && answer.contains(FAVICON), "the server list shows the plugin's answer: " + answer);
+        require(statusPing(proxy.port(), "deny.example") == null, "a denied ping is not answered");
+        awaitSignal("ping:deny.example:47:0/77:conduit motd:true");
+        require(logged.stream().anyMatch(line -> line.contains("[/vt] cannot be typed")), "an alias no player could type is skipped: " + logged);
         require(logged.contains("plugin.vtest: vtest initializing") && logged.contains("plugin.vlib: vlib component log"),
             "an injected slf4j Logger and ComponentLogger write to the plugin's Conduit logger: " + logged);
 
@@ -481,6 +590,9 @@ public final class VelocityCompatTests {
           alice.awaitText("hello Alice via vtest");
           alice.chat("/vt whoami");
           alice.awaitText("found Alice on lobby same=true proto=47 count=1 match=1 there=1 addr=127.0.0.1 host=localhost profile=Alice active=true perm=true state=PLAY online=false");
+          alice.chat("/vre");
+          alice.awaitText("vre second");
+          require(!alice.saw(frame -> text(frame).contains("vre first")), "the replaced command is gone");
           alice.chat("/vraw a b");
           alice.awaitText("raw:vraw:a b");
           alice.chat("/vbrig 5");
@@ -532,6 +644,24 @@ public final class VelocityCompatTests {
           alice.chat("/vtest rich");
           alice.await(frame -> text(frame).contains("rich") && text(frame).contains("red") && text(frame).contains("bold"), "a MiniMessage rich message, formatting kept");
 
+          // PermissionsSetupEvent: before LoginEvent, and the plugin's function answers for Erin
+          // everywhere, Conduit's own command permission included. Alice keeps Conduit's default.
+          awaitSignal("permsetup:Alice:true");
+          Client erin = Client.join(proxy.port(), "Erin");
+          erin.await(frame -> frame[0] == 0x01, "Erin's Join Game");
+          require(before("permsetup:Erin:true", "login:Erin") && signals.contains("login-perm:true:false"),
+              "permissions are set up before LoginEvent: " + signals);
+          erin.chat("/vtest perms");
+          awaitSignal("perms:Erin:true:UNDEFINED:FALSE");
+          alice.chat("/vtest perms");
+          awaitSignal("perms:Alice:true:TRUE:TRUE");
+          erin.chat("/nsecret");
+          erin.awaitText("permission");
+          awaitSignal("perm-thread:true");
+          alice.chat("/nsecret");
+          alice.awaitText("secret ok");
+          require(!erin.saw(frame -> text(frame).contains("secret ok")), "Erin's function refused a native command");
+
           // Scheduler.
           awaitSignal("task");
           awaitCount("tick", 2);
@@ -546,6 +676,25 @@ public final class VelocityCompatTests {
           require(proxy.runtime().player("Alice").orElseThrow().currentServer().name().equals("survival"), "Alice is on survival");
           alice.chat("/vtest send survival");
           awaitSignal("switch:ALREADY_CONNECTED");
+
+          // KickedFromServerEvent. A refused switch: Conduit's Notify, left alone, keeps Alice where she is.
+          alice.chat("/vtest refused");
+          awaitSignal("kicked:refuser:refuser says no:true:Notify");
+          awaitSignal("refused:SERVER_DISCONNECTED");
+          alice.awaitText("refuser says no");
+          // Kicked while playing: the plugin's redirect moves her, with its message.
+          alice.chat("kickme");
+          awaitSignal("kicked:survival:backend says bye:false:DisconnectPlayer");
+          awaitIn(backends, "lobby:login:Alice", 2);
+          alice.awaitText("redirected by vtest");
+          require(!alice.saw(frame -> frame[0] == 0x40), "the redirected player was not disconnected");
+          require(proxy.runtime().player("Alice").orElseThrow().currentServer().name().equals("lobby"), "Alice was redirected to lobby");
+          alice.chat("/vtest send survival");
+          awaitCount("switch:SUCCESS", 2);
+          // RegisteredServer.ping asks the backend; one that does not answer fails the future.
+          alice.chat("/vtest ping");
+          awaitSignal("backend-ping:47:Backend 1.8:3/20:true");
+          awaitSignal("dead-ping:true");
 
           // ServerPreConnectEvent redirects Carol's first connection.
           try (Client carol = Client.join(proxy.port(), "Carol")) {
@@ -577,12 +726,17 @@ public final class VelocityCompatTests {
           int ticks = count("tick");
           Thread.sleep(400);
           require(count("tick") <= ticks + 1, "repeating task stopped");
+          // Its permission function went with it: Erin is back on Conduit's default.
+          erin.chat("/nsecret");
+          erin.awaitText("secret ok");
+          erin.close();
           alice.chat("/vtest hello");
           awaitIn(backends, "survival:chat:/vtest hello");
+          int connected = count("connected:lobby:survival");
           alice.chat("/server lobby");
-          awaitIn(backends, "lobby:login:Alice", 2);
+          awaitIn(backends, "lobby:login:Alice", 3);
           Thread.sleep(300);
-          require(!signals.contains("connected:lobby:survival"), "listeners released: " + signals);
+          require(count("connected:lobby:survival") == connected, "listeners released: " + signals);
           require(proxy.runtime().plugins().plugin("vlib").isPresent(), "the dependency stays");
 
           // ProxyServer.shutdown stops the real proxy: serve() returns and the remaining plugin gets its ProxyShutdownEvent.
@@ -698,7 +852,39 @@ public final class VelocityCompatTests {
 
   // ---------------------------------------------------------------- scripted sessions
 
-  /** A 1.8 backend: logs the player in, records their chat and plugin messages, answers "to-server". */
+  static final String FAVICON = "data:image/png;base64,iVBORw0KGgo=";
+
+  /** A status request to the proxy: the JSON answer, or null when the proxy closed without one. */
+  private static String statusPing(int port, String host) throws IOException {
+    try (Socket socket = new Socket("127.0.0.1", port)) {
+      socket.setSoTimeout(10_000);
+      MinecraftFrames.write(socket.getOutputStream(), new Handshake(47, host, port, 1).encode());
+      MinecraftFrames.write(socket.getOutputStream(), new byte[] {0x00});
+      byte[] response;
+      try { response = MinecraftFrames.read(socket.getInputStream(), 1 << 16); }
+      catch (java.io.EOFException | java.net.SocketException closed) { return null; }
+      return MinecraftInput.string(new DataInputStream(new ByteArrayInputStream(response, 1, response.length - 1)), 1 << 16);
+    }
+  }
+
+  /** A 1.8 backend that refuses every login with "refuser says no". */
+  private static void startRefuser(ServerSocket listener, List<Socket> open) {
+    platform("backend-refuser", () -> {
+      while (!listener.isClosed()) {
+        try (Socket socket = listener.accept()) {
+          open.add(socket);
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.write(socket.getOutputStream(), packet(0x00, "{\"text\":\"refuser says no\"}"));
+        } catch (IOException ended) { }
+      }
+    });
+  }
+
+  /**
+   * A 1.8 backend: answers status requests, logs the player in, records their chat and plugin
+   * messages, answers "to-server", and kicks a player who says "kickme".
+   */
   private static void startBackend(ServerSocket listener, String name, Queue<String> saw, List<Socket> open) {
     platform("backend-" + name, () -> {
       while (!listener.isClosed()) {
@@ -709,7 +895,12 @@ public final class VelocityCompatTests {
           try (socket) {
             var in = socket.getInputStream();
             var out = socket.getOutputStream();
-            MinecraftFrames.read(in, 4096);
+            if (Handshake.decode(MinecraftFrames.read(in, 4096)).nextState() == 1) {
+              MinecraftFrames.read(in, 4096);
+              MinecraftFrames.write(out, packet(0x00, "{\"version\":{\"name\":\"Backend 1.8\",\"protocol\":47},"
+                  + "\"players\":{\"max\":20,\"online\":3},\"description\":{\"text\":\"backend motd\"}}"));
+              return;
+            }
             byte[] loginStart = MinecraftFrames.read(in, 4096);
             String player = MinecraftInput.string(new DataInputStream(new ByteArrayInputStream(loginStart, 1, loginStart.length - 1)), 16);
             saw.add(name + ":login:" + player);
@@ -728,7 +919,11 @@ public final class VelocityCompatTests {
             while (true) {
               byte[] frame = MinecraftFrames.read(in, 1 << 16);
               byte[] body = Arrays.copyOfRange(frame, 1, frame.length);
-              if (frame[0] == 0x01) saw.add(name + ":chat:" + MinecraftInput.string(new DataInputStream(new ByteArrayInputStream(body)), 256));
+              if (frame[0] == 0x01) {
+                String chat = MinecraftInput.string(new DataInputStream(new ByteArrayInputStream(body)), 256);
+                saw.add(name + ":chat:" + chat);
+                if (chat.equals("kickme")) synchronized (out) { MinecraftFrames.write(out, packet(0x40, "{\"text\":\"backend says bye\"}")); }
+              }
               if (frame[0] == 0x17) {
                 PluginMessage message = PluginMessage.decodeBody(body, 1 << 16);
                 String data = new String(message.data(), StandardCharsets.UTF_8);
@@ -831,7 +1026,8 @@ public final class VelocityCompatTests {
 
   static ConduitConfiguration configuration(List<BackendServer> backends) throws IOException {
     OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, new HealthSettings(false, 10_000, 1_500, 3, 2),
-        null, null, SecuritySettings.defaults(), null, null);
+        null, null, SecuritySettings.defaults(), null, null,
+        new StatusSettings(gg.tame.conduit.api.text.Text.of("conduit motd"), 77, Optional.of(FAVICON)));
     int port;
     try (ServerSocket probe = new ServerSocket(0)) { port = probe.getLocalPort(); }
     return new ConduitConfiguration(new InetSocketAddress("127.0.0.1", port), 1 << 16, ForwardingMode.NONE, Optional.empty(),

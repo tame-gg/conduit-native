@@ -7,10 +7,12 @@ import com.velocitypowered.api.proxy.server.PingOptions;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
 import com.velocitypowered.api.proxy.server.ServerPing;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import net.kyori.adventure.text.Component;
 
 /** A backend registered with Conduit. Equal to another wrapper of the same name and address. */
@@ -31,8 +33,23 @@ final class VelocityRegisteredServer implements RegisteredServer, Unsupported.Ch
     for (var player : server.players()) players.add(environment.player(player));
     return List.copyOf(players);
   }
-  @Override public CompletableFuture<ServerPing> ping() { throw Unsupported.api("RegisteredServer.ping"); }
-  @Override public CompletableFuture<ServerPing> ping(PingOptions options) { throw Unsupported.api("RegisteredServer.ping"); }
+  /**
+   * Conduit's own status probe of the backend: its version and player counts. The probe does not
+   * keep the backend's MOTD, icon or player sample, so the description is empty and there is none.
+   * A backend that does not answer fails the future, and callbacks run on the adapter's threads.
+   */
+  @Override public CompletableFuture<ServerPing> ping() {
+    return server.ping().thenApplyAsync(status -> {
+      if (!status.online()) throw new CompletionException(new IOException("server " + info.getName() + " did not answer the ping"));
+      return new ServerPing(new ServerPing.Version(status.protocol().orElse(-1), status.versionName()),
+          new ServerPing.Players(status.onlinePlayers().orElse(0), status.maxPlayers().orElse(0), List.of()), Component.empty(), null);
+    }, environment.work);
+  }
+  /** Conduit's probe takes no options: only the defaults can be honoured. */
+  @Override public CompletableFuture<ServerPing> ping(PingOptions options) {
+    if (!PingOptions.DEFAULT.equals(options)) throw Unsupported.api("RegisteredServer.ping(PingOptions) with options other than the defaults");
+    return ping();
+  }
   /** Through a player on the server, as there is no other connection to it; false with nobody there. */
   @Override public boolean sendPluginMessage(ChannelIdentifier identifier, byte[] data) {
     return server.sendPluginMessage(identifier.getId(), data.clone());
