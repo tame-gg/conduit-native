@@ -42,6 +42,8 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   volatile VelocityRegisteredServer previousServer;
   /** Whether Conduit reported this player logged in, for DisconnectEvent's login status. */
   volatile boolean loggedIn;
+  /** A plugin's setEffectiveLocale; null leaves the client's own. */
+  private volatile Locale effectiveLocale;
 
   VelocityPlayer(VelocityEnvironment environment, gg.tame.conduit.api.player.Player player) {
     this.environment = environment;
@@ -97,11 +99,15 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
 
   // Not tracked by Conduit's API.
   @Override public HandshakeIntent getHandshakeIntent() { throw Unsupported.api("Player.getHandshakeIntent"); }
-  @Override public Locale getEffectiveLocale() { throw Unsupported.api("Player.getEffectiveLocale"); }
-  @Override public void setEffectiveLocale(Locale locale) { throw Unsupported.api("Player.setEffectiveLocale"); }
-  /** Conduit's API does not carry the client's settings: these are the vanilla client's defaults, and say so. */
-  @Override public PlayerSettings getPlayerSettings() { return CLIENT_DEFAULTS; }
-  @Override public boolean hasSentPlayerSettings() { return false; }
+  /** What a plugin set, or else the client's own language; null until the client has sent its settings. */
+  @Override public Locale getEffectiveLocale() { return effectiveLocale != null ? effectiveLocale : player.locale().orElse(null); }
+  @Override public void setEffectiveLocale(Locale locale) { effectiveLocale = locale; }
+  /**
+   * The client's language once it has sent its settings. Conduit's API carries nothing else from them,
+   * so the rest are the vanilla client's defaults.
+   */
+  @Override public PlayerSettings getPlayerSettings() { return new Settings(player.locale().orElse(Locale.US)); }
+  @Override public boolean hasSentPlayerSettings() { return player.locale().isPresent(); }
   @Override public Optional<ModInfo> getModInfo() { throw Unsupported.api("Player.getModInfo"); }
   @Override public String getClientBrand() { throw Unsupported.api("Player.getClientBrand"); }
   @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
@@ -135,8 +141,7 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public void showDialog(DialogLike dialog) { throw Unsupported.api("Player.showDialog"); }
   @Override public void closeDialog() { throw Unsupported.api("Player.closeDialog"); }
 
-  private static final PlayerSettings CLIENT_DEFAULTS = new PlayerSettings() {
-    @Override public Locale getLocale() { return Locale.US; }
+  private record Settings(Locale getLocale) implements PlayerSettings {
     @Override public byte getViewDistance() { return 12; }
     @Override public ChatMode getChatMode() { return ChatMode.SHOWN; }
     @Override public boolean hasChatColors() { return true; }
@@ -145,7 +150,7 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
     @Override public boolean isClientListingAllowed() { return true; }
     @Override public boolean isTextFilteringEnabled() { return false; }
     @Override public ParticleStatus getParticleStatus() { return ParticleStatus.ALL; }
-  };
+  }
 
   @Override public boolean equals(Object other) { return other instanceof VelocityPlayer that && that.player == player; }
   @Override public int hashCode() { return System.identityHashCode(player); }

@@ -1166,6 +1166,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     ProtocolTrace.note("client login acknowledged; via state " + via.stateDescription());
   }
 
+  /** The first field of Client Information in every version is the client's language, as "en_us". */
+  @Override public java.util.Optional<java.util.Locale> locale() {
+    byte[] information = clientInformation;
+    if (information == null) return java.util.Optional.empty();
+    try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(information))) {
+      String tag = gg.tame.conduit.protocol.MinecraftInput.string(input, 64);
+      return tag.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(java.util.Locale.forLanguageTag(tag.replace('_', '-')));
+    } catch (IOException | RuntimeException unreadable) {
+      return java.util.Optional.empty();
+    }
+  }
   /** Caches Client Information from either state; the packet is still forwarded normally. */
   private void rememberClientInformation(byte[] packet, int id) throws IOException {
     ConnectionState state = clientState.state();

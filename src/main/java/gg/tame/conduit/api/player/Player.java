@@ -27,6 +27,11 @@ public interface Player extends CommandSource {
   InetAddress remoteAddress();
   /** Host and port the client says it dialled, from its handshake, unresolved. Forge markers are removed. */
   InetSocketAddress virtualHost();
+  /**
+   * The language the client says it uses (its "en_us" as {@code en-US}), from the settings it sends
+   * once it is in the game and whenever the player changes them. Empty until it has sent them.
+   */
+  default java.util.Optional<java.util.Locale> locale() { return java.util.Optional.empty(); }
   void sendMessage(String message);
   default void sendMessage(Text text) {
     sendMessage(text == null ? "" : text.plain());

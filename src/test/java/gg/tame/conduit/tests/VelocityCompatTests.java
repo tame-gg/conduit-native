@@ -316,6 +316,8 @@ public final class VelocityCompatTests {
                 }
               }
               case "internals" -> source.sendMessage(Component.text(internals()));
+              case "locale" -> signal("locale:" + player.getUsername() + ":" + player.getPlayerSettings().getLocale() + ":"
+                  + player.hasSentPlayerSettings() + ":" + player.getEffectiveLocale());
               case "perms" -> signal("perms:" + player.getUsername() + ":" + player.hasPermission("vtest.use") + ":"
                   + player.getPermissionValue("undefined.node") + ":" + player.getPermissionValue("other.node"));
               case "cached" -> {
@@ -653,6 +655,12 @@ public final class VelocityCompatTests {
               "permissions are set up before LoginEvent: " + signals);
           erin.chat("/vtest perms");
           awaitSignal("perms:Erin:true:UNDEFINED:FALSE");
+          // The client's language reaches getPlayerSettings and getEffectiveLocale once it sends its settings.
+          erin.chat("/vtest locale");
+          awaitSignal("locale:Erin:en_US:false:null");
+          erin.send(clientSettings("de_de"));
+          erin.chat("/vtest locale");
+          awaitSignal("locale:Erin:de_DE:true:de_DE");
           alice.chat("/vtest perms");
           awaitSignal("perms:Alice:true:TRUE:TRUE");
           erin.chat("/nsecret");
@@ -998,6 +1006,16 @@ public final class VelocityCompatTests {
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, id);
       for (String value : strings) MinecraftOutput.string(output, value);
+    }
+    return bytes.toByteArray();
+  }
+  /** 1.8 Client Settings: language, view distance, chat mode, chat colours, skin parts. */
+  private static byte[] clientSettings(String language) throws IOException {
+    ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+    try (DataOutputStream output = new DataOutputStream(bytes)) {
+      MinecraftOutput.varInt(output, 0x15);
+      MinecraftOutput.string(output, language);
+      output.writeByte(8); output.writeByte(0); output.writeBoolean(true); output.writeByte(0x7F);
     }
     return bytes.toByteArray();
   }

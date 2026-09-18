@@ -111,6 +111,7 @@ public final class NativeApiTests {
     aKickListenerCanRedirectThePlayer();
     aRefusedSwitchKeepsThePlayerAndTellsThem();
     aRefusedFirstServerMovesOnAndExplains();
+    theClientsLanguageIsKnownOnceItSendsItsSettings();
     System.out.println("NativeApiTests OK");
   }
 
@@ -778,6 +779,24 @@ public final class NativeApiTests {
       require(left.stream().anyMatch(event -> event.player().username().equals("walker") && event.completedLogin())
           && left.stream().anyMatch(event -> event.player().username().equals("turned-away") && !event.completedLogin()),
           "one who joined and one who never did, got " + left);
+    }
+  }
+
+  /** Nothing of the client's settings reached the API, so a plugin localising messages always had English. */
+  private static void theClientsLanguageIsKnownOnceItSendsItsSettings() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Fixture proxy = new Fixture(List.of(lobby), List.of("lobby"), List.of("lobby"))) {
+      try (Client client = Client.join(proxy.port(), "linguist")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
+        Player player = proxy.runtime.player("linguist").orElseThrow();
+        require(player.locale().isEmpty(), "no language before the client says");
+        // 1.8 Client Settings: language, view distance, chat mode, chat colours, skin parts.
+        client.send(packet(P47.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION), output -> {
+          MinecraftOutput.string(output, "de_de");
+          output.writeByte(8); output.writeByte(0); output.writeBoolean(true); output.writeByte(0x7F);
+        }));
+        require(waitFor(() -> player.locale().isPresent(), 5_000), "the language once the client sends its settings");
+        require(player.locale().orElseThrow().equals(java.util.Locale.GERMANY), "de_de as de-DE, got " + player.locale());
+      }
     }
   }
 
