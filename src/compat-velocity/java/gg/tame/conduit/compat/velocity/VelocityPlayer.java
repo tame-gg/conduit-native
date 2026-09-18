@@ -21,6 +21,7 @@ import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.util.GameProfile;
 import com.velocitypowered.api.util.ModInfo;
 import com.velocitypowered.api.util.ServerLink;
+import gg.tame.conduit.api.player.ClientSettings;
 import java.net.InetSocketAddress;
 import java.util.Collection;
 import java.util.List;
@@ -109,12 +110,9 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   /** What a plugin set, or else the client's own language; null until the client has sent its settings. */
   @Override public Locale getEffectiveLocale() { return effectiveLocale != null ? effectiveLocale : player.locale().orElse(null); }
   @Override public void setEffectiveLocale(Locale locale) { effectiveLocale = locale; }
-  /**
-   * The client's language once it has sent its settings. Conduit's API carries nothing else from them,
-   * so the rest are the vanilla client's defaults.
-   */
-  @Override public PlayerSettings getPlayerSettings() { return new Settings(player.locale().orElse(Locale.US)); }
-  @Override public boolean hasSentPlayerSettings() { return player.locale().isPresent(); }
+  /** The settings the client last sent, as its release has them; the vanilla client's defaults before it has. */
+  @Override public PlayerSettings getPlayerSettings() { return new Settings(player.settings().orElse(ClientSettings.defaults())); }
+  @Override public boolean hasSentPlayerSettings() { return player.settings().isPresent(); }
   @Override public Optional<ModInfo> getModInfo() { throw Unsupported.api("Player.getModInfo"); }
   /** What the client last sent on the brand channel; null until it has. */
   @Override public String getClientBrand() { return player.clientBrand().orElse(null); }
@@ -222,15 +220,29 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public void showDialog(DialogLike dialog) { throw Unsupported.api("Player.showDialog"); }
   @Override public void closeDialog() { throw Unsupported.api("Player.closeDialog"); }
 
-  private record Settings(Locale getLocale) implements PlayerSettings {
-    @Override public byte getViewDistance() { return 12; }
-    @Override public ChatMode getChatMode() { return ChatMode.SHOWN; }
-    @Override public boolean hasChatColors() { return true; }
-    @Override public SkinParts getSkinParts() { return new SkinParts((byte) 0x7F); }
-    @Override public MainHand getMainHand() { return MainHand.RIGHT; }
-    @Override public boolean isClientListingAllowed() { return true; }
-    @Override public boolean isTextFilteringEnabled() { return false; }
-    @Override public ParticleStatus getParticleStatus() { return ParticleStatus.ALL; }
+  /** The client's settings as Velocity's type; before it has sent any, the vanilla client's defaults. */
+  private record Settings(ClientSettings settings) implements PlayerSettings {
+    @Override public Locale getLocale() { return settings.locale(); }
+    @Override public byte getViewDistance() { return (byte) settings.viewDistance(); }
+    @Override public ChatMode getChatMode() {
+      return switch (settings.chatMode()) {
+        case FULL -> ChatMode.SHOWN;
+        case COMMANDS_ONLY -> ChatMode.COMMANDS_ONLY;
+        case HIDDEN -> ChatMode.HIDDEN;
+      };
+    }
+    @Override public boolean hasChatColors() { return settings.chatColors(); }
+    @Override public SkinParts getSkinParts() { return new SkinParts((byte) settings.skinParts()); }
+    @Override public MainHand getMainHand() { return settings.mainHand() == ClientSettings.MainHand.LEFT ? MainHand.LEFT : MainHand.RIGHT; }
+    @Override public boolean isClientListingAllowed() { return settings.serverListing(); }
+    @Override public boolean isTextFilteringEnabled() { return settings.textFiltering(); }
+    @Override public ParticleStatus getParticleStatus() {
+      return switch (settings.particles()) {
+        case ALL -> ParticleStatus.ALL;
+        case DECREASED -> ParticleStatus.DECREASED;
+        case MINIMAL -> ParticleStatus.MINIMAL;
+      };
+    }
   }
 
   @Override public boolean equals(Object other) { return other instanceof VelocityPlayer that && that.player == player; }

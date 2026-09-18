@@ -33,7 +33,9 @@ public interface Player extends CommandSource {
    * The language the client says it uses (its "en_us" as {@code en-US}), from the settings it sends
    * once it is in the game and whenever the player changes them. Empty until it has sent them.
    */
-  default java.util.Optional<java.util.Locale> locale() { return java.util.Optional.empty(); }
+  default java.util.Optional<java.util.Locale> locale() { return settings().map(ClientSettings::locale); }
+  /** Everything the client last said about itself in its settings; empty until it has sent them. */
+  default java.util.Optional<ClientSettings> settings() { return java.util.Optional.empty(); }
   /**
    * The player's latency in milliseconds: the round trip of the last keep-alive the client answered,
    * as the game itself measures it. -1 until the client has answered one, which in practice takes

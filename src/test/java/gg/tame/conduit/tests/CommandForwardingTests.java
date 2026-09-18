@@ -75,6 +75,9 @@ public final class CommandForwardingTests {
         static void signal(String value) { ((java.util.Queue<String>) System.getProperties().get("velocity.test.signals")).add(value); }
         private final ProxyServer proxy;
         @Inject public Main(ProxyServer proxy) { this.proxy = proxy; }
+        @Subscribe public void chat(com.velocitypowered.api.event.player.PlayerChatEvent event) {
+          if (event.getMessage().equals("vhi")) event.setResult(com.velocitypowered.api.event.player.PlayerChatEvent.ChatResult.message("velocity hello"));
+        }
         @Subscribe public void rewrite(com.velocitypowered.api.event.command.CommandExecuteEvent event) {
           if (event.getCommand().equals("vshort")) event.setResult(com.velocitypowered.api.event.command.CommandExecuteEvent.CommandResult.command("vsecret x y"));
           if (event.getCommand().equals("vfwd")) event.setResult(com.velocitypowered.api.event.command.CommandExecuteEvent.CommandResult.forwardToServer("vsecret z"));
@@ -116,6 +119,9 @@ public final class CommandForwardingTests {
         admin.send(chat("/vfwd"));
         require(lobby.await(packet -> id(packet) == CHAT_IN && chatText(packet).equals("/vsecret z")),
             "CommandResult.forwardToServer(command) sends the rewritten command to the backend");
+        guest.send(chat("vhi"));
+        require(lobby.await(packet -> id(packet) == CHAT_IN && chatText(packet).equals("velocity hello")), "ChatResult.message rewrites chat");
+        require(lobby.received(packet -> id(packet) == CHAT_IN && chatText(packet).equals("vhi")).isEmpty(), "and the typed line never goes");
       }
     }
   }
@@ -131,6 +137,7 @@ public final class CommandForwardingTests {
       proxy.runtime.commands().register(new NativeApiTests.TestPlugin("secrets"), CommandManager.Command.builder("secret")
           .handler((source, arguments) -> ran.add(arguments)).build());
       proxy.recorder.hook = event -> {
+        if (event instanceof gg.tame.conduit.api.event.player.PlayerChatEvent chat && chat.message().equals("hi")) chat.setMessage("hello there");
         if (!(event instanceof gg.tame.conduit.api.event.command.CommandExecuteEvent command)) return;
         if (command.command().startsWith("short ")) command.setCommand("/secret " + command.command().substring(6));
         if (command.command().equals("secret loud")) command.forwardToServer();
@@ -148,6 +155,13 @@ public final class CommandForwardingTests {
         require(ran.size() == 1, "the forwarded command did not also run on the proxy, got " + ran);
         var event = proxy.recorder.of(gg.tame.conduit.api.event.command.CommandExecuteEvent.class).getLast();
         require(event.originalCommand().equals("hello") && event.command().equals("greet there"), "the event keeps what was typed");
+        client.send(chat("hi"));
+        require(lobby.await(packet -> id(packet) == CHAT_IN && chatText(packet).equals("hello there")), "a chat rewrite reaches the backend");
+        require(lobby.received(packet -> id(packet) == CHAT_IN && chatText(packet).equals("hi")).isEmpty(), "and the typed line does not");
+        try {
+          new gg.tame.conduit.api.event.player.PlayerChatEvent(proxy.runtime.player("Rewriter").orElseThrow(), "x").setMessage("/op Rewriter");
+          throw new AssertionError("a chat rewrite into a command was accepted");
+        } catch (IllegalArgumentException refused) { }
       }
     }
   }

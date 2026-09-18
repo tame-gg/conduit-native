@@ -307,7 +307,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
   }
   /** A pre-1.19 chat line toward the backend, as if the client had typed it. */
-  private boolean sendCommandToServer(String line) {
+  private boolean sendChatLineToServer(String line) {
     BackendConnection current = backend;
     if (current == null || closed || clientState.state() != ConnectionState.PLAY) return false;
     try {
@@ -1169,7 +1169,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       } else if (protocol.capabilities().legacyPlayChat() && !command.startsWith("/")) {
         // Plain chat, on the one packet that carries it before 1.19. The event used to fire for
         // commands instead, as "/name", and plain chat never raised it at all.
-        return runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerChatEvent(this, command)).cancelled();
+        var chat = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerChatEvent(this, command));
+        if (chat.cancelled()) return true;
+        // A rewrite goes on as a chat line of its own; the client's packet is withheld.
+        return !chat.message().equals(command) && sendChatLineToServer(chat.message());
       }
       var execute = new gg.tame.conduit.api.event.command.CommandExecuteEvent(this, command);
       runtime.events().fire(execute);
@@ -1188,7 +1191,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (effective.equals(command)) return false;
       // Rewritten, and on its way to the backend. Before 1.19 the packet is the line alone; after,
       // the command may carry signatures over its arguments, which a rewrite would break.
-      if (protocol.capabilities().legacyPlayChat() && sendCommandToServer("/" + effective)) return true;
+      if (protocol.capabilities().legacyPlayChat() && sendChatLineToServer("/" + effective)) return true;
       gg.tame.conduit.log.ConduitLog.warn("A plugin rewrote /" + command + " for a client whose commands may be signed; the backend got it unchanged");
       return false;
     }
@@ -1294,17 +1297,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     ProtocolTrace.note("client login acknowledged; via state " + via.stateDescription());
   }
 
-  /** The first field of Client Information in every version is the client's language, as "en_us". */
   @Override public long ping() { return keepAlive.latencyMillis(); }
-  @Override public java.util.Optional<java.util.Locale> locale() {
+  /** Read from the cached Client Information, in the client's own layout, each time it is asked for. */
+  @Override public java.util.Optional<gg.tame.conduit.api.player.ClientSettings> settings() {
     byte[] information = clientInformation;
     if (information == null) return java.util.Optional.empty();
-    try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(information))) {
-      String tag = gg.tame.conduit.protocol.MinecraftInput.string(input, 64);
-      return tag.isBlank() ? java.util.Optional.empty() : java.util.Optional.of(java.util.Locale.forLanguageTag(tag.replace('_', '-')));
-    } catch (IOException | RuntimeException unreadable) {
-      return java.util.Optional.empty();
-    }
+    try { return java.util.Optional.of(gg.tame.conduit.protocol.ClientSettingsCodec.decode(clientProtocol, information)); }
+    catch (IOException | RuntimeException unreadable) { return java.util.Optional.empty(); }
   }
   @Override public java.util.Optional<String> clientBrand() { return java.util.Optional.ofNullable(clientBrand); }
   /** Caches Client Information from either state; the packet is still forwarded normally. */

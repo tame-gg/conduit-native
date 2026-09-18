@@ -233,9 +233,12 @@ final class VelocityEventBridge {
     if (event.cancelled() || !listening(PlayerChatEvent.class)) return;
     PlayerChatEvent chat = environment.fireAndWait(new PlayerChatEvent(environment.player(event.player()), event.message()));
     if (!chat.getResult().isAllowed()) event.setCancelled(true);
-    else if (chat.getResult().getMessage().isPresent()) {
-      environment.log.warning("A Velocity plugin rewrote a chat message; Conduit cannot change chat, so it was sent unchanged");
-    }
+    else chat.getResult().getMessage().ifPresent(message -> {
+      try { event.setMessage(message); }
+      catch (IllegalArgumentException refused) {
+        environment.log.warning("A Velocity plugin rewrote a chat message into a command or nothing; it was sent unchanged");
+      }
+    });
   }
   @Subscribe public void onCommand(gg.tame.conduit.api.event.command.CommandExecuteEvent event) {
     if (event.cancelled() || !listening(CommandExecuteEvent.class)) return;
@@ -274,7 +277,7 @@ final class VelocityEventBridge {
   @Subscribe public void onReload(gg.tame.conduit.api.event.proxy.ProxyReloadEvent event) {
     if (listening(ProxyReloadEvent.class)) environment.events.fire(new ProxyReloadEvent());
   }
-  /** The settings as {@code getPlayerSettings} has them: the client's language, and defaults for the rest. */
+  /** The settings the client just sent, as {@code getPlayerSettings} has them. */
   @Subscribe public void onSettings(gg.tame.conduit.api.event.player.PlayerSettingsChangedEvent event) {
     if (!listening(PlayerSettingsChangedEvent.class)) return;
     VelocityPlayer player = environment.player(event.player());

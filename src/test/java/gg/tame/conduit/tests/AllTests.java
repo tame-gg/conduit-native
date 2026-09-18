@@ -108,6 +108,7 @@ public final class AllTests {
     PlayerLatencyTests.run();
     CommandForwardingTests.run();
     KickDeliveryTests.run();
+    ClientSettingsTests.run();
     DisplayApiTests.run();
     TextFidelityTests.run();
     ModLoaderTests.run();
