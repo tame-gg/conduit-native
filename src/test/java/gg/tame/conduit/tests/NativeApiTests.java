@@ -9,6 +9,8 @@ import gg.tame.conduit.api.event.player.PlayerAuthenticatedEvent;
 import gg.tame.conduit.api.event.player.PlayerChatEvent;
 import gg.tame.conduit.api.event.player.PlayerDisconnectEvent;
 import gg.tame.conduit.api.event.player.PlayerInitialServerEvent;
+import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent;
+import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent.KickResult;
 import gg.tame.conduit.api.event.player.PlayerLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerPostLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
@@ -105,6 +107,10 @@ public final class NativeApiTests {
     theServerListShowsTheConfiguredEntry();
     pingListenersCanRewriteCancelAndSurviveAThrowingOne();
     aLiveBackendPingAsksTheBackend();
+    aKickWhilePlayingReachesTheClientAsTheBackendWroteIt();
+    aKickListenerCanRedirectThePlayer();
+    aRefusedSwitchKeepsThePlayerAndTellsThem();
+    aRefusedFirstServerMovesOnAndExplains();
     System.out.println("NativeApiTests OK");
   }
 
@@ -670,6 +676,105 @@ public final class NativeApiTests {
     }
   }
 
+  /** A backend's kick was relayed and the session closed, with no say for plugins. */
+  private static void aKickWhilePlayingReachesTheClientAsTheBackendWroteIt() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Fixture proxy = new Fixture(List.of(lobby), List.of("lobby"), List.of("lobby"))) {
+      proxy.runtime.events().register(new TestPlugin("careless"), new Object() {
+        @Subscribe public void clear(PlayerKickedFromServerEvent event) { event.setResult(null); }
+        @Subscribe(order = Subscribe.Order.LAST) public void boom(PlayerKickedFromServerEvent event) { throw new IllegalStateException("listener bug"); }
+      });
+      try (Client client = Client.join(proxy.port(), "kickee")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
+        String reason = "{\"translate\":\"multiplayer.disconnect.kicked\",\"color\":\"red\"}";
+        lobby.send(packet(DISCONNECT_OUT, output -> MinecraftOutput.string(output, reason)));
+        require(client.await(p -> id(p) == DISCONNECT_OUT), "the kick reaches the client");
+        require(text(client.received(p -> id(p) == DISCONNECT_OUT).getFirst()).equals(reason), "exactly as the backend wrote it, translation and all");
+        require(client.ends(), "and the session ends");
+        PlayerKickedFromServerEvent kicked = proxy.recorder.of(PlayerKickedFromServerEvent.class).getFirst();
+        require(!kicked.duringConnect() && kicked.server().getName().equals("lobby"), "kicked from the server it was on");
+        require(kicked.reason().orElseThrow().equals(Text.of("multiplayer.disconnect.kicked").color(TextColor.RED)),
+            "with the reason as far as Text can hold it, got " + kicked.reason());
+        require(kicked.result() instanceof KickResult.Disconnect, "a listener that sets null or throws leaves the default");
+      }
+    }
+  }
+
+  private static void aKickListenerCanRedirectThePlayer() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Backend survival = new Backend("survival");
+         Fixture proxy = new Fixture(List.of(lobby, survival), List.of("lobby"), List.of("lobby"))) {
+      RegisteredServer survivalView = proxy.runtime.servers().getServer("survival").orElseThrow();
+      proxy.recorder.hook = event -> {
+        if (event instanceof PlayerKickedFromServerEvent kicked) kicked.setResult(new KickResult.Redirect(survivalView, Optional.of(Text.of("Moved you"))));
+      };
+      try (Client client = Client.join(proxy.port(), "redirected")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
+        lobby.send(packet(DISCONNECT_OUT, output -> MinecraftOutput.string(output, "{\"text\":\"Restarting\"}")));
+        require(proxy.recorder.await(PlayerServerSwitchEvent.class, 1), "moved, events " + proxy.recorder.names());
+        require(proxy.runtime.player("redirected").orElseThrow().currentServer().name().equals("survival") && survival.logins.get() == 1,
+            "to the server the listener named");
+        require(client.await(p -> id(p) == CHAT_OUT && text(p).contains("Moved you")), "and told what the listener said");
+        require(client.received(p -> id(p) == DISCONNECT_OUT).isEmpty(), "never shown the kick");
+      }
+    }
+  }
+
+  /** A backend refusing a switch lost its reason: the player heard only that the server was unavailable. */
+  private static void aRefusedSwitchKeepsThePlayerAndTellsThem() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Backend strict = new Backend("strict");
+         Fixture proxy = new Fixture(List.of(lobby, strict), List.of("lobby"), List.of("lobby"))) {
+      strict.refuseWith = "{\"text\":\"You are not whitelisted\"}";
+      RegisteredServer strictView = proxy.runtime.servers().getServer("strict").orElseThrow();
+      try (Client client = Client.join(proxy.port(), "outsider")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
+        Player player = proxy.runtime.player("outsider").orElseThrow();
+        ConnectResult result = player.connectWithResult(strictView).get(15, TimeUnit.SECONDS);
+        require(result.status() == ConnectResult.Status.FAILED && result.reason().contains("You are not whitelisted"),
+            "the switch fails with the backend's reason, got " + result);
+        require(player.currentServer().name().equals("lobby"), "the player stays where they were");
+        require(client.await(p -> id(p) == CHAT_OUT && text(p).contains("You are not whitelisted")), "and is told why");
+        PlayerKickedFromServerEvent kicked = proxy.recorder.of(PlayerKickedFromServerEvent.class).getFirst();
+        require(kicked.duringConnect() && kicked.server() == strictView && kicked.result() instanceof KickResult.Notify,
+            "a refused switch is a kick during connect, Notify by default");
+        require(proxy.recorder.names(PlayerServerSwitchFailedEvent.class, PlayerKickedFromServerEvent.class)
+            .equals(List.of("PlayerServerSwitchFailedEvent", "PlayerKickedFromServerEvent")), "reported, then decided, got " + proxy.recorder.names());
+
+        proxy.recorder.hook = event -> {
+          if (event instanceof PlayerKickedFromServerEvent refused) refused.setResult(new KickResult.Disconnect(Text.of("Go home")));
+        };
+        player.connectWithResult(strictView).get(15, TimeUnit.SECONDS);
+        require(client.await(p -> id(p) == DISCONNECT_OUT && text(p).contains("Go home")), "a listener can make the refusal end the session");
+        require(client.ends(), "and it does");
+      }
+    }
+  }
+
+  /**
+   * A first server's refusal was relayed straight to a client still logging in, which closed on it
+   * with the next candidate never tried; and with none left the player got the generic message.
+   */
+  private static void aRefusedFirstServerMovesOnAndExplains() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Backend survival = new Backend("survival");
+         Fixture proxy = new Fixture(List.of(lobby, survival), List.of("lobby", "survival"), List.of("lobby"))) {
+      lobby.refuseWith = "{\"text\":\"Lobby is full\"}";
+      try (Client client = Client.join(proxy.port(), "walker")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined");
+        require(proxy.runtime.player("walker").orElseThrow().currentServer().name().equals("survival"), "the next candidate took the player");
+        PlayerServerSwitchFailedEvent failed = proxy.recorder.of(PlayerServerSwitchFailedEvent.class).getFirst();
+        require(failed.source().isEmpty() && failed.target().getName().equals("lobby"), "a failed first server is reported, with no source");
+        PlayerKickedFromServerEvent kicked = proxy.recorder.of(PlayerKickedFromServerEvent.class).getFirst();
+        require(kicked.duringConnect() && kicked.result() instanceof KickResult.Notify
+            && kicked.reason().orElseThrow().plain().equals("Lobby is full"), "and decided on, Notify by default");
+      }
+      String untranslated = "{\"translate\":\"multiplayer.disconnect.not_whitelisted\"}";
+      survival.refuseWith = untranslated;
+      try (Client refused = Client.open(proxy.port(), "turned-away")) {
+        byte[] reply = refused.readDirect();
+        require(id(reply) == 0, "a Login Disconnect, got id " + id(reply));
+        require(text(reply).equals(untranslated), "the last refusal as its server wrote it, not the generic message, got " + text(reply));
+      }
+    }
+  }
+
   /** A raw 1.8 server-list ping: the status JSON, or null when the proxy closed without answering. */
   private static String ping(int port, String host) throws Exception {
     try (Socket socket = new Socket("127.0.0.1", port)) {
@@ -778,6 +883,8 @@ public final class NativeApiTests {
     private final List<Socket> sockets = Collections.synchronizedList(new ArrayList<>());
     private volatile Socket current;
     volatile boolean refuse;
+    /** A reason to refuse every login with, as a Login Disconnect, the way a whitelisted server does. */
+    volatile String refuseWith;
     volatile boolean silent;
     Backend(String name) throws IOException {
       this.name = name;
@@ -799,6 +906,8 @@ public final class NativeApiTests {
         if (handshake.nextState() != 2) return;
         MinecraftFrames.read(in, 4096);
         logins.incrementAndGet();
+        String refusal = refuseWith;
+        if (refusal != null) { write(socket, packet(0, output -> MinecraftOutput.string(output, refusal))); return; }
         if (refuse) return;
         if (silent) { in.transferTo(OutputStream.nullOutputStream()); return; }
         current = socket;

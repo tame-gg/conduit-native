@@ -1,6 +1,7 @@
 package gg.tame.conduit.session;
 
 import gg.tame.conduit.brand.BrandRewriter;
+import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent.KickResult;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.api.text.TextColor;
 import gg.tame.conduit.command.CommandGraphs;
@@ -229,6 +230,22 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * plugin refusing a player got nothing it could show.
    */
   @Override public void disconnect(Text reason) {
+    Text shown = reason == null ? Text.empty() : reason;
+    disconnectWith((output, nbt) -> gg.tame.conduit.text.TextCodec.write(output, shown, nbt));
+  }
+  /**
+   * Disconnects with a reason a backend wrote, as the JSON it came in. Going through Text would lose
+   * what Text cannot hold: a vanilla server's refusals are translatable, and would reach the player
+   * as bare keys such as multiplayer.disconnect.not_whitelisted.
+   */
+  private void disconnectJson(String json) {
+    disconnectWith((output, nbt) -> {
+      if (nbt) gg.tame.conduit.protocol.text.ComponentCodec.jsonToNbt(output, json);
+      else gg.tame.conduit.protocol.MinecraftOutput.string(output, json);
+    });
+  }
+  private interface Reason { void write(java.io.DataOutputStream output, boolean nbt) throws IOException; }
+  private void disconnectWith(Reason reason) {
     try {
       ConnectionState state = clientState.state();
       PacketKind kind = switch (state) {
@@ -243,7 +260,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(state, PacketDirection.SERVER_TO_CLIENT, kind));
           // Login's reason is JSON text in every version; the other two became NBT with 1.20.3.
           boolean nbt = state != ConnectionState.LOGIN && gg.tame.conduit.protocol.ProtocolEras.textComponentNbt(clientProtocol);
-          gg.tame.conduit.text.TextCodec.write(output, reason == null ? Text.empty() : reason, nbt);
+          reason.write(output, nbt);
         }
         writeClient(bytes.toByteArray());
       }
@@ -330,7 +347,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     } catch (IOException failed) {
       // Every candidate refused, was unreachable, or had its connection cancelled by a plugin. The
       // socket used to close with nothing written, and the player saw "Connection lost" and no reason.
-      disconnect("Could not connect you to a server. Please try again later.");
+      // A server that refused them had a reason of its own, and that is the more useful one to show.
+      if (failed instanceof gg.tame.conduit.login.BackendLoginPipeline.Refused refused) disconnectJson(refused.reasonJson());
+      else disconnect("Could not connect you to a server. Please try again later.");
       throw failed;
     }
     // Login is over. Both links were read under a deadline until here, because a client or a
@@ -376,14 +395,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       candidates.addFirst(chosen);
     });
     IOException last = null;
-    for (BackendServer candidate : candidates) {
-      BackendServer server = candidate;
+    // What the disconnect screen says if a server refused the player and no later one took them.
+    String refusal = null;
+    for (int index = 0; index < candidates.size(); index++) {
+      BackendServer server = candidates.get(index);
       var targetView = runtime.registered(server.name()).orElse(null);
       if (targetView != null) {
         var connect = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectEvent(this, java.util.Optional.empty(), targetView));
         if (connect.cancelled()) { last = new IOException("connection to " + server.name() + " was cancelled"); continue; }
         server = selector.registry().get(connect.target().getName()).orElse(null);
         if (server == null) { last = new IOException("redirected to unknown server " + connect.target().getName()); continue; }
+        targetView = runtime.registered(server.name()).orElse(connect.target());
       }
       Socket socket = null;
       BackendConnection connection = null;
@@ -415,9 +437,51 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         if (connection == null && socket != null) try { socket.close(); } catch (IOException ignored) { }
         last = exception;
         System.err.println("Backend unavailable: " + server.name() + " (" + exception.getMessage() + ")");
+        if (targetView == null) continue;
+        runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent(this, java.util.Optional.empty(), targetView,
+            exception.getMessage() == null ? "connection failed" : exception.getMessage()));
+        if (exception instanceof gg.tame.conduit.login.BackendLoginPipeline.Refused refused) {
+          Refusal decided = refused(refused, targetView);
+          // Disconnect ends the walk here; Redirect and Notify let it go on.
+          if (decided.result() instanceof KickResult.Disconnect) throw new gg.tame.conduit.login.BackendLoginPipeline.Refused(decided.json());
+          if (decided.result() instanceof KickResult.Redirect redirect) tryNext(candidates, index, redirect.server());
+          refusal = decided.json();
+        }
       }
     }
+    if (refusal != null) throw new gg.tame.conduit.login.BackendLoginPipeline.Refused(refusal);
     throw last == null ? new IOException("all configured backends refused the connection") : last;
+  }
+
+  /**
+   * A backend refused the player's login while they were being connected to it: what
+   * {@link gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent} decided, the backend's
+   * reason, and the reason to show if the player ends up disconnected over it.
+   */
+  private record Refusal(KickResult result, Text reason, String json) {}
+
+  /** Fires the kicked event for a refused login. Notify is the default: the caller carries on. */
+  private Refusal refused(gg.tame.conduit.login.BackendLoginPipeline.Refused refused,
+                          gg.tame.conduit.api.server.RegisteredServer server) {
+    Text reason = gg.tame.conduit.text.TextCodec.fromJson(refused.reasonJson());
+    var tell = new KickResult.Notify(reason);
+    KickResult result = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent(
+        this, server, java.util.Optional.of(reason), true, tell)).result();
+    // The backend's own component while nobody changed it, because Text would lose its translations.
+    String json = switch (result) {
+      case KickResult.Disconnect disconnect -> gg.tame.conduit.text.TextCodec.toJson(disconnect.reason());
+      case KickResult.Notify notify when notify != tell -> gg.tame.conduit.text.TextCodec.toJson(notify.message());
+      default -> refused.reasonJson();
+    };
+    return new Refusal(result, reason, json);
+  }
+
+  /** Puts {@code server} next in a walk of candidates, for a Redirect from one that refused the player. */
+  private void tryNext(List<BackendServer> order, int index, gg.tame.conduit.api.server.RegisteredServer server) {
+    selector.registry().get(server.getName()).ifPresent(next -> {
+      order.subList(index + 1, order.size()).removeIf(other -> other.name().equalsIgnoreCase(next.name()));
+      order.add(index + 1, next);
+    });
   }
 
   /**
@@ -1216,10 +1280,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // already made is what a real 1.13 client drops the connection over. When Via is the
         // engine its output goes to the client as it stands.
         if (viaEngine()) {
+          if (isPlayDisconnect(translated)) {
+            if (kickedWhilePlaying(current, translated)) continue;
+            return;
+          }
           writeClient(translated, true);
           flushTranslatorExtras(current);
           resumeAfterSwitchedJoinGame(current);
-          if (isPlayDisconnect(translated)) { close(); return; }
           continue;
         }
         var brand = BrandRewriter.rewrite(protocol, brandState(backendState), translated, configuration.maxFrameBytes());
@@ -1245,18 +1312,80 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           flushDeferredPlay();
           continue;
         }
+        if (isPlayDisconnect(translated)) {
+          if (kickedWhilePlaying(current, outbound)) continue;
+          return;
+        }
         writeClient(outbound, true);
         flushTranslatorExtras(current);
         resumeAfterSwitchedJoinGame(current);
         if (clientState.state() == ConnectionState.PLAY && isPlayLogin(translated)) {
           emitSelfPlayerInfoIfNeeded();
         }
-        if (isPlayDisconnect(translated)) { close(); return; }
       } catch (IOException exception) {
         if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return;
         ProtocolTrace.note("backend I/O: " + exception.getMessage());
         handleBackendLoss(current);
       }
+    }
+  }
+  /**
+   * The backend the player is on sent them a Play Disconnect: what used to be relayed as it was,
+   * ending the session, now goes past {@link gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent}
+   * first. Runs on the backend reader, outside {@code lock}. True when the player was moved to
+   * another server and the reader carries on with it.
+   */
+  private boolean kickedWhilePlaying(BackendConnection kicker, byte[] disconnect) throws IOException {
+    var server = runtime.registered(kicker.server().name()).orElse(null);
+    synchronized (lock) {
+      // A switch took the player off this backend between the read and here; its kick is moot.
+      if (backend != kicker || lifecycle.get() != SessionLifecycle.CONNECTED) return true;
+      // Nothing else may commit a switch while listeners decide, and the client's packets stop
+      // going to a backend that is closing.
+      if (server != null) lifecycle.set(SessionLifecycle.SWITCHING);
+      lock.notifyAll();
+    }
+    var stay = new KickResult.Disconnect(Text.empty());
+    KickResult result = stay;
+    if (server != null) {
+      java.util.Optional<Text> reason = playDisconnectReason(disconnect);
+      stay = new KickResult.Disconnect(reason.orElse(Text.empty()));
+      result = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent(
+          this, server, reason, false, stay)).result();
+    }
+    if (result instanceof KickResult.Redirect redirect) {
+      discard(kicker);
+      try {
+        BackendServer target = selector.registry().get(redirect.server().getName())
+            .orElseThrow(() -> new IOException("unknown server " + redirect.server().getName()));
+        switchTo(target, true);
+        redirect.message().ifPresent(this::sendMessage);
+        return true;
+      } catch (Exception failed) {
+        gg.tame.conduit.log.ConduitLog.warn("Redirect of kicked " + username() + " to " + redirect.server().getName()
+            + " failed: " + failed.getMessage());
+        result = stay;
+      }
+    }
+    // Notify has nowhere to keep the player: the server they were on is the one that kicked them.
+    if (result instanceof KickResult.Notify notify) disconnect(notify.message());
+    else if (result != stay) disconnect(((KickResult.Disconnect) result).reason());
+    else {
+      // The backend's own packet, untouched: what the player saw before this event existed.
+      try { writeClient(disconnect, true); } finally { close(); }
+    }
+    return false;
+  }
+  /** The reason in a Play Disconnect in the client's dialect: JSON text, or network NBT from 1.20.3. */
+  private java.util.Optional<Text> playDisconnectReason(byte[] packet) {
+    try (var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(packet))) {
+      gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+      String json = gg.tame.conduit.protocol.ProtocolEras.textComponentNbt(clientProtocol)
+          ? gg.tame.conduit.protocol.text.ComponentCodec.nbtToJson(input)
+          : gg.tame.conduit.protocol.MinecraftInput.string(input, configuration.maxFrameBytes());
+      return java.util.Optional.of(gg.tame.conduit.text.TextCodec.fromJson(json));
+    } catch (IOException | RuntimeException unreadable) {
+      return java.util.Optional.empty();
     }
   }
   /** Ends a switched client's hold once the new backend's Join Game has been written to it. */
@@ -1414,16 +1543,33 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     failed.add(ServerRegistry.normalize(lost.server().name()));
     sendMessage(Text.of(lost.server().name() + " is unavailable.").color(TextColor.RED));
     ConduitMetrics.current().fallbackEvent();
-    for (BackendServer server : selector.fallback(lost.server().name(), failed, clientProtocol, modClassifier.family(), false)) {
+    List<BackendServer> order = new java.util.ArrayList<>(selector.fallback(lost.server().name(), failed, clientProtocol, modClassifier.family(), false));
+    String refusal = null;
+    KickResult.Redirect redirected = null;
+    for (int index = 0; index < order.size(); index++) {
+      BackendServer server = order.get(index);
       try {
         Messages.connecting(this, server.name());
         switchTo(server, true);
         Messages.connected(this, server.name());
+        if (redirected != null && redirected.server().getName().equalsIgnoreCase(server.name())) {
+          redirected.message().ifPresent(this::sendMessage);
+        }
         return;
+      } catch (RefusedSwitch refused) {
+        failed.add(ServerRegistry.normalize(server.name()));
+        if (refused.refusal.result() instanceof KickResult.Disconnect) { disconnectJson(refused.refusal.json()); return; }
+        if (refused.refusal.result() instanceof KickResult.Redirect redirect) {
+          tryNext(order, index, redirect.server());
+          redirected = redirect;
+        }
+        refusal = refused.refusal.json();
       }
       catch (Exception exception) { failed.add(ServerRegistry.normalize(server.name())); }
     }
-    close();
+    // A fallback that refused the player had a reason; one that was merely down leaves nothing to say.
+    if (refusal != null) disconnectJson(refusal);
+    else close();
   }
   public void requestSwitch(String name) { transferTo(name); }
   @Override public boolean transferTo(String name) {
@@ -1463,6 +1609,23 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.CONNECTED, "");
     } catch (SwitchCancelled cancelled) {
       return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.CANCELLED, cancelled.getMessage());
+    } catch (RefusedSwitch refused) {
+      ConduitMetrics.current().failedSwitch();
+      // The player is still on the server they were switching from.
+      switch (refused.refusal.result()) {
+        case KickResult.Notify notify -> sendMessage(notify.message());
+        case KickResult.Disconnect disconnect -> disconnect(disconnect.reason());
+        case KickResult.Redirect redirect -> {
+          try {
+            switchTo(selector.registry().get(redirect.server().getName())
+                .orElseThrow(() -> new IOException("unknown server " + redirect.server().getName())), false);
+            redirect.message().ifPresent(this::sendMessage);
+          } catch (Exception failed) {
+            sendMessage(refused.refusal.reason());
+          }
+        }
+      }
+      return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.FAILED, refused.getMessage());
     } catch (Exception exception) {
       ConduitMetrics.current().failedSwitch();
       return new gg.tame.conduit.api.player.ConnectResult(gg.tame.conduit.api.player.ConnectResult.Status.FAILED,
@@ -1474,6 +1637,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   /** A PlayerServerConnectEvent listener said no; nothing was opened. */
   private static final class SwitchCancelled extends IOException {
     private SwitchCancelled(String server) { super("connection to " + server + " was cancelled"); }
+  }
+  /** The target refused the player's login; the kicked event has decided what happens next. */
+  private static final class RefusedSwitch extends IOException {
+    private final Refusal refusal;
+    private RefusedSwitch(Refusal refusal, IOException cause) { super(cause.getMessage(), cause); this.refusal = refusal; }
   }
   private static final int SWITCH_BUDGET_MS = 4_000;
   /**
@@ -1729,6 +1897,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           lifecycle.set(previous != null ? SessionLifecycle.CONNECTED : SessionLifecycle.CLOSED);
           lock.notifyAll();
         }
+      }
+      // Fired once the player is back where they were, so a listener sees them there. A refusal can
+      // only come from the login, before the commit, so the client never left Play for it.
+      if (exception instanceof gg.tame.conduit.login.BackendLoginPipeline.Refused refused && targetView != null) {
+        throw new RefusedSwitch(refused(refused, targetView), refused);
       }
       throw exception;
     }

@@ -78,6 +78,15 @@ public final class BackendLoginPipeline {
     }
     return packet;
   }
+  /** The backend refused the login with a Login Disconnect. Its reason is JSON text in every version. */
+  public static final class Refused extends IOException {
+    private final String reasonJson;
+    public Refused(String reasonJson) {
+      super("backend disconnected during login: " + gg.tame.conduit.text.TextCodec.fromJson(reasonJson).plain());
+      this.reasonJson = reasonJson;
+    }
+    public String reasonJson() { return reasonJson; }
+  }
   public ConnectionState state() { return state; }
   public PacketCompression compression() { return compression; }
   /** Returns a response packet only when a forwarding request was consumed. */
@@ -92,8 +101,11 @@ public final class BackendLoginPipeline {
   }
   private byte[] handleLogin(int id, byte[] body, int maximumPacketBytes) throws IOException {
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_DISCONNECT)) {
-      if (hideLoginSuccess) { forwardToClient = false; throw new IOException("backend disconnected during login"); }
-      return null;
+      // Never forwarded, first connection included: the session decides what the player is shown.
+      // Relayed as it was, a first server's refusal closed the client with the next candidate still
+      // untried, and a switch's refusal lost its reason altogether.
+      forwardToClient = false;
+      throw new Refused(MinecraftInput.string(new DataInputStream(new ByteArrayInputStream(body)), maximumPacketBytes));
     }
     if (protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.LOGIN_ENCRYPTION_REQUEST)) {
       throw new IOException("backend requested encryption; Conduit does not terminate Minecraft online-mode encryption yet");

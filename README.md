@@ -602,10 +602,15 @@ A jar that fails any of those steps is logged and skipped — a bad descriptor, 
 that will not initialize, or an `onEnable` that throws never stops the proxy from starting or the other
 plugins from loading, and the rejected jar's classloader is closed so the file is not left locked.
 
-Events include proxy start/shutdown, login (deniable), auth, initial-server choice, server connect
-(cancellable and redirectable, for the first server too), connected/switch/switch-failed, post-login,
-disconnect, chat (cancellable; clients before 1.19 only), command execute (cancellable), plugin
-enable/disable, and plugin messages (cancellable, both directions). Every event's Javadoc names the thread
+Events include proxy start/shutdown, server-list ping (`ServerListPingEvent`: MOTD, counts, sample,
+version and icon are all settable; cancelling leaves the client with no answer), login (deniable), auth,
+initial-server choice, server connect (cancellable and redirectable, for the first server too),
+connected/switch/switch-failed (switch-failed also for each first-server candidate that fails, with no
+source), kicked-from-server (`PlayerKickedFromServerEvent`: the backend's reason and a result of
+`Disconnect`, `Redirect` or `Notify`, for a kick while playing and for a login refused during a switch,
+a first connection or a fallback), post-login, disconnect, chat (cancellable; clients before 1.19 only),
+command execute (cancellable), plugin enable/disable, and plugin messages (cancellable, both
+directions). Every event's Javadoc names the thread
 it fires on; events fire synchronously, and player events fire on that player's connection threads, so a
 listener must not block. `@Subscribe(order = ...)` orders listeners from `FIRST` to `LAST`. A listener
 that throws is logged and the others still run.
