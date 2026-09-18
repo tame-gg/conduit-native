@@ -58,6 +58,7 @@ public final class ConcurrencyTests {
     aBackendThatNeverFinishesLoginReleasesBothSockets();
     rapidServerCommandsOpenOneBackendConnection();
     aQuietBackendKeepsTheSwitchedPlayer();
+    anUnreachableFirstServerIsExplained();
     closingABackendTwiceCountsOnce();
     manySessionsAllReleaseWhenTheirBackendsDrop();
     rejectHostileCompressedPackets();
@@ -967,6 +968,31 @@ public final class ConcurrencyTests {
       }
       lobbyThread.interrupt();
       limboThread.interrupt();
+    }
+  }
+
+  /**
+   * No first server to be had -- every candidate refused, was unreachable, or had its connection
+   * cancelled by a plugin -- and the client's socket was closed with nothing written: the player saw
+   * "Connection lost" and no reason. It is still logging in at that point, so it can be told.
+   */
+  private static void anUnreachableFirstServerIsExplained() throws Exception {
+    ConduitConfiguration configuration = configuration(
+        List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", reservePort()))),
+        List.of("lobby"), List.of(), SecuritySettings.defaults());
+    try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+      Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+      try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+        client.setSoTimeout(15_000);
+        MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+        MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+        byte[] reply;
+        try { reply = MinecraftFrames.read(client.getInputStream(), 4096); }
+        catch (java.io.EOFException dropped) { throw new AssertionError("the client was dropped with no reason"); }
+        require(PlayPackets.packetId(reply) == 0, "a Login Disconnect, got id " + PlayPackets.packetId(reply));
+        require(new String(reply, java.nio.charset.StandardCharsets.UTF_8).contains("try again"), "the reason says what to do");
+      }
+      serving.interrupt();
     }
   }
 
