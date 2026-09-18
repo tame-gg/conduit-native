@@ -133,9 +133,29 @@ public final class PacketTransport {
    * this. Marking the state and leaving the socket open left the client reader parked in a read
    * nothing would complete, so the worker never returned, and its connection slot and its
    * per-source throttle lease were both held until the client itself hung up.
+   *
+   * <p>The output is ended first and the socket closed a moment later. Closed at once, a socket with
+   * bytes of the client's still unread -- a playing client is always sending -- was reset rather
+   * than ended, and a client that took the reset before reading the disconnect it had just been sent
+   * lost it: a kicked player saw "Connection reset" instead of the reason. Ending the output sends
+   * the disconnect ahead of the end of the stream, and the close follows within {@value #LINGER_MILLIS}
+   * ms whatever the client does, so a reader parked on this socket is still let go.
    */
   public void close() {
     state = EncryptionState.CLOSED;
-    if (socket != null) { try { socket.close(); } catch (IOException ignored) { } }
+    // Already closed, or already ending with its close to follow: a second close must not cut that short.
+    if (socket == null || socket.isClosed() || socket.isOutputShutdown()) return;
+    try {
+      socket.shutdownOutput();
+      LINGER.schedule(() -> { try { socket.close(); } catch (IOException ignored) { } }, LINGER_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
+      return;
+    } catch (IOException | java.util.concurrent.RejectedExecutionException alreadyGone) {
+      // Closed already, or never connected: nothing is owed to the peer.
+    }
+    try { socket.close(); } catch (IOException ignored) { }
   }
+  static final long LINGER_MILLIS = 250;
+  /** Closes the sockets whose output has ended; it never blocks on a socket itself, only closes them. */
+  private static final java.util.concurrent.ScheduledExecutorService LINGER = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(
+      runnable -> Thread.ofPlatform().name("conduit-linger").daemon(true).unstarted(runnable));
 }

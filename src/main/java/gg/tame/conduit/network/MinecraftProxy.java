@@ -152,7 +152,9 @@ public final class MinecraftProxy implements AutoCloseable {
   private void handle(SocketChannel channel) {
     ConnectionThrottle.LeaseHolder leaseHolder = new ConnectionThrottle.LeaseHolder();
     InetAddress remote = null;
-    try (Socket client = channel.socket()) {
+    Socket client = channel.socket();
+    PacketTransport[] opened = new PacketTransport[1];
+    try {
       remote = client.getInetAddress();
       if (runtime.security().botFilter().isBlocked(remote)) {
         return;
@@ -163,7 +165,7 @@ public final class MinecraftProxy implements AutoCloseable {
       }
       int handshakeTimeout = runtime.security().botFilter().settings().handshakeTimeoutMs();
       client.setSoTimeout(handshakeTimeout);
-      PacketTransport transport = new PacketTransport(client);
+      PacketTransport transport = opened[0] = new PacketTransport(client);
       transport.setReadDeadline(Long.getLong("conduit.loginDeadlineMillis", LOGIN_DEADLINE_MS));
       byte[] firstPacket;
       try {
@@ -251,6 +253,10 @@ public final class MinecraftProxy implements AutoCloseable {
       throw unexpected;
     }
     finally {
+      // Through the transport once there is one: it ends the output first, so a client still sending
+      // reads the last thing it was sent -- a disconnect's reason -- before the socket goes.
+      if (opened[0] != null) opened[0].close();
+      else try { client.close(); } catch (IOException ignored) { }
       runtime.security().throttle().release(leaseHolder.lease);
       connections.decrementAndGet();
     }
