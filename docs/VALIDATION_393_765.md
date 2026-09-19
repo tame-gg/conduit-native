@@ -210,8 +210,38 @@ in the target registry nor expressible as a name is lost.
 Entity Sound Effect stays unsupported: 1.13 has no packet that plays a sound on
 an entity.
 
-Not verified by a human listening. The tables and the packet translation are
-covered by `SoundTranslationTests`; no real-client audio check was run.
+### Verified against real servers
+
+`scripts/_validate-sound-particle.ps1` joins a scripted client through a real
+Conduit into a real vanilla backend, tells that backend on its own console to
+play a named sound, and checks what arrives. Run of 2026-09-18, commit as
+recorded in the summary file, both directions, native translator only
+(`[translation] enabled = false` in the pair configs, so Via cannot stand in).
+
+What it asserts is the **raw registry id off the wire**, against the id in
+Mojang's own `registries.json` for the receiving version. Asserting the decoded
+name proves nothing: the prober would decode it with the same table Conduit
+encoded it with, so a table wrong in both directions round-trips and looks
+right. That is measured, not supposed — an earlier version of this script
+asserted names and **passed with the broken sound table in place**.
+
+| Case | Driven by | Arrives as | Checked against |
+|---|---|---|---|
+| 1.20.4 → 1.13 | `playsound entity.pig.ambient` | `id=416` | 1.13 registry (calibrated dump) |
+| 1.20.4 → 1.13 | `playsound entity.warden.roar` | Named Sound Effect | no 1.13 id exists; must arrive named |
+| 1.13 → 1.20.4 | `summon lightning_bolt` | `id=742` | 1.20.4 `registries.json` |
+| 1.13 → 1.20.4 | `playsound` (either) | inline Sound Effect | vanilla's playsound emits Named Sound Effect, which 1.20.4 carries inline |
+
+**The check has teeth.** Re-run with the broken sound table restored, the
+lightning assertion fails and the prober reports what a 1.13 lightning strike
+actually became: `entity.painting.break` and `block.note_block.xylophone`.
+
+Unprompted confirmation from the same runs: a real 1.13 world's own mob sounds
+reached the 1.20.4 client as `id=336` and `id=340`, which are exactly
+`entity.cow.ambient` and `entity.cow.step` in 1.20.4's official registry. Those
+numbers passed through the table without anything asking for them.
+
+Still not verified by a human listening: no one has put an ear to it.
 
 ## Particles
 
@@ -253,7 +283,11 @@ a `tools/DumpRegistry.java` dump of the 1.13 jar, with the dumper required to
 reproduce `items.json` exactly first. The particle table was generated with the
 by-id lookup from the start and so never had the fault the sound table had.
 
-Not verified by a human watching. Covered by `ParticleTranslationTests`.
+Verified against real servers by the same run: `flame` (no payload), `block`
+(block-state payload) and `dust` (four floats) were driven from each backend's
+console and arrived with the receiving version's own registry ids — `23/3/11`
+toward 1.13, `30/2/14` toward 1.20.4, the latter checked against 1.20.4's
+`registries.json`. Still not verified by a human watching.
 
 ## Deliberately unsupported
 

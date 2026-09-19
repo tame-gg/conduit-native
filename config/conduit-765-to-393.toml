@@ -21,6 +21,13 @@ port = 25613
 initial = ["lobby"]
 fallback = ["lobby"]
 
+# This config exists to exercise Conduit's OWN translator for this pair, so the
+# Via ecosystem is turned off here. Translation is enabled by default and
+# via-preferred would carry these packets instead, leaving the native path --
+# the thing under test -- unexercised.
+[translation]
+enabled = false
+
 # Conduit Ops defaults (schema 3)
 [maintenance]
 enabled = true

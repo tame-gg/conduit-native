@@ -101,8 +101,9 @@ version loses sounds because of anything in this table.
 the pair in both directions under scripted real-client/server probes, but the
 dropped list above is intentional for the native translator and human
 mouse/keyboard play was not exercised here. Sounds and particles are no longer on
-it, but nobody has listened to or looked at them either: they are covered by
-tests, not by an ear or an eye.
+it: both are checked against real 1.13 and 1.20.4 servers, comparing the registry
+id that reaches the client against Mojang's own registry report rather than
+against Conduit's own table. Nobody has listened to or looked at them, though.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 
