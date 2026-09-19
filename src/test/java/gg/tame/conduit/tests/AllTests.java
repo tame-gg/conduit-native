@@ -107,6 +107,7 @@ public final class AllTests {
     ConfigValidationTests.run();
     ProxyProtocolTests.run();
     ViaOverrideTests.run();
+    ReleaseJarTests.run();
     ShutdownTests.run();
     RoutingFailoverTests.run();
     LifecycleRaceTests.run();

@@ -179,6 +179,18 @@ try {
   # Velocity's Brigadier, not Mojang's: only the fork has what velocity-api's own classes call.
   $brigadier = & (Join-Path $jdk "javap.exe") -cp $jar com.mojang.brigadier.builder.ArgumentBuilder
   if (-not ($brigadier -match "requiresWithContext")) { throw "the jar's Brigadier is not Velocity's fork" }
+
+  # And then the jar is actually started, in an empty folder, with a Velocity plugin in it. The
+  # entries above say the classes are present; only a run says a user's download works. The suite
+  # runs before the jar exists, so this is the pass that has one to give it.
+  $cpArgs = Join-Path $classes "classpath-args.txt"
+  if (Test-Path $cpArgs) {
+    Write-Host "starting the jar in an empty folder..."
+    cmd /c "java -ea `"-Dconduit.release.jar=$jar`" `"@$cpArgs`" gg.tame.conduit.tests.ReleaseJarTests"
+    if ($LASTEXITCODE -ne 0) { throw "the packaged jar did not start a Velocity plugin from an empty folder" }
+  } else {
+    Write-Host "  no $cpArgs, so the empty-folder start was not run (-SkipBuild)" -ForegroundColor Yellow
+  }
 } finally {
   Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
