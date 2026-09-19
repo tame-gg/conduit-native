@@ -17,9 +17,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * authentication and before anything is decided about them, maintenance included. Its default
  * provider answers what Conduit would. When a plugin sets its own, that function answers for the
  * player everywhere: to Velocity plugins directly, and to Conduit through a native provider installed
- * in that plugin's name, so Conduit drops it when the plugin is disabled. Conduit's answer is a
- * boolean, and UNDEFINED reads as false there, as {@code PermissionSubject.hasPermission} reads it.
- * What is kept for a player goes at their PlayerDisconnectEvent, which every set-up player gets.
+ * in that plugin's name, so Conduit drops it when the plugin is disabled. UNDEFINED is carried
+ * through as such, so {@code conduit.admin} may still answer for a node the function left unsaid,
+ * while a FALSE from the function refuses even an admin; {@code hasPermission} still reads both as
+ * false.
+ *
+ * <p>What is kept for a player goes at their PlayerDisconnectEvent, which every set-up player gets.
  */
 final class VelocityPermissions {
   /** A function, and the plugin whose code it is; no function means the event left the default. */
@@ -29,11 +32,15 @@ final class VelocityPermissions {
   private final VelocityEnvironment environment;
   private final ConcurrentHashMap<Player, Grant> grants = new ConcurrentHashMap<>();
   private final PermissionProvider provider = new PermissionProvider() {
-    @Override public boolean hasPermission(PermissionSubject subject, String permission) { return check(subject, permission); }
+    @Override public boolean hasPermission(PermissionSubject subject, String permission) {
+      return Boolean.TRUE.equals(value(subject, permission));
+    }
+    /** UNDEFINED stays unsaid here, so conduit.admin can still answer for it; FALSE is a refusal. */
+    @Override public Boolean permissionValue(PermissionSubject subject, String permission) { return value(subject, permission); }
     /**
      * A player with a plugin's function is that plugin's; anyone else is answered by Conduit's own
-     * provider, and is managed only if that is. Otherwise Conduit's permissive default, reached
-     * through here, would let everyone a plugin left alone through maintenance.
+     * provider, and is managed only if that is. Otherwise Conduit's blanket default, reached
+     * through here, would decide for everyone a plugin left alone.
      */
     @Override public boolean manages(PermissionSubject subject) {
       Grant grant = subject instanceof Player player ? grants.get(player) : null;
@@ -50,7 +57,7 @@ final class VelocityPermissions {
     if (!environment.events.listening(PermissionsSetupEvent.class)) return;
     Player nativePlayer = player.nativePlayer();
     com.velocitypowered.api.permission.PermissionProvider defaults =
-        subject -> permission -> Tristate.fromBoolean(conduitDefault(nativePlayer, permission));
+        subject -> permission -> conduitDefault(nativePlayer, permission);
     // createFunction is plugin code too, so it runs on the adapter's threads with the handlers.
     CompletableFuture<Grant> settled = environment.events.fire(new PermissionsSetupEvent(player, defaults)).thenApplyAsync(event -> {
       if (event.getProvider() == defaults) return CONDUIT_DEFAULT;
@@ -92,30 +99,41 @@ final class VelocityPermissions {
     environment.conduit.setPermissionProvider(plugin.handle, provider);
   }
 
-  /** Conduit asking, often on a player's connection thread: the plugin's function answers on the adapter's. */
-  private boolean check(PermissionSubject subject, String permission) {
-    if (!(subject instanceof Player player)) return before.hasPermission(subject, permission);
+  /**
+   * Conduit asking, often on a player's connection thread: the plugin's function answers on the
+   * adapter's. TRUE granted, FALSE denied outright, null nothing said -- which is what a function's
+   * UNDEFINED means, and what Conduit's {@code conduit.admin} is allowed to answer for.
+   */
+  private Boolean value(PermissionSubject subject, String permission) {
+    if (!(subject instanceof Player player)) return before.permissionValue(subject, permission);
     Grant grant = grants.get(player);
     if (grant == null) {
       // Not set up: asked before PlayerSetupEvent reached the adapter, or after the player left. While
       // a plugin's functions are in force, such a player has no permissions, rather than all the
       // default grants.
       boolean online = environment.conduit.player(player.uniqueId()).filter(live -> live == player).isPresent();
-      return online && before.hasPermission(subject, permission);
+      return online ? before.permissionValue(subject, permission) : Boolean.FALSE;
     }
-    if (grant.function == null) return before.hasPermission(subject, permission);
+    if (grant.function == null) return before.permissionValue(subject, permission);
     CompletableFuture<Tristate> answer = CompletableFuture.supplyAsync(() -> grant.function.getPermissionValue(permission), environment.work);
-    return environment.await(answer, "a permission check for " + permission) && answer.join().asBoolean();
+    if (!environment.await(answer, "a permission check for " + permission)) return Boolean.FALSE;
+    return switch (answer.join()) {
+      case TRUE -> Boolean.TRUE;
+      case FALSE -> Boolean.FALSE;
+      case UNDEFINED -> null;
+    };
   }
 
   /** What Conduit answers without any Velocity function: its provider, or the one this displaced. */
-  private boolean conduitDefault(Player player, String permission) {
+  private Tristate conduitDefault(Player player, String permission) {
     PermissionProvider current = environment.conduit.permissions();
-    try { return (current == provider ? before : current).hasPermission(player, permission); }
-    catch (RuntimeException | LinkageError failed) {
+    try {
+      Boolean value = (current == provider ? before : current).permissionValue(player, permission);
+      return value == null ? Tristate.UNDEFINED : Tristate.fromBoolean(value);
+    } catch (RuntimeException | LinkageError failed) {
       // As Conduit treats a provider that throws: the permission is denied.
       environment.log.log(java.util.logging.Level.WARNING, "permission provider failed on " + permission, failed);
-      return false;
+      return Tristate.FALSE;
     }
   }
 }

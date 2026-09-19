@@ -25,21 +25,34 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   private final java.util.Set<Plugin> retired = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
   /** Where PostCommandEvent goes; null for a manager no proxy runs, which then fires nothing. */
   private final gg.tame.conduit.api.event.EventManager events;
+  /**
+   * Told after every change to what is registered, so the proxy can declare the command tree again
+   * to clients already connected. Run outside this manager's lock: it writes to sockets.
+   */
+  private volatile Runnable changed = () -> { };
   public CommandManager() { this(null); }
   public CommandManager(gg.tame.conduit.api.event.EventManager events) { this.events = events; }
-  public synchronized void register(RegisteredCommand command) {
-    install(command, null);
-    builtIns.add(command);
+  /** Installs the listener told, after the fact, that the set of registered commands changed. */
+  public void onChanged(Runnable listener) { this.changed = listener == null ? () -> { } : listener; }
+  public void register(RegisteredCommand command) {
+    synchronized (this) {
+      install(command, null);
+      builtIns.add(command);
+    }
+    changed.run();
   }
   /**
    * A plugin's command displaces a built-in holding the same name, as on Velocity, where a hub
    * plugin's /hub and /lobby were refused outright because Conduit's /hub and /lobby shortcut held
    * them. Another plugin's name is never displaced, and neither is /conduit.
    */
-  public synchronized void register(Plugin plugin, RegisteredCommand command) {
-    if (retired.contains(plugin)) throw new IllegalStateException("plugin " + plugin.description().id() + " is disabled");
-    install(command, plugin);
-    owned.computeIfAbsent(plugin, ignored -> new ArrayList<>()).add(command);
+  public void register(Plugin plugin, RegisteredCommand command) {
+    synchronized (this) {
+      if (retired.contains(plugin)) throw new IllegalStateException("plugin " + plugin.description().id() + " is disabled");
+      install(command, plugin);
+      owned.computeIfAbsent(plugin, ignored -> new ArrayList<>()).add(command);
+    }
+    changed.run();
   }
   private void install(RegisteredCommand command, Plugin plugin) {
     // Every key is checked before any is installed: a collision on the second alias used to leave
@@ -82,7 +95,14 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
         requirement == null ? null : (source, arguments) -> requirement.test(external(source), arguments)));
   }
   /** Removes a command by any of its names; returns it, or null when nothing matched. */
-  public synchronized RegisteredCommand unregister(String name) {
+  public RegisteredCommand unregister(String name) {
+    RegisteredCommand gone;
+    synchronized (this) { gone = remove(name); }
+    if (gone != null) changed.run();
+    return gone;
+  }
+  /** The removal itself, for a caller already holding the lock. */
+  private RegisteredCommand remove(String name) {
     RegisteredCommand command = commands.get(normalize(name));
     if (command == null) return null;
     commands.entrySet().removeIf(entry -> entry.getValue() == command);
@@ -95,27 +115,33 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     }
     return command;
   }
-  @Override public synchronized void unregister(Plugin plugin, String name) {
-    List<RegisteredCommand> list = owned.get(plugin);
-    RegisteredCommand command = commands.get(normalize(name));
-    // Scoped to the caller: one plugin unregistering "server" must not take out another plugin's
-    // command or a built-in. Removal from the owned list is by identity, so unregistering by an
-    // alias no longer leaves the command behind for unregisterAll to trip over.
-    if (command == null || list == null || !list.remove(command)) return;
-    unregister(command.name());
+  @Override public void unregister(Plugin plugin, String name) {
+    synchronized (this) {
+      List<RegisteredCommand> list = owned.get(plugin);
+      RegisteredCommand command = commands.get(normalize(name));
+      // Scoped to the caller: one plugin unregistering "server" must not take out another plugin's
+      // command or a built-in. Removal from the owned list is by identity, so unregistering by an
+      // alias no longer leaves the command behind for unregisterAll to trip over.
+      if (command == null || list == null || !list.remove(command)) return;
+      remove(command.name());
+    }
+    changed.run();
   }
-  @Override public synchronized void unregisterAll(Plugin plugin) {
-    List<RegisteredCommand> list = owned.remove(plugin);
-    if (list == null) return;
-    for (RegisteredCommand command : new ArrayList<>(list)) unregister(command.name());
+  @Override public void unregisterAll(Plugin plugin) {
+    synchronized (this) {
+      List<RegisteredCommand> list = owned.remove(plugin);
+      if (list == null) return;
+      for (RegisteredCommand command : new ArrayList<>(list)) remove(command.name());
+    }
+    changed.run();
   }
   /**
    * Removes the plugin's commands and refuses it any more: it has been disabled. A plugin thread
    * still running at the disable could otherwise register a command after its commands were swept,
    * and that command outlived the plugin, running code from a closed class loader.
    */
-  public synchronized void retire(Plugin plugin) {
-    retired.add(plugin);
+  public void retire(Plugin plugin) {
+    synchronized (this) { retired.add(plugin); }
     unregisterAll(plugin);
   }
   public boolean dispatch(CommandSource source, String line) {
@@ -210,8 +236,8 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   /**
    * Which names of the client command tree {@code source} is shown: a command's name when it may run
    * it, and {@code "conduit <subcommand>"} for each /conduit subcommand. A name nothing is registered
-   * under is shown, as it always was. Read when the tree is sent, so a permission granted later shows
-   * with the next tree the backend sends.
+   * under is shown, as it always was. Read when the tree is sent, which is on join, on a server switch,
+   * and again whenever a command or the permission provider changes.
    */
   public java.util.function.Predicate<String> shownTo(CommandSource source) {
     List<String> subcommands = CoreCommands.conduitSubcommands(source);

@@ -90,6 +90,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.modded = new ModdedService(configuration.modded());
     this.commands = new CommandManager(events);
     this.players = new PlayerManager();
+    this.commands.onChanged(this::refreshCommandTrees);
     this.boundAddress = configuration.listener();
     this.servers = new ServerViews(this, selector.registry(), selector);
     this.playerViews = new PlayerViews(players);
@@ -126,18 +127,42 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   @Override public PluginManager plugins() { return plugins; }
   @Override public Scheduler scheduler() { return scheduler; }
   @Override public PermissionProvider permissions() { return permissions.provider(); }
-  @Override public synchronized void setPermissionProvider(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {
-    if (owner == null || provider == null) throw new IllegalArgumentException("owner and provider are required");
-    // Installed after its owner's release, a provider would answer every check for good, from a
-    // plugin whose class loader was closed.
-    if (released.contains(owner)) throw new IllegalStateException("plugin " + owner.description().id() + " is disabled");
-    permissions = new PermissionGrant(owner, provider);
+  @Override public void setPermissionProvider(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {
+    synchronized (this) {
+      if (owner == null || provider == null) throw new IllegalArgumentException("owner and provider are required");
+      // Installed after its owner's release, a provider would answer every check for good, from a
+      // plugin whose class loader was closed.
+      if (released.contains(owner)) throw new IllegalStateException("plugin " + owner.description().id() + " is disabled");
+      permissions = new PermissionGrant(owner, provider);
+    }
+    // Outside the lock: this writes to every client's socket. Who may see which command has just
+    // changed for everyone connected, and the tree they hold says otherwise until they are told.
+    refreshCommandTrees();
   }
   /** Whatever {@code plugin} installed stops answering, before its class loader closes under it. */
   public void pluginReleased(gg.tame.conduit.api.plugin.Plugin plugin) {
+    boolean wasTheirs;
     synchronized (this) {
       released.add(plugin);
-      if (permissions.owner() == plugin) permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
+      wasTheirs = permissions.owner() == plugin;
+      if (wasTheirs) permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
+    }
+    if (wasTheirs) refreshCommandTrees();
+  }
+  /**
+   * Declares the command tree again to every connected client, for the ones new enough to parse one.
+   * A 1.13+ client is sent the tree on join and on a server switch and never in between, so without
+   * this a command registered, or a permission granted, mid-session showed up only after a switch.
+   *
+   * <p>ponytail: this writes to each client in turn on the caller's thread, so a plugin registering
+   * a command pays for the resend; hand it to a pool if a big network ever feels it.
+   */
+  public void refreshCommandTrees() {
+    for (gg.tame.conduit.session.TrackedPlayer player : players.all()) {
+      try { player.refreshCommands(); }
+      catch (RuntimeException | LinkageError failed) {
+        gg.tame.conduit.log.ConduitLog.error("could not resend the command tree to " + player.username(), failed);
+      }
     }
   }
   /** Plugins released, which may not install a provider again. Guarded by {@code this}. */

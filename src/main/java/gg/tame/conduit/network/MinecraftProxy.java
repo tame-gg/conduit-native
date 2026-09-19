@@ -465,8 +465,7 @@ public final class MinecraftProxy implements AutoCloseable {
     PermissionProvider provider = runtime.permissions();
     try {
       // A provider answering the same for everyone must not decide who gets in.
-      return provider.manages(player)
-          && (provider.hasPermission(player, Permissions.MAINTENANCE_BYPASS) || provider.hasPermission(player, Permissions.CONDUIT_ADMIN));
+      return provider.manages(player) && Permissions.allows(provider, player, Permissions.MAINTENANCE_BYPASS);
     } catch (RuntimeException | LinkageError failure) {
       ConduitLog.error("permission provider failed deciding whether " + player.username() + " may bypass maintenance; refused", failure);
       return false;

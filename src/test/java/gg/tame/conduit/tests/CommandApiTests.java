@@ -61,7 +61,9 @@ public final class CommandApiTests {
     conduitSubcommandPermissionsAreIndividual();
     conduitIsNotThereWithoutAnyNode();
     adminNodeStandsForEveryConduitNode();
-    defaultProviderGrantsNoConduitNode();
+    defaultProviderGrantsNothing();
+    explicitDenyBeatsAdmin();
+    commandChangesReDeclareTheTree();
     sendCurrentReportsFailure();
     conduitSubcommandsMatchTheGraph();
     helpListsWhatTheSourceMayRun();
@@ -276,6 +278,50 @@ public final class CommandApiTests {
     }
     @Subscribe public void onStart(ProxyStartEvent event) { signal("foreign-event"); }
     @Override public void onDisable() { signal("disable:" + description().id()); }
+  }
+
+  /**
+   * A 1.13+ client is sent the command tree on join and on a server switch and never in between, so
+   * a command registered, unregistered or newly permitted mid-session used to stay invisible until
+   * the player switched servers. Every connected session is told to declare it again instead.
+   */
+  private static void commandChangesReDeclareTheTree() throws Exception {
+    Path root = TempFiles.dir("conduit-tree-refresh");
+    Path plugins = Files.createDirectories(root.resolve("plugins"));
+    buildPluginJar(plugins.resolve("perm.jar"), "perm", "perm.PermPlugin", 1, plugin("perm", "Perm", """
+        @Override public void onEnable() {
+          proxy().setPermissionProvider(this, (subject, node) -> true);
+        }
+        """));
+    ConduitRuntime runtime = runtime(plugins, root);
+    try {
+      Counting watcher = new Counting();
+      runtime.playerManager().add(watcher);
+      int joined = watcher.refreshes;
+      runtime.commandManager().register(new RegisteredCommand("late", List.of(), null,
+          (source, arguments) -> { }, (source, arguments) -> List.of()));
+      require(watcher.refreshes > joined, "a registered command declares the tree again");
+      int registered = watcher.refreshes;
+      runtime.commandManager().unregister("late");
+      require(watcher.refreshes > registered, "and so does taking one away");
+      int unregistered = watcher.refreshes;
+      require(runtime.commandManager().unregister("neverthere") == null, "nothing was registered under that name");
+      require(watcher.refreshes == unregistered, "a removal that removed nothing tells nobody");
+      runtime.pluginRuntime().loadAll();
+      require(watcher.refreshes > unregistered, "a permission provider changes who may run what, so the tree goes again");
+    } finally {
+      runtime.close();
+    }
+  }
+
+  /** A player index entry that counts what it was told, standing in for a connected session. */
+  private static final class Counting implements gg.tame.conduit.session.TrackedPlayer {
+    private volatile int refreshes;
+    @Override public java.util.UUID uniqueId() { return java.util.UUID.nameUUIDFromBytes("counting".getBytes(StandardCharsets.UTF_8)); }
+    @Override public String username() { return "Counting"; }
+    @Override public String currentBackend() { return "lobby"; }
+    @Override public boolean transferTo(String serverName) { return false; }
+    @Override public void refreshCommands() { refreshes++; }
   }
 
   /** A provider left installed after its plugin went would answer from a closed class loader. */
@@ -570,15 +616,15 @@ public final class CommandApiTests {
 
   /**
    * Conduit's default provider granted every node, so with no permissions plugin any player could
-   * reload the proxy or kick players. It grants no Conduit node now, and still every other one.
+   * reload the proxy or kick players. Denying only the {@code conduit.} nodes left every other
+   * plugin's administrative node open to everyone, so it now grants a player nothing at all.
    */
-  private static void defaultProviderGrantsNoConduitNode() throws Exception {
+  private static void defaultProviderGrantsNothing() throws Exception {
     var provider = new gg.tame.conduit.permission.DefaultPermissionProvider();
     for (String node : List.of(Permissions.RELOAD, Permissions.SEND, Permissions.CONDUIT_ADMIN, Permissions.MAINTENANCE_BYPASS,
-        Permissions.DRAIN_BYPASS, "Conduit.Command.Doctor")) {
+        Permissions.DRAIN_BYPASS, "Conduit.Command.Doctor", "minimotd.admin", "maintenance.admin")) {
       require(!provider.hasPermission(null, node), "default does not grant " + node);
     }
-    require(provider.hasPermission(null, "minimotd.admin"), "another plugin's node is granted as before");
     Fixture fixture = new Fixture();
     DefaultedPlayer guest = new DefaultedPlayer(provider);
     require(fixture.commands.dispatch(guest, "/server survival"), "/server still works on the default");
@@ -588,6 +634,35 @@ public final class CommandApiTests {
     require(fixture.commands.dispatch(new ConsoleCommandSource(), "/conduit uptime"), "the console administers regardless");
   }
 
+  /**
+   * {@code conduit.admin} stands for every Conduit node, but not over a node a provider denies
+   * outright: permissions used to be yes or no, so the admin grant answered for a node explicitly
+   * set to false and the player ran the command anyway.
+   */
+  private static void explicitDenyBeatsAdmin() throws Exception {
+    var provider = new gg.tame.conduit.api.permission.PermissionProvider() {
+      @Override public boolean hasPermission(gg.tame.conduit.api.permission.PermissionSubject subject, String permission) {
+        return Boolean.TRUE.equals(permissionValue(subject, permission));
+      }
+      @Override public Boolean permissionValue(gg.tame.conduit.api.permission.PermissionSubject subject, String permission) {
+        if (permission.equals(Permissions.CONDUIT_ADMIN)) return Boolean.TRUE;
+        if (permission.equals(Permissions.RELOAD)) return Boolean.FALSE;   // denied outright
+        return null;                                                       // nothing said
+      }
+    };
+    DefaultedPlayer admin = new DefaultedPlayer(provider);
+    require(!Permissions.allows(admin, Permissions.RELOAD), "an outright denial is obeyed over admin");
+    require(Permissions.allows(admin, Permissions.UPTIME), "a node nobody mentioned still falls to admin");
+    require(!Permissions.allows(admin, "minimotd.admin"), "admin never stands for a plugin's node");
+    require(!Permissions.allows(provider, admin, Permissions.RELOAD), "and the same asked of the provider");
+    require(Permissions.allows(provider, admin, Permissions.UPTIME), "and the same asked of the provider");
+    Fixture fixture = new Fixture();
+    require(fixture.commands.dispatch(admin, "/conduit reload"), "the command is there for an admin");
+    require(admin.said.stream().anyMatch(line -> line.contains("permission")), "but refused, said " + admin.said);
+    require(!fixture.commands.shownTo(admin).test("conduit reload"), "and the client tree does not offer it");
+    require(fixture.commands.shownTo(admin).test("conduit uptime"), "while the rest of /conduit stays");
+  }
+
   /** A player answered by a real provider rather than a fixed set. */
   private static final class DefaultedPlayer implements CommandSource {
     private final gg.tame.conduit.api.permission.PermissionProvider provider;
@@ -595,6 +670,7 @@ public final class CommandApiTests {
     DefaultedPlayer(gg.tame.conduit.api.permission.PermissionProvider provider) { this.provider = provider; }
     @Override public String username() { return "Guest"; }
     @Override public boolean hasPermission(String permission) { return provider.hasPermission(this, permission); }
+    @Override public Boolean permissionValue(String permission) { return provider.permissionValue(this, permission); }
     @Override public void sendMessage(String message) { said.add(message); }
     @Override public void sendMessage(Text text) { said.add(text == null ? "" : text.plain()); }
     @Override public String currentBackend() { return "lobby"; }

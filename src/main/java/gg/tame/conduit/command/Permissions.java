@@ -40,9 +40,21 @@ public final class Permissions {
 
   /**
    * Whether {@code source} holds {@code node}. {@link #CONDUIT_ADMIN} stands for every Conduit node,
-   * and for nothing of a plugin's.
+   * and for nothing of a plugin's -- but only where the node itself was left unsaid: a provider that
+   * denies {@code node} outright is obeyed, so admin plus one explicit {@code false} refuses that one
+   * command. A provider with nothing but yes and no never denies outright, and behaves as before.
    */
   public static boolean allows(gg.tame.conduit.api.permission.PermissionSubject source, String node) {
-    return source.hasPermission(node) || node.startsWith("conduit.") && source.hasPermission(CONDUIT_ADMIN);
+    Boolean explicit = source.permissionValue(node);
+    if (explicit != null) return explicit;
+    return node.startsWith("conduit.") && source.hasPermission(CONDUIT_ADMIN);
+  }
+
+  /** The same question asked of a provider directly, for a caller holding one it read once. */
+  public static boolean allows(gg.tame.conduit.api.permission.PermissionProvider provider,
+      gg.tame.conduit.api.permission.PermissionSubject subject, String node) {
+    Boolean explicit = provider.permissionValue(subject, node);
+    if (explicit != null) return explicit;
+    return node.startsWith("conduit.") && provider.hasPermission(subject, CONDUIT_ADMIN);
   }
 }

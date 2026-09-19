@@ -78,7 +78,11 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   /** The function PermissionsSetupEvent gave this player, else Conduit's own yes or no. */
   @Override public Tristate getPermissionValue(String permission) {
     var function = environment.permissions.function(player);
-    return function != null ? function.getPermissionValue(permission) : Tristate.fromBoolean(player.hasPermission(permission));
+    if (function != null) return function.getPermissionValue(permission);
+    // Conduit says TRUE, FALSE or nothing at all, and nothing at all is UNDEFINED here, as it is on
+    // Velocity for a player no permissions plugin has an opinion about.
+    Boolean value = player.permissionValue(permission);
+    return value == null ? Tristate.UNDEFINED : Tristate.fromBoolean(value);
   }
   @Override public void deliver(Component message) { player.sendMessage(Texts.toConduit(message)); }
   @Override public void disconnect(Component reason) { player.disconnect(Texts.toConduit(reason)); }

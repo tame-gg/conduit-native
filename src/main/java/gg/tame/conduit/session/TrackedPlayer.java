@@ -9,4 +9,11 @@ public interface TrackedPlayer {
   String username();
   String currentBackend();
   boolean transferTo(String serverName);
+
+  /**
+   * Sends the client its command tree again, for a 1.13+ client whose tree would otherwise stay as
+   * the backend last declared it until the next server switch. Nothing to do for an entry that is
+   * not a live session.
+   */
+  default void refreshCommands() {}
 }

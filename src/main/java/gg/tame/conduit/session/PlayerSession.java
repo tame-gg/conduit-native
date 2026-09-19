@@ -139,6 +139,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private final SwitchJoinGate awaitingBackendJoinGame;
   private final KeepAliveClock keepAlive;
   private volatile boolean commandsDeclared;
+  /** The backend's own Declare Commands, before the merge, so the tree can be rebuilt and resent. */
+  private volatile byte[] lastBackendCommands;
   private static final int MAX_DEFERRED_PLAY = 512;
   /** Set once Conduit has synthesised finish_configuration for a non-configuration backend. */
   private volatile boolean configurationFinishSynthesized;
@@ -1793,6 +1795,25 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (protocol.hasConfiguration()) return ConnectionState.CONFIGURATION;
     return ConnectionState.PLAY;
   }
+  /**
+   * Declares the command tree again, built from the backend's last one and whatever is registered
+   * and permitted now. Without this the tree a 1.13+ client parses against only changed when the
+   * backend next sent one -- on a server switch -- so a command registered, unregistered or newly
+   * permitted mid-session stayed invisible to the client until then.
+   *
+   * <p>Nothing to send before the backend has declared a tree: the merge happens when it does, and
+   * picks up the change on its own.
+   */
+  @Override public void refreshCommands() {
+    byte[] backendTree = lastBackendCommands;
+    if (backendTree == null || !commandsDeclared || clientState.state() != ConnectionState.PLAY) return;
+    // ponytail: a switch racing this may drop the resend or send one the new backend then replaces;
+    // either way the switch declares its own tree right after, so the client ends up correct.
+    try { writeClient(maybeMergeCommands(backendTree)); }
+    catch (IOException | RuntimeException unsent) {
+      ProtocolTrace.note("command tree resend skipped: " + unsent);
+    }
+  }
   private byte[] maybeMergeCommands(byte[] packet) throws IOException {
     if (clientState.state() != ConnectionState.PLAY) return packet;
     int id = PlayPackets.packetId(packet);
@@ -1800,6 +1821,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     try {
       byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names(), commands.displacedBuiltIns(), commands.shownTo(this));
       commandsDeclared = true;
+      lastBackendCommands = packet;
       gg.tame.conduit.protocol.ProfileTrace.dumpCommandMerge(protocol, packet, merged);
       return merged;
     } catch (IOException exception) {
@@ -2298,6 +2320,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         }
       }
       commandsDeclared = false;
+      lastBackendCommands = null;
       // A client with a Configuration phase is held in it until the phase finishes, so its Play
       // packets cannot race the new backend's Join Game. One without a phase has nothing holding
       // it, and this is what holds it instead -- whatever carries the pair, not only Via. The new
@@ -2583,6 +2606,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     catch (RuntimeException | LinkageError failure) {
       gg.tame.conduit.log.ConduitLog.error("permission provider failed on " + permission, failure);
       return false;
+    }
+  }
+  /** As above, keeping an outright denial apart from silence so conduit.admin does not undo it. */
+  @Override public Boolean permissionValue(String permission) {
+    try { return runtime.permissions().permissionValue(this, permission); }
+    catch (RuntimeException | LinkageError failure) {
+      gg.tame.conduit.log.ConduitLog.error("permission provider failed on " + permission, failure);
+      // Denied outright, not left unsaid: a provider that failed must not fall through to admin.
+      return Boolean.FALSE;
     }
   }
   @Override public void sendMessage(String message) {

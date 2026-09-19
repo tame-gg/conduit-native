@@ -179,8 +179,8 @@ public final class CommandGraphs {
      * A {@code brigadier:string} argument. {@code askServer} sets Brigadier's
      * {@code minecraft:ask_server} suggestion type, which is what makes the client send a
      * tab-complete request rather than guessing locally. It is the only way to offer names that
-     * change while a client is connected, because the command tree is sent once per join and once
-     * per server switch and never refreshed in between.
+     * change while a client is connected: the tree is sent on join, on a server switch, and when
+     * Conduit declares it again for a command or permission change, but never per keystroke.
      */
     record Argument(String name, boolean greedy, boolean askServer, List<ProxyNode> children) implements ProxyNode {
       public Argument(String name, boolean greedy, boolean askServer) {

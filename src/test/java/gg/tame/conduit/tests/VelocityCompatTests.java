@@ -600,7 +600,7 @@ public final class VelocityCompatTests {
           alice.chat("/vtest hello");
           alice.awaitText("hello Alice via vtest");
           alice.chat("/vt whoami");
-          alice.awaitText("found Alice on lobby same=true proto=47 count=1 match=1 there=1 addr=127.0.0.1 host=localhost profile=Alice active=true perm=true state=PLAY online=false");
+          alice.awaitText("found Alice on lobby same=true proto=47 count=1 match=1 there=1 addr=127.0.0.1 host=localhost profile=Alice active=true perm=false state=PLAY online=false");
           alice.chat("/vre");
           alice.awaitText("vre second");
           require(!alice.saw(frame -> text(frame).contains("vre first")), "the replaced command is gone");
@@ -656,11 +656,12 @@ public final class VelocityCompatTests {
           alice.await(frame -> text(frame).contains("rich") && text(frame).contains("red") && text(frame).contains("bold"), "a MiniMessage rich message, formatting kept");
 
           // PermissionsSetupEvent: before LoginEvent, and the plugin's function answers for Erin
-          // everywhere, Conduit's own command permission included. Alice keeps Conduit's default.
-          awaitSignal("permsetup:Alice:true");
+          // everywhere, Conduit's own command permission included. Alice keeps Conduit's default, which
+          // says nothing about any node, so the setup event's own function answers UNDEFINED.
+          awaitSignal("permsetup:Alice:false");
           Client erin = Client.join(proxy.port(), "Erin");
           erin.await(frame -> frame[0] == 0x01, "Erin's Join Game");
-          require(before("permsetup:Erin:true", "login:Erin") && signals.contains("login-perm:true:false"),
+          require(before("permsetup:Erin:false", "login:Erin") && signals.contains("login-perm:true:false"),
               "permissions are set up before LoginEvent: " + signals);
           erin.chat("/vtest perms");
           awaitSignal("perms:Erin:true:UNDEFINED:FALSE");
@@ -670,14 +671,16 @@ public final class VelocityCompatTests {
           erin.send(clientSettings("de_de"));
           erin.chat("/vtest locale");
           awaitSignal("locale:Erin:de_DE:true:de_DE");
+          // Alice has no function, and Conduit's default says nothing about anyone.
           alice.chat("/vtest perms");
-          awaitSignal("perms:Alice:true:TRUE:TRUE");
+          awaitSignal("perms:Alice:false:UNDEFINED:UNDEFINED");
           erin.chat("/nsecret");
           erin.awaitText("permission");
           awaitSignal("perm-thread:true");
-          alice.chat("/nsecret");
-          alice.awaitText("secret ok");
           require(!erin.saw(frame -> text(frame).contains("secret ok")), "Erin's function refused a native command");
+          alice.chat("/nsecret");
+          alice.awaitText("permission");
+          require(!alice.saw(frame -> text(frame).contains("secret ok")), "and Conduit's default grants nobody a plugin's node");
 
           // Scheduler.
           awaitSignal("task");
@@ -745,9 +748,9 @@ public final class VelocityCompatTests {
           int ticks = count("tick");
           Thread.sleep(400);
           require(count("tick") <= ticks + 1, "repeating task stopped");
-          // Its permission function went with it: Erin is back on Conduit's default.
+          // Its permission function went with it: Erin is back on Conduit's default, which grants nothing.
           erin.chat("/nsecret");
-          erin.awaitText("secret ok");
+          erin.awaitText("permission");
           erin.close();
           alice.chat("/vtest hello");
           awaitIn(backends, "survival:chat:/vtest hello");

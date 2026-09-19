@@ -68,8 +68,7 @@ public final class MaintenanceService {
   }
 
   public boolean allows(gg.tame.conduit.command.CommandSource source) {
-    return allows(source.username(),
-        source.hasPermission(Permissions.MAINTENANCE_BYPASS) || source.hasPermission(Permissions.CONDUIT_ADMIN));
+    return allows(source.username(), Permissions.allows(source, Permissions.MAINTENANCE_BYPASS));
   }
 
   public String kickMessage() { return settings.kickMessage(); }

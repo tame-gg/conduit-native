@@ -98,7 +98,8 @@ public final class PluginRuntimeTests {
         require(SIGNALS.contains("refused:" + what), "a disabled plugin's " + what + " is refused, signals " + SIGNALS);
       }
       require(runtime.commandManager().get("late").isEmpty(), "no command of the disabled plugin is live");
-      require(runtime.permissions().hasPermission(null, "anything"), "Conduit's default provider still answers");
+      require(runtime.permissions() instanceof gg.tame.conduit.permission.DefaultPermissionProvider,
+          "Conduit's default provider answers again");
       runtime.events().fire(ping());
       require(!SIGNALS.contains("late-heard"), "no listener of the disabled plugin hears events");
     } finally {
@@ -138,7 +139,7 @@ public final class PluginRuntimeTests {
       runtime.pluginRuntime().loadAll();
       require(runtime.plugins().plugin("halfway").isEmpty(), "the plugin is not enabled");
       require(runtime.commandManager().get("halfway").isEmpty(), "its command went");
-      require(runtime.permissions().hasPermission(null, "anything"), "its provider went");
+      require(runtime.permissions() instanceof gg.tame.conduit.permission.DefaultPermissionProvider, "its provider went");
       Thread.sleep(50);
       SIGNALS.clear();
       Thread.sleep(100);

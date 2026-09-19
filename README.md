@@ -339,9 +339,9 @@ there and their line goes to the backend. `/conduit shutdown` is the console's a
 Maintenance lets in the names on its allowlist and players a permission plugin grants `conduit.maintenance.bypass`
 or `conduit.admin`, asked once the plugin has set the player up.
 
-With no permissions plugin, Conduit's default provider grants a player **no** `conduit.` node: the
-administrative commands are the console's until a plugin such as LuckPerms hands them out. Other plugins'
-nodes are still granted by that default, as before.
+With no permissions plugin, Conduit's default provider grants a player **no node at all** — not Conduit's,
+not another plugin's: the administrative commands are the console's until a plugin such as LuckPerms hands
+them out. That is what a Velocity plugin already expects of a check nobody answered.
 
 ## Server list
 
@@ -539,7 +539,7 @@ Pipeline (already framed / decompressed / decrypted):
 ### Permission nodes
 
 Asked through `PermissionProvider`, which a permissions plugin replaces (LuckPerms does, through the
-Velocity layer). The default grants no `conduit.` node to a player; the console holds every node.
+Velocity layer). The default grants a player no node; the console holds every node.
 
 * `/send` (a player, `current`, or a whole server): `conduit.command.send`
 * `/glist`, `/plist`, `/find`, `/alert`, `/gkick`: `conduit.command.glist` / `plist` / `find` / `alert` / `gkick`
@@ -549,10 +549,13 @@ Velocity layer). The default grants no `conduit.` node to a player; the console 
   `heap`: `conduit.command.reload` / `maintenance` / `drain` / `doctor` / `diagnostics` / `attack` / `cache` /
   `dump` / `heap`
 * `conduit.maintenance.bypass`, `conduit.drain.bypass`: past maintenance, onto a draining server
-* `conduit.admin`: stands for every `conduit.` node above
+* `conduit.admin`: stands for every `conduit.` node above, except one the permissions plugin denies
+  outright — a player given `conduit.admin` and an explicit `false` on one node is refused that one
 
 None for `/server`, the `/<server>` shortcuts, `/hub`, `/ping` or `/conduit help`. Tab completion and the
 command tree a 1.13+ client is sent offer a player only the commands and `/conduit` subcommands they may run.
+The tree is declared again whenever a command is registered or unregistered, or a permissions plugin installs
+or withdraws its provider, so a connected player does not have to switch servers to see the change.
 
 `/send` never lists backend addresses. Mass moves run with bounded concurrency; a failed player stays on the source backend.
 
