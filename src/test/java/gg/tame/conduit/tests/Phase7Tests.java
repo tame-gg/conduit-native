@@ -57,7 +57,7 @@ public final class Phase7Tests {
     players.add(kyle);
     players.add(steve);
     players.add(alex);
-    AdminSource admin = new AdminSource("Notch", "minigames", Set.of(Permissions.SERVER_SEND, Permissions.SERVER_SEND_OTHERS, Permissions.SERVER_SEND_MASS, Permissions.SERVER_USE, Permissions.CONDUIT_INFO));
+    AdminSource admin = new AdminSource("Notch", "minigames", Set.of(Permissions.SEND, Permissions.INFO));
     commands.dispatch(admin, "/send current survival");
     require(admin.messages.stream().anyMatch(line -> line.contains("only be used by a player")), "current from non-player");
     commands.dispatch(kyle, "/send current survival");
@@ -73,9 +73,9 @@ public final class Phase7Tests {
     require(admin.messages.stream().anyMatch(line -> line.contains("Player lobby2 is not online")), "unknown source as player");
     commands.dispatch(admin, "/send lobby survival2");
     require(admin.messages.stream().anyMatch(line -> line.contains("Unknown server: survival2")), "unknown dest");
-    AdminSource spectator = new AdminSource("Spec", "lobby", Set.of(Permissions.SERVER_SEND));
+    AdminSource spectator = new AdminSource("Spec", "lobby", Set.of());
     commands.dispatch(spectator, "/send Steve survival");
-    require(spectator.messages.stream().anyMatch(line -> line.toLowerCase().contains("permission")), "others permission");
+    require(spectator.messages.stream().anyMatch(line -> line.toLowerCase().contains("permission")), "send permission");
     require(steve.backend.equals("lobby"), "steve not moved without permission");
     commands.dispatch(admin, "/send lobby survival");
     require(steve.backend.equals("survival"), "mass moved steve");
@@ -108,7 +108,7 @@ public final class Phase7Tests {
     FakePlayer steve = new FakePlayer("Steve", "survival", UUID.fromString("00000000-0000-0000-0000-000000000012"));
     runtime.playerManager().add(kyle);
     runtime.playerManager().add(steve);
-    AdminSource admin = new AdminSource("Op", "lobby", Set.of(Permissions.PLUGINS, Permissions.GLIST, Permissions.FIND, Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
+    AdminSource admin = new AdminSource("Op", "lobby", Set.of(Permissions.PLUGINS, Permissions.GLIST, Permissions.FIND, Permissions.INFO, Permissions.CONDUIT_ADMIN));
     runtime.commandManager().dispatch(admin, "/conduit plugins");
     require(admin.messages.stream().anyMatch(line -> line.contains("Proxy plugins (2)")), "plugin panel");
     require(admin.messages.stream().anyMatch(line -> line.contains("ViaVersion") && line.contains("velocity")), "velocity plugin listed");

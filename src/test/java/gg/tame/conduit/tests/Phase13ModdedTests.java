@@ -231,7 +231,7 @@ public final class Phase13ModdedTests {
     runtime.bindConfigPath(config);
     CoreCommands.register(runtime);
     AdminSource admin = new AdminSource("Op", "lobby", Set.of(
-        Permissions.CONDUIT_ADMIN, Permissions.CONDUIT_INFO, Permissions.DOCTOR, Permissions.DIAGNOSTICS, Permissions.CACHE));
+        Permissions.CONDUIT_ADMIN, Permissions.INFO, Permissions.DOCTOR, Permissions.DIAGNOSTICS, Permissions.CACHE));
     runtime.commandManager().dispatch(admin, "/conduit doctor");
     require(admin.messages.stream().anyMatch(line -> line.contains("Mod compatibility")), "doctor modded");
     require(admin.messages.stream().anyMatch(line -> line.contains("Forge")), "doctor forge");

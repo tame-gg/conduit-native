@@ -119,8 +119,9 @@ public final class LoginLifecycleTests {
       require(ended(proxy, "Anyone") == LoginStatus.SUCCESSFUL_LOGIN, "a complete login");
 
       proxy.runtime.maintenance().enable();
-      // Conduit's default provider grants every node, and must still let nobody through maintenance.
-      require(proxy.runtime.permissions().hasPermission(null, BYPASS), "the default grants the node itself");
+      // Conduit's default provider grants no Conduit node, the bypass included; and even were it to,
+      // manages() keeps it from letting anyone through maintenance.
+      require(!proxy.runtime.permissions().hasPermission(null, BYPASS), "the default does not grant the bypass");
       refusedByMaintenance(proxy, "Nobody");
       require(lobby.logins.get() == 1, "the refused player never reached a backend");
       require(story(proxy, "Nobody").equals(List.of("PlayerSetupEvent", "PlayerDisconnectEvent")),
@@ -510,7 +511,7 @@ public final class LoginLifecycleTests {
         require(id(reply) == 0 && text(reply).contains(KICK), "refused: the plugin that would have let Midway in is gone, got " + text(reply));
       }
       require(waitFor(() -> ended(proxy, "Midway") != null, 10_000), "Midway's login ended");
-      require(proxy.runtime.permissions() instanceof gg.tame.conduit.permission.PermissivePermissionProvider,
+      require(proxy.runtime.permissions() instanceof gg.tame.conduit.permission.DefaultPermissionProvider,
           "Conduit's default is back, not a provider installed for a plugin that had gone, got " + proxy.runtime.permissions());
       require(waitFor(() -> adapterHolds("players") == 0 && adapterHolds("grants") == 0, 10_000), "and the adapter holds nothing for Midway");
     }

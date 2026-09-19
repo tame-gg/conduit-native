@@ -45,7 +45,7 @@ public final class ShutdownTests {
 
   /**
    * The operator had no way to stop the proxy gracefully: only a plugin could. The console can now,
-   * with a reason; a player cannot, since the default permission provider grants every node.
+   * with a reason; a player cannot, whatever their permissions.
    */
   private static void theConsoleStopsTheProxyAndAPlayerCannot() throws Exception {
     java.util.List<String> told = new java.util.concurrent.CopyOnWriteArrayList<>();

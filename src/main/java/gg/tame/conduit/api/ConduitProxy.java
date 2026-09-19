@@ -27,8 +27,9 @@ public interface ConduitProxy {
   PluginManager plugins();
   Scheduler scheduler();
   /**
-   * The permission provider in force: the default grants everything, until a plugin sets one. The
-   * default does not let anyone through maintenance mode (see {@link PermissionProvider#manages}).
+   * The permission provider in force. Until a plugin sets one, the default grants a player no
+   * {@code conduit.} node and every other node, and lets nobody through maintenance mode (see
+   * {@link PermissionProvider#manages}).
    */
   PermissionProvider permissions();
   /**

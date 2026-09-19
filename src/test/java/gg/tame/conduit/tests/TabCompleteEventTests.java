@@ -51,10 +51,10 @@ public final class TabCompleteEventTests {
         PlayerTabCompleteEvent first = fixture.recorder.of(PlayerTabCompleteEvent.class).getFirst();
         require(first.player().username().equals("Tabber") && first.partialMessage().equals("hel"), "the player and what they typed");
 
-        // A command name: Conduit's own matching commands are already in the list listeners see.
+        // A command name: Conduit's own matching commands are already in the list listeners see --
+        // those this player may run, so /server and not /send, a node nobody gave them.
         List<String> names = answered(client, lobby, "/se", List.of("/seed"));
-        require(names.size() == 3 && names.getFirst().equals("/seed") && names.containsAll(List.of("/send", "/server")),
-            "the backend's names, then Conduit's: " + names);
+        require(names.equals(List.of("/seed", "/server")), "the backend's names, then Conduit's: " + names);
         require(fixture.recorder.of(PlayerTabCompleteEvent.class).get(1).suggestions().equals(names), "the event saw the merged list");
 
         // Left alone, the backend's packet goes to the client as the backend wrote it.

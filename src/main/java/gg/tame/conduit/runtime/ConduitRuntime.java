@@ -20,7 +20,7 @@ import gg.tame.conduit.event.ConduitEventManager;
 import gg.tame.conduit.health.BackendHealthService;
 import gg.tame.conduit.ops.GracefulShutdown;
 import gg.tame.conduit.ops.MaintenanceService;
-import gg.tame.conduit.permission.PermissivePermissionProvider;
+import gg.tame.conduit.permission.DefaultPermissionProvider;
 import gg.tame.conduit.plugin.ConduitPluginManager;
 import gg.tame.conduit.plugin.PluginCatalog;
 import gg.tame.conduit.routing.BackendSelector;
@@ -55,7 +55,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final ModdedService modded;
   private final ConduitEventManager events = new ConduitEventManager();
   private final ConduitScheduler scheduler = new ConduitScheduler();
-  private static final PermissionProvider DEFAULT_PERMISSIONS = new PermissivePermissionProvider();
+  private static final PermissionProvider DEFAULT_PERMISSIONS = new DefaultPermissionProvider();
   /** Provider and owner change together, so a disable can never reset another plugin's provider. */
   private volatile PermissionGrant permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
   private final gg.tame.conduit.command.ConsoleCommandSource console = new gg.tame.conduit.command.ConsoleCommandSource();

@@ -56,7 +56,12 @@ public final class CommandApiTests {
     aliasesTabComplete();
     collapsedSpacesInArguments();
     serverReportsFailedTransfer();
-    sendSelfNeedsNoOthersPermission();
+    sendNeedsItsNodeAndNothingMore();
+    serverNeedsNoPermission();
+    conduitSubcommandPermissionsAreIndividual();
+    conduitIsNotThereWithoutAnyNode();
+    adminNodeStandsForEveryConduitNode();
+    defaultProviderGrantsNoConduitNode();
     sendCurrentReportsFailure();
     conduitSubcommandsMatchTheGraph();
     helpListsWhatTheSourceMayRun();
@@ -93,7 +98,7 @@ public final class CommandApiTests {
    */
   private static void pluginsDisplaceBuiltInsButNotEachOther() throws Exception {
     Fixture fixture = new Fixture();
-    RecordingPlayer player = new RecordingPlayer("Kyle", "survival", Set.of(Permissions.HUB, Permissions.SERVER_USE, "conduit.test"));
+    RecordingPlayer player = new RecordingPlayer("Kyle", "survival", Set.of("conduit.test"));
     fixture.players.add(player);
     RegisteredCommand builtInHub = fixture.commands.get("hub").orElseThrow();
     RegisteredCommand builtInLobby = fixture.commands.get("lobby").orElseThrow();
@@ -291,7 +296,7 @@ public final class CommandApiTests {
       runtime.plugins().disable(runtime.plugins().plugin("bystander").orElseThrow());
       require(!runtime.permissions().hasPermission(null, "other"), "another plugin's disable leaves it alone");
       runtime.plugins().disable(runtime.plugins().plugin("perm").orElseThrow());
-      require(runtime.permissions() instanceof gg.tame.conduit.permission.PermissivePermissionProvider, "default back after its owner went");
+      require(runtime.permissions() instanceof gg.tame.conduit.permission.DefaultPermissionProvider, "default back after its owner went");
     } finally {
       runtime.close();
     }
@@ -407,31 +412,34 @@ public final class CommandApiTests {
   /** "Connecting to X..." and then nothing at all when the switch failed. */
   private static void serverReportsFailedTransfer() throws Exception {
     Fixture fixture = new Fixture();
-    RecordingPlayer kyle = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.SERVER_USE));
+    RecordingPlayer kyle = new RecordingPlayer("Kyle", "lobby", Set.of());
     kyle.failTransfer = true;
     fixture.players.add(kyle);
     fixture.commands.dispatch(kyle, "/server survival");
     require(kyle.said("is unavailable"), "failed switch is reported, said " + kyle.messages);
   }
 
-  private static void sendSelfNeedsNoOthersPermission() throws Exception {
+  /** conduit.command.send is the whole of /send: a player, the current player, or a whole server. */
+  private static void sendNeedsItsNodeAndNothingMore() throws Exception {
     Fixture fixture = new Fixture();
-    RecordingPlayer kyle = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.SERVER_SEND));
+    RecordingPlayer kyle = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.SEND));
+    RecordingPlayer steve = new RecordingPlayer("Steve", "lobby", Set.of());
     fixture.players.add(kyle);
+    fixture.players.add(steve);
     fixture.commands.dispatch(kyle, "/send Kyle survival");
     require(kyle.backend.equals("survival"), "player sent themselves, said " + kyle.messages);
-    require(!kyle.said("permission"), "no permission complaint for a self-send");
-
-    RecordingPlayer steve = new RecordingPlayer("Steve", "lobby", Set.of(Permissions.SERVER_SEND));
-    fixture.players.add(steve);
     fixture.commands.dispatch(kyle, "/send Steve survival");
-    require(kyle.said("permission"), "still refused for somebody else");
-    require(steve.backend.equals("lobby"), "somebody else was not moved");
+    require(steve.backend.equals("survival"), "and somebody else, said " + kyle.messages);
+    require(!kyle.said("permission"), "no permission complaint, said " + kyle.messages);
+
+    fixture.commands.dispatch(steve, "/send Kyle lobby");
+    require(steve.said("permission"), "refused without the node, said " + steve.messages);
+    require(kyle.backend.equals("survival"), "and nobody was moved");
   }
 
   private static void sendCurrentReportsFailure() throws Exception {
     Fixture fixture = new Fixture();
-    RecordingPlayer kyle = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.SERVER_SEND));
+    RecordingPlayer kyle = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.SEND));
     kyle.failTransfer = true;
     fixture.players.add(kyle);
     fixture.commands.dispatch(kyle, "/send current survival");
@@ -443,11 +451,18 @@ public final class CommandApiTests {
     Fixture fixture = new Fixture();
     // Deliberately not an admin: the sweep below runs every subcommand, and dump/heap would write
     // real files. Without those nodes they answer "no permission", which is still not "unknown".
-    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO));
+    Set<String> nodes = Set.of(Permissions.INFO, Permissions.PLUGINS, Permissions.SERVERS,
+        Permissions.UPTIME, Permissions.RELOAD, Permissions.METRICS, Permissions.HEALTH, Permissions.MAINTENANCE,
+        Permissions.DRAIN, Permissions.DOCTOR, Permissions.DIAGNOSTICS, Permissions.ATTACK, Permissions.CACHE);
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", nodes);
+    List<String> expected = new ArrayList<>(CoreCommands.CONDUIT_SUBCOMMANDS);
+    expected.removeAll(List.of("dump", "heap"));
     List<String> completed = fixture.commands.tabComplete(admin, "/conduit ");
-    require(completed.equals(CoreCommands.CONDUIT_SUBCOMMANDS), "completer offers every subcommand");
+    require(completed.equals(expected), "completer offers what this source may run, got " + completed);
+    List<String> shown = childrenOf(treeFor(fixture, admin), "conduit");
+    require(shown.equals(expected), "graph declares the same ones, got " + shown);
     List<String> graph = childrenOf(CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765), fixture.names()), "conduit");
-    require(graph.equals(CoreCommands.CONDUIT_SUBCOMMANDS), "graph declares the same ones, got " + graph);
+    require(graph.equals(CoreCommands.CONDUIT_SUBCOMMANDS), "an unfiltered graph declares all of them, got " + graph);
     for (String sub : CoreCommands.CONDUIT_SUBCOMMANDS) {
       admin.messages.clear();
       fixture.commands.dispatch(admin, "/conduit " + sub);
@@ -455,15 +470,145 @@ public final class CommandApiTests {
     }
   }
 
+  /** The tree a 1.20.4 client on no backend tree would be sent, as {@code source} is shown it. */
+  private static byte[] treeFor(Fixture fixture, CommandSource source) throws Exception {
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(765);
+    return CommandGraphs.mergeProxyCommands(protocol, rootOnly(protocol), fixture.names(), fixture.commands.names(),
+        Set.of(), fixture.commands.shownTo(source));
+  }
+
+  /** A Declare Commands packet holding nothing but its root. */
+  private static byte[] rootOnly(ProtocolDefinition protocol) throws Exception {
+    var bytes = new java.io.ByteArrayOutputStream();
+    try (var output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, gg.tame.conduit.protocol.PlayPackets.packetId(
+          CommandGraphs.proxyOnly(protocol, List.of())));
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 1);
+      output.writeByte(0);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 0);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 0);
+    }
+    return bytes.toByteArray();
+  }
+
+  /** /server, its shortcuts, /hub and /ping belong to every player; there is no node to hold. */
+  private static void serverNeedsNoPermission() throws Exception {
+    Fixture fixture = new Fixture();
+    RecordingPlayer guest = new RecordingPlayer("Guest", "lobby", Set.of());
+    fixture.players.add(guest);
+    fixture.commands.dispatch(guest, "/server");
+    require(guest.said("connected to: lobby") && guest.said("survival"), "/server lists the servers, said " + guest.messages);
+    fixture.commands.dispatch(guest, "/server survival");
+    require(guest.backend.equals("survival"), "/server <name> switches, said " + guest.messages);
+    fixture.commands.dispatch(guest, "/lobby");
+    require(guest.backend.equals("lobby"), "the /<server> shortcut switches, said " + guest.messages);
+    fixture.commands.dispatch(guest, "/ping");
+    require(!guest.said("permission"), "nothing was refused, said " + guest.messages);
+    require(fixture.commands.tabComplete(guest, "/ser").equals(List.of("server")), "/server completes");
+    require(fixture.commands.tabComplete(guest, "/server ").equals(List.of("lobby", "survival")), "and so do its servers");
+    byte[] tree = treeFor(fixture, guest);
+    require(rootChildren(tree).containsAll(List.of("server", "hub", "ping", "lobby", "survival")), "the tree offers them, got " + rootChildren(tree));
+    require(childrenOf(tree, "server").equals(List.of("lobby", "survival")), "with the servers under /server");
+  }
+
+  /** Holding doctor gave nothing else, and holding nothing but doctor still reached doctor. */
+  private static void conduitSubcommandPermissionsAreIndividual() throws Exception {
+    Fixture fixture = new Fixture();
+    RecordingPlayer doctor = new RecordingPlayer("Doc", "lobby", Set.of(Permissions.DOCTOR));
+    fixture.commands.dispatch(doctor, "/conduit doctor");
+    require(!doctor.said("permission"), "doctor runs on its own node, said " + doctor.messages);
+    for (String other : List.of("reload", "maintenance on", "info", "servers", "drain lobby", "attack on", "plugins")) {
+      doctor.messages.clear();
+      require(fixture.commands.dispatch(doctor, "/conduit " + other), "/conduit is there for them");
+      require(doctor.said("permission"), "/conduit " + other + " is refused, said " + doctor.messages);
+    }
+    require(fixture.commands.tabComplete(doctor, "/conduit ").equals(List.of("doctor", "help")), "only doctor is offered, got "
+        + fixture.commands.tabComplete(doctor, "/conduit "));
+    require(fixture.commands.tabComplete(doctor, "/conduit maintenance ").isEmpty(), "nor a refused subcommand's arguments");
+    require(childrenOf(treeFor(fixture, doctor), "conduit").equals(List.of("doctor", "help")), "the tree agrees");
+    doctor.messages.clear();
+    fixture.commands.dispatch(doctor, "/conduit help");
+    require(doctor.said("/conduit doctor") && !doctor.said("/conduit reload"), "help lists doctor alone, said " + doctor.messages);
+
+    RecordingPlayer servers = new RecordingPlayer("Ops", "lobby", Set.of(Permissions.SERVERS));
+    fixture.commands.dispatch(servers, "/conduit servers");
+    require(servers.said("Conduit Servers"), "servers runs on its own node, said " + servers.messages);
+    fixture.commands.dispatch(servers, "/conduit doctor");
+    require(servers.said("permission"), "and gives no doctor");
+  }
+
+  /** For a player with no /conduit node at all, /conduit is not there: the line goes to the backend. */
+  private static void conduitIsNotThereWithoutAnyNode() throws Exception {
+    Fixture fixture = new Fixture();
+    RecordingPlayer guest = new RecordingPlayer("Guest", "lobby", Set.of());
+    require(!fixture.commands.dispatch(guest, "/conduit reload"), "/conduit reload is not handled for them");
+    require(!fixture.commands.dispatch(guest, "/conduit"), "nor /conduit");
+    require(guest.messages.isEmpty(), "and nothing is said, said " + guest.messages);
+    require(fixture.commands.dispatch(guest, "/send Guest survival") && guest.said("permission"), "/send is refused");
+    require(fixture.commands.tabComplete(guest, "/con").isEmpty(), "/conduit is not offered");
+    List<String> offered = fixture.commands.tabComplete(guest, "/");
+    List<String> declared = rootChildren(treeFor(fixture, guest));
+    for (String hidden : List.of("conduit", "send", "glist", "plist", "find", "alert", "gkick")) {
+      require(!offered.contains(hidden), "/" + hidden + " is not offered, got " + offered);
+      require(!declared.contains(hidden), "/" + hidden + " is not in their tree, got " + declared);
+    }
+    require(fixture.commands.dispatch(new ConsoleCommandSource(), "/conduit help"), "the console still has /conduit");
+  }
+
+  /** conduit.admin stands for every Conduit node, top-level commands included, and for no plugin's. */
+  private static void adminNodeStandsForEveryConduitNode() throws Exception {
+    Fixture fixture = new Fixture();
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_ADMIN));
+    fixture.players.add(admin);
+    fixture.commands.dispatch(admin, "/glist");
+    require(admin.said("player(s) online"), "/glist runs, said " + admin.messages);
+    require(fixture.commands.tabComplete(admin, "/conduit ").containsAll(CoreCommands.CONDUIT_SUBCOMMANDS), "every subcommand");
+    fixture.commands.register(new TestPlugin("demo"), new RegisteredCommand("warp", List.of(), "demo.warp",
+        (source, arguments) -> { }, (source, arguments) -> List.of()));
+    require(fixture.commands.dispatch(admin, "/warp") && admin.said("permission"), "a plugin's node is not Conduit's to grant");
+  }
+
+  /**
+   * Conduit's default provider granted every node, so with no permissions plugin any player could
+   * reload the proxy or kick players. It grants no Conduit node now, and still every other one.
+   */
+  private static void defaultProviderGrantsNoConduitNode() throws Exception {
+    var provider = new gg.tame.conduit.permission.DefaultPermissionProvider();
+    for (String node : List.of(Permissions.RELOAD, Permissions.SEND, Permissions.CONDUIT_ADMIN, Permissions.MAINTENANCE_BYPASS,
+        Permissions.DRAIN_BYPASS, "Conduit.Command.Doctor")) {
+      require(!provider.hasPermission(null, node), "default does not grant " + node);
+    }
+    require(provider.hasPermission(null, "minimotd.admin"), "another plugin's node is granted as before");
+    Fixture fixture = new Fixture();
+    DefaultedPlayer guest = new DefaultedPlayer(provider);
+    require(fixture.commands.dispatch(guest, "/server survival"), "/server still works on the default");
+    require(!fixture.commands.dispatch(guest, "/conduit reload"), "/conduit reload is not there on the default");
+    require(fixture.commands.dispatch(guest, "/gkick Someone"), "/gkick is handled");
+    require(guest.said.stream().anyMatch(line -> line.contains("permission")), "and refused, said " + guest.said);
+    require(fixture.commands.dispatch(new ConsoleCommandSource(), "/conduit uptime"), "the console administers regardless");
+  }
+
+  /** A player answered by a real provider rather than a fixed set. */
+  private static final class DefaultedPlayer implements CommandSource {
+    private final gg.tame.conduit.api.permission.PermissionProvider provider;
+    private final List<String> said = new ArrayList<>();
+    DefaultedPlayer(gg.tame.conduit.api.permission.PermissionProvider provider) { this.provider = provider; }
+    @Override public String username() { return "Guest"; }
+    @Override public boolean hasPermission(String permission) { return provider.hasPermission(this, permission); }
+    @Override public void sendMessage(String message) { said.add(message); }
+    @Override public void sendMessage(Text text) { said.add(text == null ? "" : text.plain()); }
+    @Override public String currentBackend() { return "lobby"; }
+  }
+
   /** /conduit help is the in-game command reference; it listed neither /glist nor its neighbours. */
   private static void helpListsWhatTheSourceMayRun() throws Exception {
     Fixture fixture = new Fixture();
-    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.INFO, Permissions.CONDUIT_ADMIN));
     fixture.commands.dispatch(admin, "/conduit help");
     for (String listed : List.of("/server", "/send", "/glist", "/plist", "/find", "/alert", "/ping", "/gkick", "/hub", "/conduit")) {
       require(admin.said(listed), "help lists " + listed + ", said " + admin.messages);
     }
-    RecordingPlayer plain = new RecordingPlayer("Guest", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.SERVER_USE));
+    RecordingPlayer plain = new RecordingPlayer("Guest", "lobby", Set.of(Permissions.INFO));
     fixture.commands.dispatch(plain, "/conduit help");
     require(plain.said("/server"), "help keeps what this source may run");
     require(!plain.said("/gkick"), "help hides what it may not, said " + plain.messages);
@@ -643,8 +788,8 @@ public final class CommandApiTests {
   private static void legacyAndModernCompletionAgree() throws Exception {
     Fixture fixture = new Fixture();
     fixture.commands.register(new TestPlugin("demo"), cmd("warp", List.of("w")));
-    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of("conduit.test", Permissions.SERVER_USE,
-        Permissions.SERVER_SEND, Permissions.CONDUIT_INFO));
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of("conduit.test",
+        Permissions.SEND, Permissions.INFO));
     List<String> legacy = fixture.commands.tabComplete(admin, "/");
     List<String> modern = rootChildren(CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765),
         fixture.names(), fixture.commands.names()));
@@ -727,7 +872,7 @@ public final class CommandApiTests {
     require(console.hasPermission(Permissions.CONDUIT_ADMIN), "console holds every node");
     require(fixture.commands.tabComplete(console, "/ser").equals(List.of("server")), "console completes");
     // /server from the console is not "that backend is unavailable" -- the console is not a player.
-    RecordingPlayer relay = new RecordingPlayer("Op", "", Set.of(Permissions.SERVER_USE));
+    RecordingPlayer relay = new RecordingPlayer("Op", "", Set.of());
     fixture.commands.dispatch(new Relay(relay), "/server survival");
     require(relay.said("Only a player can switch servers"), "console /server message, said " + relay.messages);
     relay.messages.clear();
@@ -760,7 +905,7 @@ public final class CommandApiTests {
         List.of(new gg.tame.conduit.config.BackendServer("lobby",
             new java.net.InetSocketAddress("10.11.12.13", 24601))),
         List.of("lobby"), List.of("lobby")), root.resolve("plugins"), root);
-    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.INFO, Permissions.CONDUIT_ADMIN));
     try {
       CoreCommands.register(runtime);
       runtime.commandManager().dispatch(admin, "/conduit dump");
@@ -787,7 +932,7 @@ public final class CommandApiTests {
     Path root = TempFiles.dir("conduit-dump-path");
     Path cwd = Path.of("").toAbsolutePath();
     ConduitRuntime runtime = runtimeAt(root);
-    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.INFO, Permissions.CONDUIT_ADMIN));
     try {
       CoreCommands.register(runtime);
       // No argument may steer the write. The file name is a timestamp; these are simply ignored.
@@ -825,13 +970,13 @@ public final class CommandApiTests {
     ConduitRuntime runtime = runtimeAt(root);
     try {
       CoreCommands.register(runtime);
-      RecordingPlayer nosy = new RecordingPlayer("Nosy", "lobby", Set.of(Permissions.CONDUIT_INFO));
+      RecordingPlayer nosy = new RecordingPlayer("Nosy", "lobby", Set.of(Permissions.INFO));
       runtime.commandManager().dispatch(nosy, "/conduit heap");
       require(nosy.said("permission"), "heap is gated, said " + nosy.messages);
       require(!nosy.said("contains everything"), "a refused caller is told nothing else");
       require(!Files.exists(root.resolve("dumps")), "a refused heap dump writes nothing");
 
-      RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.HEAP));
+      RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.INFO, Permissions.HEAP));
       runtime.commandManager().dispatch(admin, "/conduit heap");
       require(admin.said("contains everything this process holds in memory"), "warned what it holds, said " + admin.messages);
       require(admin.said("forwarding secret"), "warning names the forwarding secret");
@@ -866,7 +1011,7 @@ public final class CommandApiTests {
   private static void cacheInvalidateTakesLiteralAddressesOnly() throws Exception {
     Path root = TempFiles.dir("conduit-cache-arg");
     ConduitRuntime runtime = runtimeAt(root);
-    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.CONDUIT_INFO, Permissions.CONDUIT_ADMIN));
+    RecordingPlayer admin = new RecordingPlayer("Op", "lobby", Set.of(Permissions.INFO, Permissions.CONDUIT_ADMIN));
     try {
       CoreCommands.register(runtime);
       // Names, not addresses. "ace.cafe" is the awkward one: every character is a hex digit, so a
@@ -899,8 +1044,7 @@ public final class CommandApiTests {
    */
   private static void commandTreeHoldsAcrossDirectProtocols() throws Exception {
     Fixture fixture = new Fixture();
-    RecordingPlayer player = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.SERVER_USE,
-        Permissions.SERVER_SEND, Permissions.CONDUIT_INFO));
+    RecordingPlayer player = new RecordingPlayer("Kyle", "lobby", Set.of(Permissions.CONDUIT_ADMIN));
 
     // 47 (1.8.9): no command tree on the wire. Completion is the server Tab-Complete path only.
     ProtocolDefinition legacy = ProtocolDefinition.forVersion(47);

@@ -205,7 +205,22 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
   public synchronized List<String> names() { return List.copyOf(new LinkedHashSet<>(commands.keySet())); }
   private static boolean permitted(CommandSource source, RegisteredCommand command) {
     String permission = command.permission();
-    return permission == null || permission.isBlank() || source.hasPermission(permission);
+    return permission == null || permission.isBlank() || Permissions.allows(source, permission);
+  }
+  /**
+   * Which names of the client command tree {@code source} is shown: a command's name when it may run
+   * it, and {@code "conduit <subcommand>"} for each /conduit subcommand. A name nothing is registered
+   * under is shown, as it always was. Read when the tree is sent, so a permission granted later shows
+   * with the next tree the backend sends.
+   */
+  public java.util.function.Predicate<String> shownTo(CommandSource source) {
+    List<String> subcommands = CoreCommands.conduitSubcommands(source);
+    return name -> {
+      if (name.startsWith("conduit ")) return subcommands.contains(name.substring("conduit ".length()));
+      RegisteredCommand command;
+      synchronized (this) { command = commands.get(name); }
+      return command == null || permitted(source, command) && there(source, command, List.of());
+    };
   }
   private List<String> prefixes(CommandSource source, String prefix) {
     String needle = prefix.toLowerCase(Locale.ROOT);
@@ -215,7 +230,7 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
       // name is right, but "/tp" must offer "tp" and not go looking for a command called "tp".
       for (Map.Entry<String, RegisteredCommand> entry : commands.entrySet()) {
         if (!entry.getKey().startsWith(needle)) continue;
-        if (!permitted(source, entry.getValue())) continue;
+        if (!permitted(source, entry.getValue()) || !there(source, entry.getValue(), List.of())) continue;
         if (!names.contains(entry.getKey())) names.add(entry.getKey());
       }
     }

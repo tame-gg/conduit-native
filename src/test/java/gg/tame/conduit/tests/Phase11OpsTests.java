@@ -142,7 +142,7 @@ public final class Phase11OpsTests {
     runtime.bindConfigPath(config);
     CoreCommands.register(runtime);
     AdminSource admin = new AdminSource("Op", "lobby", Set.of(
-        Permissions.CONDUIT_ADMIN, Permissions.CONDUIT_INFO, Permissions.HEALTH, Permissions.DOCTOR,
+        Permissions.CONDUIT_ADMIN, Permissions.INFO, Permissions.HEALTH, Permissions.DOCTOR,
         Permissions.DIAGNOSTICS, Permissions.MAINTENANCE, Permissions.DRAIN, Permissions.RELOAD));
     runtime.commandManager().dispatch(admin, "/conduit doctor");
     require(admin.messages.stream().anyMatch(line -> line.contains("OK") || line.contains("WARNING")), "doctor output");

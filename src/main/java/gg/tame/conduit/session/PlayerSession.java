@@ -1798,7 +1798,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     int id = PlayPackets.packetId(packet);
     if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DECLARE_COMMANDS)) return packet;
     try {
-      byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names(), commands.displacedBuiltIns());
+      byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names(), commands.displacedBuiltIns(), commands.shownTo(this));
       commandsDeclared = true;
       gg.tame.conduit.protocol.ProfileTrace.dumpCommandMerge(protocol, packet, merged);
       return merged;

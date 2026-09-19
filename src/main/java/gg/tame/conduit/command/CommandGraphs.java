@@ -42,6 +42,14 @@ public final class CommandGraphs {
   /** As above, with {@code displaced} the built-in names a plugin holds (CommandManager#displacedBuiltIns). */
   public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
       List<String> extraNames, java.util.Set<String> displaced) throws IOException {
+    return mergeProxyCommands(protocol, packet, serverNames, extraNames, displaced, name -> true);
+  }
+  /**
+   * As above, declaring only the commands {@code shown} accepts (CommandManager#shownTo): a top-level
+   * name, or {@code "conduit <subcommand>"}. A player is not offered what they may not run.
+   */
+  public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
+      List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown) throws IOException {
     int id = PlayPackets.packetId(packet);
     int cursor = varIntLength(packet, 0);
     int count = readVarInt(packet, cursor);
@@ -69,7 +77,7 @@ public final class CommandGraphs {
     if (header > rootIndexStart) throw new IOException("command tree root node overruns the packet");
 
     StringParser parser = stringParser(protocol);
-    FlatTree tree = flattenAll(proxyNodes(serverNames, extraNames, displaced, parser));
+    FlatTree tree = flattenAll(proxyNodes(serverNames, extraNames, displaced, parser, shown));
     List<Flat> flat = tree.nodes();
     List<Integer> topLevel = tree.topLevel();
 
@@ -275,7 +283,7 @@ public final class CommandGraphs {
    * are an {@code ask_server} argument and the client asks Conduit for them each time.
    */
   private static List<ProxyNode> proxyNodes(List<String> serverNames, List<String> extraNames,
-      java.util.Set<String> displaced, StringParser parser) {
+      java.util.Set<String> displaced, StringParser parser, java.util.function.Predicate<String> shown) {
     boolean arguments = parser != null;
     List<ProxyNode> servers = new ArrayList<>();
     for (String name : serverNames) servers.add(new ProxyNode.Literal(name));
@@ -284,6 +292,7 @@ public final class CommandGraphs {
     // the servers instead of nothing. The rest stay leaves.
     List<ProxyNode> conduitChildren = new ArrayList<>();
     for (String subcommand : CoreCommands.CONDUIT_SUBCOMMANDS) {
+      if (!shown.test("conduit " + subcommand)) continue;
       switch (subcommand) {
         case "drain", "undrain" -> conduitChildren.add(new ProxyNode.Literal(subcommand, servers));
         case "maintenance", "attack" -> conduitChildren.add(ProxyNode.Literal.of(subcommand, List.of("on", "off", "status")));
@@ -316,13 +325,16 @@ public final class CommandGraphs {
     // A built-in a plugin displaced is declared as that plugin's commands are, a bare literal: the
     // built-in's own children would have the client suggest arguments the plugin never takes.
     literals.replaceAll(literal -> displaced.contains(literal.name()) ? new ProxyNode.Literal(literal.name()) : literal);
+    // Every name is marked emitted, shown or not, so a hidden built-in is not declared again below as
+    // a bare literal from the registered names.
     java.util.LinkedHashSet<String> emitted = new java.util.LinkedHashSet<>();
     for (ProxyNode literal : literals) emitted.add(literal.name());
+    literals.removeIf(literal -> !shown.test(literal.name()));
     // /<server> shortcuts first, then whatever else is registered -- plugin commands and their
     // aliases. A name the built-ins already own is theirs: a second literal for it would give the
     // root two children of the same name and the client would parse against the childless one.
-    for (String name : serverNames) addLiteral(literals, emitted, name);
-    for (String name : extraNames) addLiteral(literals, emitted, name);
+    for (String name : serverNames) addLiteral(literals, emitted, name, shown);
+    for (String name : extraNames) addLiteral(literals, emitted, name, shown);
     return List.copyOf(literals);
   }
 
@@ -331,10 +343,11 @@ public final class CommandGraphs {
     return arguments ? List.of(new ProxyNode.Argument("player", false, true)) : List.of();
   }
 
-  private static void addLiteral(List<ProxyNode> literals, java.util.Set<String> emitted, String name) {
+  private static void addLiteral(List<ProxyNode> literals, java.util.Set<String> emitted, String name,
+      java.util.function.Predicate<String> shown) {
     if (name == null) return;
     String key = name.toLowerCase(java.util.Locale.ROOT);
-    if (key.isBlank() || !emitted.add(key)) return;
+    if (key.isBlank() || !emitted.add(key) || !shown.test(key)) return;
     literals.add(new ProxyNode.Literal(key));
   }
 

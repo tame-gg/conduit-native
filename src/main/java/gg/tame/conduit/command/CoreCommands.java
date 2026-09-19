@@ -35,6 +35,21 @@ public final class CoreCommands {
   public static final List<String> CONDUIT_SUBCOMMANDS = List.of("info", "plugins", "servers", "uptime",
       "dump", "heap", "reload", "metrics", "health", "maintenance", "drain", "undrain", "doctor",
       "diagnostics", "attack", "cache", "help");
+  /**
+   * The node each subcommand needs. One each, so that doctor never brings reload with it; drain and
+   * undrain share one, being one switch. help has none: it lists only what the source may run.
+   * shutdown has none either, being the console's alone.
+   */
+  private static final java.util.Map<String, String> SUBCOMMAND_NODES = java.util.Map.ofEntries(
+      java.util.Map.entry("info", Permissions.INFO), java.util.Map.entry("plugins", Permissions.PLUGINS),
+      java.util.Map.entry("servers", Permissions.SERVERS), java.util.Map.entry("uptime", Permissions.UPTIME),
+      java.util.Map.entry("dump", Permissions.DUMP), java.util.Map.entry("heap", Permissions.HEAP),
+      java.util.Map.entry("reload", Permissions.RELOAD), java.util.Map.entry("metrics", Permissions.METRICS),
+      java.util.Map.entry("health", Permissions.HEALTH), java.util.Map.entry("maintenance", Permissions.MAINTENANCE),
+      java.util.Map.entry("drain", Permissions.DRAIN), java.util.Map.entry("undrain", Permissions.DRAIN),
+      java.util.Map.entry("doctor", Permissions.DOCTOR), java.util.Map.entry("diagnostics", Permissions.DIAGNOSTICS),
+      java.util.Map.entry("attack", Permissions.ATTACK), java.util.Map.entry("cache", Permissions.CACHE));
+  private static final java.util.Map<String, String> ALIASES = java.util.Map.of("version", "info", "attackmode", "attack");
   private static final Set<String> RESERVED = Set.of(
       "server", "send", "glist", "plist", "find", "alert", "ping", "hub", "gkick", "conduit");
   private CoreCommands() {}
@@ -48,10 +63,11 @@ public final class CoreCommands {
   }
 
   public static void register(CommandManager manager, ServerRegistry registry, PlayerManager players, ConduitRuntime runtime) {
-    manager.register(new RegisteredCommand("server", List.of(), Permissions.SERVER_USE,
+    // /server, the /<server> shortcuts, /hub and /ping carry no permission: every player may use them.
+    manager.register(new RegisteredCommand("server", List.of(), null,
         (source, arguments) -> server(source, registry, runtime, arguments),
         (source, arguments) -> completeServers(registry, arguments)));
-    manager.register(new RegisteredCommand("send", List.of(), Permissions.SERVER_SEND,
+    manager.register(new RegisteredCommand("send", List.of(), Permissions.SEND,
         (source, arguments) -> send(source, registry, players, runtime, arguments),
         (source, arguments) -> completeSend(source, registry, players, arguments)));
     manager.register(new RegisteredCommand("glist", List.of(), Permissions.GLIST,
@@ -64,22 +80,25 @@ public final class CoreCommands {
         (source, arguments) -> completePlayers(players, arguments)));
     manager.register(new RegisteredCommand("alert", List.of(), Permissions.ALERT,
         (source, arguments) -> alert(source, players, arguments), (source, arguments) -> List.of()));
-    manager.register(new RegisteredCommand("ping", List.of(), Permissions.PING,
+    manager.register(new RegisteredCommand("ping", List.of(), null,
         (source, arguments) -> ping(source), (source, arguments) -> List.of()));
-    manager.register(new RegisteredCommand("hub", List.of(), Permissions.HUB,
+    manager.register(new RegisteredCommand("hub", List.of(), null,
         (source, arguments) -> hub(source, runtime), (source, arguments) -> List.of()));
     manager.register(new RegisteredCommand("gkick", List.of(), Permissions.GKICK,
         (source, arguments) -> gkick(source, players, arguments),
         (source, arguments) -> completePlayers(players, arguments)));
-    manager.register(new RegisteredCommand("conduit", List.of(), Permissions.CONDUIT_INFO,
+    // No node of its own: each subcommand checks its own. For a player who may run none of them,
+    // /conduit is not there at all, and their line goes on to the backend.
+    manager.register(new RegisteredCommand("conduit", List.of(), null,
         (source, arguments) -> conduit(source, runtime, registry, arguments),
-        (source, arguments) -> completeConduit(source, registry, arguments)));
+        (source, arguments) -> completeConduit(source, registry, arguments),
+        (source, arguments) -> !conduitSubcommands(source).isEmpty()));
     for (String name : registry.names()) {
       String key = name.toLowerCase(Locale.ROOT);
       if (RESERVED.contains(key)) continue;
       String target = name;
       try {
-        manager.register(new RegisteredCommand(key, List.of(), Permissions.SERVER_USE,
+        manager.register(new RegisteredCommand(key, List.of(), null,
             (source, arguments) -> server(source, registry, runtime, List.of(target)),
             (source, arguments) -> List.of()));
       } catch (IllegalArgumentException ignored) { }
@@ -119,8 +138,7 @@ public final class CoreCommands {
       return;
     }
     if (runtime != null) {
-      boolean drainBypass = source.hasPermission(Permissions.DRAIN_BYPASS) || source.hasPermission(Permissions.CONDUIT_ADMIN);
-      if (runtime.health().isDraining(name) && !drainBypass) {
+      if (runtime.health().isDraining(name) && !Permissions.allows(source, Permissions.DRAIN_BYPASS)) {
         Messages.failure(source, name + " is draining.");
         return;
       }
@@ -251,11 +269,13 @@ public final class CoreCommands {
   }
 
   private static void conduit(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments) {
-    if (arguments.isEmpty()) {
-      info(source, runtime, registry);
+    String subcommand = arguments.isEmpty() ? "info" : arguments.getFirst().toLowerCase(Locale.ROOT);
+    String node = SUBCOMMAND_NODES.get(ALIASES.getOrDefault(subcommand, subcommand));
+    if (node != null && !Permissions.allows(source, node)) {
+      Messages.permission(source);
       return;
     }
-    switch (arguments.getFirst().toLowerCase(Locale.ROOT)) {
+    switch (subcommand) {
       case "info", "version" -> info(source, runtime, registry);
       case "plugins" -> plugins(source, runtime);
       case "servers" -> servers(source, runtime, registry);
@@ -281,8 +301,7 @@ public final class CoreCommands {
 
   /**
    * Stops the proxy gracefully, with every player shown {@code reason} when one is given. The console
-   * only: the default permission provider grants every node, so a permission alone would have let
-   * any player stop the proxy until a permissions plugin was installed.
+   * only, with no node a permissions plugin could hand out: stopping the proxy is the operator's.
    */
   private static void shutdown(CommandSource source, ConduitRuntime runtime, List<String> reason) {
     if (!(source instanceof ConsoleCommandSource)) {
@@ -341,10 +360,6 @@ public final class CoreCommands {
   }
 
   private static void plugins(CommandSource source, ConduitRuntime runtime) {
-    if (!source.hasPermission(Permissions.PLUGINS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     PluginCatalog catalog = runtime == null ? null : runtime.pluginCatalog();
     if (catalog == null || catalog.size() == 0) {
       Messages.info(source, "No Conduit or Velocity plugins loaded.");
@@ -359,65 +374,55 @@ public final class CoreCommands {
 
   private static void help(CommandSource source) {
     source.sendMessage(Text.of("Conduit commands:").color(Messages.BRAND).bold());
-    if (source.hasPermission(Permissions.SERVER_USE) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/server").color(Messages.BODY));
-      source.sendMessage(Text.of("/server <server>").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.SERVER_SEND) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/send <player|server|current> <server>").color(Messages.BODY));
-    }
+    source.sendMessage(Text.of("/server").color(Messages.BODY));
+    source.sendMessage(Text.of("/server <server>").color(Messages.BODY));
+    source.sendMessage(Text.of("/hub").color(Messages.BODY));
+    source.sendMessage(Text.of("/ping").color(Messages.BODY));
+    helpLine(source, Permissions.SEND, "/send <player|server|current> <server>");
     helpLine(source, Permissions.GLIST, "/glist");
     helpLine(source, Permissions.PLIST, "/plist <server>");
     helpLine(source, Permissions.FIND, "/find <player>");
     helpLine(source, Permissions.ALERT, "/alert <message>");
-    helpLine(source, Permissions.PING, "/ping");
     helpLine(source, Permissions.GKICK, "/gkick <player> [reason]");
-    if (source.hasPermission(Permissions.CONDUIT_INFO) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit").color(Messages.BODY));
-      source.sendMessage(Text.of("/conduit servers").color(Messages.BODY));
-      source.sendMessage(Text.of("/conduit plugins").color(Messages.BODY));
-      source.sendMessage(Text.of("/conduit health").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.MAINTENANCE) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit maintenance <on|off|status>").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.DRAIN) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit drain <server>").color(Messages.BODY));
-      source.sendMessage(Text.of("/conduit undrain <server>").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.DOCTOR) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit doctor").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.DIAGNOSTICS) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit diagnostics").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.ATTACK) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit attack <on|off|status>").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.CACHE) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit cache invalidate <source>").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.RELOAD) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/conduit reload").color(Messages.BODY));
-    }
-    if (source.hasPermission(Permissions.HUB) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of("/hub").color(Messages.BODY));
-    }
+    helpLine(source, Permissions.INFO, "/conduit");
+    helpLine(source, Permissions.SERVERS, "/conduit servers");
+    helpLine(source, Permissions.PLUGINS, "/conduit plugins");
+    helpLine(source, Permissions.UPTIME, "/conduit uptime");
+    helpLine(source, Permissions.METRICS, "/conduit metrics");
+    helpLine(source, Permissions.HEALTH, "/conduit health");
+    helpLine(source, Permissions.MAINTENANCE, "/conduit maintenance <on|off|status>");
+    helpLine(source, Permissions.DRAIN, "/conduit drain <server>");
+    helpLine(source, Permissions.DRAIN, "/conduit undrain <server>");
+    helpLine(source, Permissions.DOCTOR, "/conduit doctor");
+    helpLine(source, Permissions.DIAGNOSTICS, "/conduit diagnostics");
+    helpLine(source, Permissions.ATTACK, "/conduit attack <on|off|status>");
+    helpLine(source, Permissions.CACHE, "/conduit cache invalidate <source>");
+    helpLine(source, Permissions.RELOAD, "/conduit reload");
+    helpLine(source, Permissions.DUMP, "/conduit dump");
+    helpLine(source, Permissions.HEAP, "/conduit heap");
     if (source instanceof ConsoleCommandSource) source.sendMessage(Text.of("/conduit shutdown [reason]").color(Messages.BODY));
   }
 
   private static void helpLine(CommandSource source, String permission, String usage) {
-    if (source.hasPermission(permission) || source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      source.sendMessage(Text.of(usage).color(Messages.BODY));
+    if (Permissions.allows(source, permission)) source.sendMessage(Text.of(usage).color(Messages.BODY));
+  }
+
+  /**
+   * The /conduit subcommands {@code source} may run, in help order, with help itself only when there
+   * is something else: for a player with none, /conduit is not there at all. The console's shutdown is
+   * not among them.
+   */
+  public static List<String> conduitSubcommands(gg.tame.conduit.api.permission.PermissionSubject source) {
+    List<String> allowed = new ArrayList<>();
+    for (String subcommand : CONDUIT_SUBCOMMANDS) {
+      String node = SUBCOMMAND_NODES.get(subcommand);
+      if (node != null && Permissions.allows(source, node)) allowed.add(subcommand);
     }
+    if (!allowed.isEmpty()) allowed.add("help");
+    return allowed;
   }
 
   private static void health(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
-    if (!source.hasPermission(Permissions.HEALTH) && !source.hasPermission(Permissions.CONDUIT_INFO)
-        && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -447,10 +452,6 @@ public final class CoreCommands {
   }
 
   private static void maintenance(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
-    if (!source.hasPermission(Permissions.MAINTENANCE) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -484,10 +485,6 @@ public final class CoreCommands {
   }
 
   private static void attack(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
-    if (!source.hasPermission(Permissions.ATTACK) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -512,10 +509,6 @@ public final class CoreCommands {
   }
 
   private static void cache(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
-    if (!source.hasPermission(Permissions.CACHE) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -568,10 +561,6 @@ public final class CoreCommands {
   }
 
   private static void drain(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments, boolean enable) {
-    if (!source.hasPermission(Permissions.DRAIN) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -592,10 +581,6 @@ public final class CoreCommands {
   }
 
   private static void doctor(CommandSource source, ConduitRuntime runtime) {
-    if (!source.hasPermission(Permissions.DOCTOR) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -613,10 +598,6 @@ public final class CoreCommands {
   }
 
   private static void diagnostics(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
-    if (!source.hasPermission(Permissions.DIAGNOSTICS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
       return;
@@ -662,10 +643,6 @@ public final class CoreCommands {
   }
 
   private static void reload(CommandSource source, ConduitRuntime runtime) {
-    if (!source.hasPermission(Permissions.RELOAD) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     if (runtime == null) {
       Messages.failure(source, "Unable to reload.");
       return;
@@ -688,10 +665,6 @@ public final class CoreCommands {
   }
 
   private static void dump(CommandSource source, ConduitRuntime runtime, ServerRegistry registry) {
-    if (!source.hasPermission(Permissions.DUMP) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     try {
       Path file = diagnosticsDirectory(runtime).resolve("conduit-" + stamp() + ".txt");
       // Counters, versions and server names. No addresses, no config, no player data: this is the
@@ -710,10 +683,6 @@ public final class CoreCommands {
   }
 
   private static void heap(CommandSource source, ConduitRuntime runtime) {
-    if (!source.hasPermission(Permissions.HEAP) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     // Said before the file exists, so the operator is told what they are about to create even if
     // the dump then fails. A committed .hprof is how a real session-service URL, player name and
     // auth token left this project once already.
@@ -794,12 +763,6 @@ public final class CoreCommands {
     Optional<TrackedPlayer> player = players.getByUsername(from);
     if (player.isPresent()) {
       TrackedPlayer target = player.get();
-      // Moving yourself is /send's own permission. Only moving somebody else needs the other node.
-      if (target != source
-          && !source.hasPermission(Permissions.SERVER_SEND_OTHERS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-        Messages.permission(source);
-        return;
-      }
       if (dest.equalsIgnoreCase(target.currentBackend())) {
         source.sendMessage(Text.of(target.username()).color(Messages.BODY)
             .append(Text.of(" is already connected to ").color(Messages.LABEL))
@@ -827,10 +790,6 @@ public final class CoreCommands {
   }
 
   private static void sendMass(CommandSource source, PlayerManager players, String from, String dest) {
-    if (!source.hasPermission(Permissions.SERVER_SEND_MASS) && !source.hasPermission(Permissions.CONDUIT_ADMIN)) {
-      Messages.permission(source);
-      return;
-    }
     List<TrackedPlayer> targets = players.byServer(from);
     if (targets.isEmpty()) {
       Messages.info(source, "No players are connected to " + from + ".");
@@ -909,11 +868,13 @@ public final class CoreCommands {
    */
   private static List<String> completeConduit(CommandSource source, ServerRegistry registry, List<String> arguments) {
     if (arguments.size() <= 1) {
-      List<String> subcommands = new ArrayList<>(CONDUIT_SUBCOMMANDS);
+      List<String> subcommands = new ArrayList<>(conduitSubcommands(source));
       if (source instanceof ConsoleCommandSource) subcommands.add("shutdown");
       return prefix(subcommands, arguments.isEmpty() ? "" : arguments.getFirst());
     }
     String subcommand = arguments.getFirst().toLowerCase(Locale.ROOT);
+    String node = SUBCOMMAND_NODES.get(ALIASES.getOrDefault(subcommand, subcommand));
+    if (node == null || !Permissions.allows(source, node)) return List.of();
     if (arguments.size() == 2) {
       return switch (subcommand) {
         case "drain", "undrain" -> prefix(registry.names(), arguments.get(1));

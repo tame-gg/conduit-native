@@ -1,21 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.command;
 
-/** Permission nodes for native commands. Default provider may grant all of them. */
+/**
+ * Permission nodes for native commands.
+ *
+ * <p>{@code /server}, the {@code /<server>} shortcuts, {@code /hub}, {@code /ping} and
+ * {@code /conduit help} have none: every connected player may use them. Each administrative
+ * command, and each {@code /conduit} subcommand, has a node of its own, so granting one never
+ * grants another. {@link #CONDUIT_ADMIN} is the one node that stands for all of them. Conduit's
+ * default provider grants none of the {@code conduit.} nodes to a player; the console holds every
+ * node.
+ */
 public final class Permissions {
   private Permissions() {}
-  public static final String SERVER_USE = "conduit.server";
-  public static final String SERVER_SEND = "conduit.server.send";
-  public static final String SERVER_SEND_OTHERS = "conduit.server.send.player";
-  public static final String SERVER_SEND_MASS = "conduit.server.send.mass";
-  public static final String CONDUIT_INFO = "conduit.info";
+  public static final String SEND = "conduit.command.send";
   public static final String CONDUIT_ADMIN = "conduit.admin";
+  public static final String INFO = "conduit.command.info";
+  public static final String SERVERS = "conduit.command.servers";
+  public static final String METRICS = "conduit.command.metrics";
   public static final String PLUGINS = "conduit.command.plugins";
   public static final String GLIST = "conduit.command.glist";
   public static final String FIND = "conduit.command.find";
   public static final String ALERT = "conduit.command.alert";
-  public static final String PING = "conduit.command.ping";
-  public static final String HUB = "conduit.command.hub";
   public static final String GKICK = "conduit.command.gkick";
   public static final String PLIST = "conduit.command.plist";
   public static final String DUMP = "conduit.command.dump";
@@ -29,6 +35,14 @@ public final class Permissions {
   public static final String HEALTH = "conduit.command.health";
   public static final String DOCTOR = "conduit.command.doctor";
   public static final String DIAGNOSTICS = "conduit.command.diagnostics";
-  public static final String ATTACK = "conduit.attack";
-  public static final String CACHE = "conduit.cache";
+  public static final String ATTACK = "conduit.command.attack";
+  public static final String CACHE = "conduit.command.cache";
+
+  /**
+   * Whether {@code source} holds {@code node}. {@link #CONDUIT_ADMIN} stands for every Conduit node,
+   * and for nothing of a plugin's.
+   */
+  public static boolean allows(gg.tame.conduit.api.permission.PermissionSubject source, String node) {
+    return source.hasPermission(node) || node.startsWith("conduit.") && source.hasPermission(CONDUIT_ADMIN);
+  }
 }

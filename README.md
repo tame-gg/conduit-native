@@ -331,11 +331,17 @@ No built-in command has a short alias; the `/<server>` shortcuts above are the o
 registers. Plugins may register aliases of their own. Command names are case-insensitive. A name may start
 with a slash, as WorldEdit's do: players type one more (`//wand` runs `/wand`, never `wand`).
 
-Permissions: `conduit.server`, `conduit.server.send`, `conduit.server.send.player`, `conduit.server.send.mass`, `conduit.info`, `conduit.maintenance.bypass`, `conduit.drain.bypass`, …
-`/send <your own name> <server>` needs only `conduit.server.send`; `conduit.server.send.player` is for moving somebody else.
+Permissions: `/server`, the `/<server>` shortcuts, `/hub`, `/ping` and `/conduit help` need none, so every
+player can pick a server with or without a permissions plugin. Every administrative command, and every
+`/conduit` subcommand, has a node of its own (see [Permission nodes](#permission-nodes)): `conduit.command.doctor`
+gives `/conduit doctor` and nothing else. For a player who holds no `/conduit` node at all, `/conduit` is not
+there and their line goes to the backend. `/conduit shutdown` is the console's alone.
 Maintenance lets in the names on its allowlist and players a permission plugin grants `conduit.maintenance.bypass`
-or `conduit.admin`, asked once the plugin has set the player up. Conduit's own default, which allows every
-permission, lets nobody through maintenance.
+or `conduit.admin`, asked once the plugin has set the player up.
+
+With no permissions plugin, Conduit's default provider grants a player **no** `conduit.` node: the
+administrative commands are the console's until a plugin such as LuckPerms hands them out. Other plugins'
+nodes are still granted by that default, as before.
 
 ## Server list
 
@@ -530,20 +536,23 @@ Pipeline (already framed / decompressed / decrypted):
 
 `PlayerSession` tracks `clientProtocol` and `backendProtocol` independently for that future work.
 
-Permission nodes (replaceable `PermissionProvider`; default is permissive):
+### Permission nodes
 
-* `conduit.server`
-* `conduit.server.send`
-* `conduit.server.send.player`
-* `conduit.server.send.mass`
-* `conduit.info`
-* `conduit.admin`
-* `conduit.command.plugins` / `glist` / `find` / `alert` / `ping` / `hub` / `gkick` / `plist`
-* `conduit.command.dump` / `heap` / `reload` / `uptime`
-* `conduit.command.maintenance` / `drain` / `health` / `doctor` / `diagnostics`
-* `conduit.attack`, `conduit.cache`
+Asked through `PermissionProvider`, which a permissions plugin replaces (LuckPerms does, through the
+Velocity layer). The default grants no `conduit.` node to a player; the console holds every node.
 
-`conduit.admin` satisfies any `/conduit` subcommand node on its own.
+* `/send` (a player, `current`, or a whole server): `conduit.command.send`
+* `/glist`, `/plist`, `/find`, `/alert`, `/gkick`: `conduit.command.glist` / `plist` / `find` / `alert` / `gkick`
+* `/conduit` (`info`), `servers`, `plugins`, `uptime`, `metrics`, `health`: `conduit.command.info` / `servers` /
+  `plugins` / `uptime` / `metrics` / `health`
+* `/conduit reload`, `maintenance`, `drain` and `undrain`, `doctor`, `diagnostics`, `attack`, `cache`, `dump`,
+  `heap`: `conduit.command.reload` / `maintenance` / `drain` / `doctor` / `diagnostics` / `attack` / `cache` /
+  `dump` / `heap`
+* `conduit.maintenance.bypass`, `conduit.drain.bypass`: past maintenance, onto a draining server
+* `conduit.admin`: stands for every `conduit.` node above
+
+None for `/server`, the `/<server>` shortcuts, `/hub`, `/ping` or `/conduit help`. Tab completion and the
+command tree a 1.13+ client is sent offer a player only the commands and `/conduit` subcommands they may run.
 
 `/send` never lists backend addresses. Mass moves run with bounded concurrency; a failed player stays on the source backend.
 

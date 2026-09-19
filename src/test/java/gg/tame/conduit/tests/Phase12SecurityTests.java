@@ -113,7 +113,7 @@ public final class Phase12SecurityTests {
     runtime.bindConfigPath(config);
     CoreCommands.register(runtime);
     AdminSource admin = new AdminSource("Op", "lobby", Set.of(
-        Permissions.ATTACK, Permissions.CONDUIT_ADMIN, Permissions.CONDUIT_INFO,
+        Permissions.ATTACK, Permissions.CONDUIT_ADMIN, Permissions.INFO,
         Permissions.DIAGNOSTICS, Permissions.DOCTOR));
     require(runtime.security().throttle().effectiveMaxAttempts() == 40, "normal throttle");
     runtime.commandManager().dispatch(admin, "/conduit attack on");

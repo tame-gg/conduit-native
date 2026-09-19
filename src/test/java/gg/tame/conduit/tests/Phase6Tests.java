@@ -96,14 +96,15 @@ public final class Phase6Tests {
           require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.19.4 Login Success");
           ByteArrayOutputStream command = new ByteArrayOutputStream();
           try (DataOutputStream output = new DataOutputStream(command)) {
-            MinecraftOutput.varInt(output, commandId); MinecraftOutput.string(output, "conduit");
+            MinecraftOutput.varInt(output, commandId); MinecraftOutput.string(output, "server");
             output.writeLong(0); output.writeLong(0); MinecraftOutput.varInt(output, 0);
             MinecraftOutput.varInt(output, 0); output.write(new byte[3]);
           }
           MinecraftFrames.write(client.getOutputStream(), command.toByteArray());
           byte[] reply = readUntilPacket(client, systemChatId);
           var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(PlayPackets.body(reply)));
-          require(MinecraftInput.string(input, 32767).contains("Conduit"), "/conduit is answered by Conduit");
+          // /server, which every player may use: /conduit is not there for one with no Conduit node.
+          require(MinecraftInput.string(input, 32767).contains("currently connected to"), "/server is answered by Conduit");
           require(!input.readBoolean() && input.available() == 0, "1.19.4 System Chat ends with its action-bar flag");
           Thread.sleep(300);
         }
@@ -262,7 +263,8 @@ public final class Phase6Tests {
           // A partial name is the backend's to answer; Conduit's own commands are added to its reply.
           MinecraftFrames.write(client.getOutputStream(), legacyTabRequest("/se"));
           List<String> names = PlayPackets.legacyTabMatches(readUntilPacket(client, 0x3A));
-          require(names.size() == 3 && names.containsAll(List.of("/seed", "/send", "/server")), "backend and Conduit command names: " + names);
+          // /send is not among them: with no permissions plugin, a player holds no Conduit node.
+          require(names.equals(List.of("/seed", "/server")), "backend and Conduit command names: " + names);
           MinecraftFrames.write(client.getOutputStream(), legacyPacket(0x01, "still here"));
           backend.join(10_000);
         }
