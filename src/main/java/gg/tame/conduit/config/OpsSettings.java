@@ -12,9 +12,10 @@ public record OpsSettings(
     ModdedSettings modded,
     TranslationSettings translation,
     StatusSettings status,
-    MetricsSettings metrics
+    MetricsSettings metrics,
+    UpdateSettings updates
 ) {
-  public static final int CURRENT_SCHEMA = 4;
+  public static final int CURRENT_SCHEMA = 5;
 
   public OpsSettings {
     if (schemaVersion < 0) throw new IllegalArgumentException("ops.schema-version must be >= 0");
@@ -27,19 +28,27 @@ public record OpsSettings(
     if (translation == null) translation = TranslationSettings.defaults();
     if (status == null) status = StatusSettings.defaults();
     if (metrics == null) metrics = MetricsSettings.defaults();
+    if (updates == null) updates = UpdateSettings.defaults();
   }
 
-  /** Every setting but the metrics ones, which then take their defaults. */
+  /** Every setting but the update ones, which then take their defaults. */
+  public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
+                     ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
+                     StatusSettings status, MetricsSettings metrics) {
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, null);
+  }
+
+  /** Every setting but the metrics and update ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
                      StatusSettings status) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, null, null);
   }
 
   /** Every setting but the server-list ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, null, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, null, null, null);
   }
 
   public static OpsSettings defaults() {
@@ -52,6 +61,7 @@ public record OpsSettings(
         ModdedSettings.defaults(),
         TranslationSettings.defaults(),
         StatusSettings.defaults(),
-        MetricsSettings.defaults());
+        MetricsSettings.defaults(),
+        UpdateSettings.defaults());
   }
 }

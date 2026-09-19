@@ -11,7 +11,16 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
                                   List<BackendServer> backends, List<String> initialBackends,
                                   List<String> fallbackBackends, AuthenticationSettings authentication,
                                   Optional<java.net.InetAddress> forwardedPlayerAddress,
-                                  OpsSettings ops) {
+                                  OpsSettings ops, boolean proxyProtocol) {
+  /** Every setting but the PROXY protocol one, which is off. */
+  public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
+                             Optional<Path> forwardingSecretFile, List<BackendServer> backends,
+                             List<String> initialBackends, List<String> fallbackBackends,
+                             AuthenticationSettings authentication,
+                             Optional<java.net.InetAddress> forwardedPlayerAddress, OpsSettings ops) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends,
+        authentication, forwardedPlayerAddress, ops, false);
+  }
   public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
                              Optional<Path> forwardingSecretFile, List<BackendServer> backends,
                              List<String> initialBackends, List<String> fallbackBackends) {
@@ -37,7 +46,10 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     if (listener.getPort() < 1 || listener.getPort() > 65535) throw new IllegalArgumentException("listener.port must be 1..65535");
     if (maxFrameBytes < 1 || maxFrameBytes > 8 * 1024 * 1024) throw new IllegalArgumentException("listener.max-frame-bytes must be 1..8388608");
     if (forwardingMode == ForwardingMode.MODERN && forwardingSecretFile.isEmpty()) throw new IllegalArgumentException("forwarding.secret-file is required for modern forwarding");
-    if (forwardingMode != ForwardingMode.MODERN && forwardingSecretFile.isPresent()) throw new IllegalArgumentException("forwarding.secret-file is only valid for modern forwarding");
+    // A secret file in another mode used to be refused. It is now the default in every mode: the
+    // file is generated on first start so that turning modern forwarding on later is one line here
+    // and a copy into each backend. Only ForwardingMode.MODERN reads it; in any other mode it sits
+    // unused, which is not a configuration mistake.
     if (authentication == null) authentication = AuthenticationSettings.offline();
     if (forwardedPlayerAddress == null) forwardedPlayerAddress = Optional.empty();
     if (ops == null) ops = OpsSettings.defaults();
@@ -68,6 +80,6 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
 
   public ConduitConfiguration withOps(OpsSettings replacement) {
     return new ConduitConfiguration(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends,
-        initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement);
+        initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement, proxyProtocol);
   }
 }

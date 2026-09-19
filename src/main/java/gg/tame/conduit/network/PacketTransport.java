@@ -111,7 +111,16 @@ public final class PacketTransport {
   }
   public InputStream input() { return input; }
   /** The port the peer connected from, or 0 when there is no socket. */
-  public int remotePort() { return socket == null ? 0 : socket.getPort(); }
+  public int remotePort() {
+    if (declaredRemote != null) return declaredRemote.getPort();
+    return socket == null ? 0 : socket.getPort();
+  }
+  /**
+   * The client's real address when a PROXY protocol header named one, so that the port reported
+   * for the player is the port the player dialled from and not the reverse proxy's own.
+   */
+  private volatile java.net.InetSocketAddress declaredRemote;
+  public void declareRemote(java.net.InetSocketAddress remote) { this.declaredRemote = remote; }
   /** The socket's input, each read bounded by what is left of the deadline while there is one. */
   private final class DeadlineInput extends java.io.FilterInputStream {
     DeadlineInput(InputStream in) { super(in); }

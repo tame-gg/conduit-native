@@ -11,6 +11,30 @@ import java.io.IOException;
 /** 1.20.1/1.20.4 argument-node property payloads keyed by numeric parser id. */
 public final class ArgumentProperties {
   private ArgumentProperties() {}
+
+  /**
+   * The 1.19+ id for a pre-1.19 parser identifier, so one property reader serves both wire forms.
+   *
+   * <p>Only the parsers whose payload is not empty need an answer, and of those only the ones Conduit
+   * writes or expects to meet. Anything else gets -1, which {@link #read} treats as a parser with no
+   * properties -- the same thing it does with an id from a newer release it has never seen. That is
+   * safe for Conduit's own trees, where the only argument is {@code brigadier:string}; a backend's
+   * pre-1.19 tree is never decoded, only copied through byte for byte.
+   */
+  public static int idFor(String parserName) {
+    if (parserName == null) return -1;
+    return switch (parserName) {
+      case "brigadier:float" -> 1;
+      case "brigadier:double" -> 2;
+      case "brigadier:integer" -> 3;
+      case "brigadier:long" -> 4;
+      case "brigadier:string" -> 5;
+      case "minecraft:entity" -> 6;
+      case "minecraft:score_holder" -> 29;
+      default -> -1;
+    };
+  }
+
   public static byte[] read(DataInputStream input, int parserId) throws IOException {
     ByteArrayOutputStream bytes = new ByteArrayOutputStream();
     DataOutputStream output = new DataOutputStream(bytes);

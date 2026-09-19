@@ -105,6 +105,8 @@ public final class AllTests {
     BackendPingTests.run();
     ObservabilityTests.run();
     ConfigValidationTests.run();
+    ProxyProtocolTests.run();
+    ViaOverrideTests.run();
     ShutdownTests.run();
     RoutingFailoverTests.run();
     LifecycleRaceTests.run();
@@ -192,7 +194,9 @@ public final class AllTests {
     require(ConfigurationLoader.load(config).maxFrameBytes() == 64, "configuration did not load");
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.smp]\naddress=\"127.0.0.1:25921\"\n[routing]\ninitial=[\"smp\"]\nfallback=[\"smp\"]\n");
     require(ConfigurationLoader.load(config).backends().getFirst().address().getPort() == 25921, "address form");
-    require(ConfigurationLoader.load(config).authentication().mode() == gg.tame.conduit.config.AuthenticationMode.OFFLINE, "missing authentication must default to offline");
+    // Online, not offline. Offline is the mode that lets anyone join as anyone, so it is something
+    // an operator has to write down rather than something a missing section hands them.
+    require(ConfigurationLoader.load(config).authentication().mode() == gg.tame.conduit.config.AuthenticationMode.ONLINE, "missing authentication must default to online");
     // Modern forwarding needs a secret, and an unset secret-file is a default
     // rather than a mistake: the file sits beside the configuration. Validating
     // must not create it, so this still fails, and it says where to get one.

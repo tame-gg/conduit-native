@@ -32,7 +32,69 @@ written there and what is allowed, for example
 `Configuration error: conduit.toml line 3: listener.port must be 1..65535, found 70000`. A legal but
 doubtful value is one `WARN` instead: a server host that does not resolve (Conduit looks it up only at
 start), or `versions.enabled = true` with nothing to gate. `#` starts a comment anywhere outside a quoted
-string. `run.ps1` needs the file to exist: copy `config/conduit.toml` to `run/` first.
+string. Every path in a configuration -- `plugins/`, `via/`, `forwarding.secret`, `status.favicon` -- is
+resolved against the folder that configuration is in, so the file belongs in the folder you start
+Conduit from, not in a `config/` subfolder of it.
+
+### Starting from nothing
+
+`java -jar conduit-<version>.jar conduit.toml` in an empty folder is enough. There is no setup step:
+Conduit ships the configuration it would otherwise have complained was missing, so a first start
+writes `conduit.toml`, creates `plugins/`, generates `forwarding.secret` and comes up on the
+defaults. ViaVersion is inside the jar, so translation works with no network and nothing to fetch.
+
+The defaults are the safe ones, not the convenient ones: `authentication.mode = "online"`, so Conduit
+does the Mojang check, and `forwarding.mode = "none"`, so nothing is forwarded until you say what to
+forward it with. The secret is generated anyway, so turning forwarding on later is one line in
+`conduit.toml` plus a copy into each backend.
+
+### Upgrading
+
+A newer Conduit rewrites `conduit.toml` into its own layout and keeps every value you set. Settings
+introduced since your file was written arrive in their proper section rather than appended to the
+bottom; a setting this version does not read is moved to the end of the file under a header saying so,
+never dropped; and the file you had is kept beside it as `conduit.toml.bak-<schema>`. `[ops]
+schema-version` is how Conduit knows which layout your file is in, and is the one line in it that is
+not yours to set.
+
+### Keeping ViaVersion current
+
+ViaVersion is inside the jar, so translation works offline. But a jar cannot update itself, and Via
+supports each new Minecraft release well before a Conduit release can -- Via 5.12.0 registers Minecraft
+26.3, which the Via bundled in this build does not.
+
+So `lib/via` beside the configuration is an override: a complete set of the five Via jars there is used
+in place of the bundled copies, by class path order, whether you put them there or Conduit did. With
+`[updates] via = true` (the default), Conduit checks ViaVersion's repository on start and downloads a
+newer release into `lib/via`, keeping the jars it replaces in `lib/via/superseded`.
+
+Four rules keep that from being worse than no updater at all:
+
+- **It cannot stop Conduit starting.** An unreachable repository, a blocked proxy, a full disk or a
+  checksum that does not match all end the same way: one line in the log and the bundled Via.
+- **Releases only, and inside the version line.** Snapshots are ignored, and a new major version is
+  reported rather than taken -- `gg.tame.conduit.viaversion` extends Via's internal classes, and a
+  major bump is where those change.
+- **The whole set or none of it.** An updated `viaversion-common` against the bundled `viaversion-api`
+  is the one combination guaranteed not to work, so a partial `lib/via` is ignored with a warning.
+- **Never a downgrade.** A stale `lib/via` left over from an older Conduit is ignored rather than used.
+
+`updates.check-only = true` reports a newer version without downloading it. `-Dconduit.via.update=false`
+turns the check off for one start, and `-Dconduit.via.repository=<url>` points it at an internal mirror
+of the same layout. `--check-config` never touches the network.
+
+Note that an updated Via can know Minecraft versions Conduit has no packet table for. A client on one
+of those is still refused -- Conduit reads a client's own packets before any translator is chosen -- but
+a backend on one is not, so raising Via past what Conduit knows is not the same as Conduit supporting
+that version.
+
+### The console
+
+Ordinary lines are white, warnings yellow and errors red, and ViaVersion and the Velocity
+compatibility layer log through the same formatter rather than `java.util.logging`'s two-line default.
+Colour is off when output is redirected, when `NO_COLOR` is set and when `TERM=dumb`;
+`-Dconduit.color=true` or `=false` overrides all of that, which is what an old `conhost` without
+virtual-terminal processing needs.
 
 ### ViaVersion translation (on by default)
 
@@ -105,7 +167,7 @@ it: both are checked against real 1.13 and 1.20.4 servers, comparing the registr
 id that reaches the client against Mojang's own registry report rather than
 against Conduit's own table. Nobody has listened to or looked at them, though.
 
-To try 26.2 yourself: `scripts/build-dist.ps1` packages a runnable build into `dist/`, and `dist/run.cmd` starts it on `config/conduit-26.2.toml`, which routes to the provisioned 26.2, second 26.2 and 1.20.4 backends so `/server` covers DIRECT, a same-version switch and the Via-carried cross-version hop.
+To try 26.2 yourself: `scripts/build-dist.ps1` packages a runnable build into `dist/`, and `dist/run.cmd conduit-26.2.toml` starts it on the 26.2 test configuration packaged beside it, which routes to the provisioned 26.2, second 26.2 and 1.20.4 backends so `/server` covers DIRECT, a same-version switch and the Via-carried cross-version hop.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 

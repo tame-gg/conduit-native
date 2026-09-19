@@ -28,7 +28,6 @@ if (-not (Test-Path (Join-Path $classes "gg\tame\conduit\launcher\Main.class")))
 
 if (Test-Path $outDir) { Remove-Item -Recurse -Force $outDir }
 New-Item -ItemType Directory -Force -Path (Join-Path $outDir "lib") | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $outDir "config") | Out-Null
 
 # Conduit's own classes and the generated tables. The compiled tree also holds
 # the test probes, which are wanted here: they are how a join is driven without
@@ -38,10 +37,11 @@ $jdk = (Get-Command java).Source | Split-Path -Parent
 & (Join-Path $jdk "jar.exe") --create --file $jar -C $classes .
 if ($LASTEXITCODE -ne 0) { throw "jar failed" }
 
-# The 26.2 test config, and the stock one beside it so the folder is usable for
-# anything else without going back to the source tree.
-Copy-Item (Join-Path $repo "config\conduit-26.2.toml") (Join-Path $outDir "config") -Force
-Copy-Item (Join-Path $repo "config\conduit.toml") (Join-Path $outDir "config") -Force
+# conduit.toml sits beside the jar, because every path in it -- plugins/, via/,
+# forwarding.secret -- is resolved against the folder it is in. The 26.2 test
+# config goes along so the folder is usable for that without the source tree.
+Copy-Item (Join-Path $repo "conduit.toml") $outDir -Force
+Copy-Item (Join-Path $repo "config\conduit-26.2.toml") $outDir -Force
 
 Copy-Item (Join-Path $lib "*.jar") (Join-Path $outDir "lib") -Force
 Copy-Item (Join-Path $lib "via\*.jar") (Join-Path $outDir "lib") -Force
@@ -56,7 +56,7 @@ Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES") $outDir -Force
 setlocal
 set HERE=%~dp0
 set CONFIG=%1
-if "%CONFIG%"=="" set CONFIG=%HERE%config\conduit-26.2.toml
+if "%CONFIG%"=="" set CONFIG=%HERE%conduit.toml
 java -Xms512M -Xmx1G -cp "%HERE%conduit-VERSION.jar;%HERE%lib\*" gg.tame.conduit.launcher.Main "%CONFIG%"
 '@.Replace("VERSION", $version) | Set-Content (Join-Path $outDir "run.cmd") -Encoding ascii
 

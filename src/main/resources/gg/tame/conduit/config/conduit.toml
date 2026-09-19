@@ -1,0 +1,301 @@
+# Conduit configuration.
+#
+# Grouped into areas, each under a ==== banner. A commented-out line says which of
+# two things it is:
+#   (default: X)  what Conduit uses while the line stays commented out
+#   (example)     a value with no default; nothing happens until you write one
+#
+# Settings marked "restart" are read once at start. Everything else is re-read by
+# /conduit reload.
+#
+# Paths are relative to this file, so plugins/, via/ and forwarding.secret sit
+# beside it. Keep it in the folder you start Conduit from.
+
+
+# ============================================================================
+#  NETWORK  --  the port players reach, the backends behind it, where they land
+# ============================================================================
+
+[listener]
+# 127.0.0.1 accepts only this machine. Use 0.0.0.0 to accept from the network.
+# (restart)
+host = "127.0.0.1"
+port = 25565
+# Largest packet Conduit will read before dropping the connection.
+max-frame-bytes = 1048576
+# Read a HAProxy PROXY protocol header before the handshake, so a reverse proxy in
+# front of Conduit -- TCPShield, HAProxy, a load balancer -- can say which player a
+# connection belongs to. Without it every player arrives wearing that service's
+# address, which is the address bans, the throttle and the logs then see.
+#
+# The header is NOT authenticated: with this on, anything that can open a connection
+# to the port above can claim any address, and walk through a ban or a rate limit
+# wearing it. Turn it on only when the port is firewalled to the service that sends
+# it -- for TCPShield, their published IP ranges and nothing else.
+# (restart) (default: false)
+# proxy-protocol = false
+
+# One block per backend. The name is what /server takes and what /glist shows.
+# Use host + port, or address = "host:port".
+[servers.lobby]
+host = "127.0.0.1"
+port = 25566
+
+# A second backend. (example)
+# [servers.survival]
+# host = "127.0.0.1"
+# port = 25567
+
+[routing]
+# Tried in order when a player joins.
+initial = ["lobby"]
+# Tried in order when the server a player is on goes away under them.
+fallback = ["lobby"]
+
+
+# ============================================================================
+#  IDENTITY AND TRUST  --  who the player is, and how a backend knows
+# ============================================================================
+
+# Who checks that a player is who they say they are. Conduit does it, because the
+# backends cannot: they run online-mode=false behind the proxy. If Conduit does
+# not check either, nobody does and anyone can join as anyone.
+#
+#   "online"   Conduit does the Mojang handshake itself and gets the real UUID,
+#              name and skin. What a public server wants.
+#   "offline"  the name the client sent is taken at face value. For local tests,
+#              cracked networks, or when something in front has already checked.
+[authentication]
+mode = "online"
+
+# Where the Mojang session check goes. Change only for a proxy or a private
+# authentication service. (default: the Mojang session server)
+# session-url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+
+# How long that check may take, in milliseconds. (default: 5000)
+# timeout-millis = 5000
+
+# A login by a player who is already connected is refused. true ends the existing
+# session and lets the new login in instead -- which in offline mode lets anyone
+# who types a name kick its owner. (default: false)
+# kick-existing-players = false
+
+# How a backend learns the identity Conduit established, and that it really came
+# from Conduit.
+#
+#   "none"    nothing is forwarded; the backend sees the proxy's address and the
+#             name the client claimed. Fine for a local test, and only that: a
+#             backend on a reachable port with online-mode=false lets anyone in.
+#   "modern"  the Velocity-style signed handshake. Give every backend the same
+#             secret (Paper: velocity.secret in config/paper-global.yml) and it
+#             will refuse anything that cannot prove it. Use this one in public.
+#   "legacy" / "bungeeguard"  only for backends that speak nothing else. Weaker;
+#             see the README first.
+#
+# The secret below is generated on first start whatever the mode, so turning this
+# to "modern" later is this one line plus a copy into each backend.
+[forwarding]
+mode = "none"
+
+# Where that secret lives, relative to this file.
+# (default: "forwarding.secret")
+# secret-file = "forwarding.secret"
+
+# Forwarded to backends in place of the player's own address, for a network where
+# a backend must not see client IPs. (example)
+# player-address = "127.0.0.1"
+
+
+# ============================================================================
+#  WHAT PLAYERS SEE  --  the server list entry, and closing the doors
+# ============================================================================
+
+# The server list entry. motd takes &-codes (&0-&9 &a-&f colours, &l &o &n &m &k
+# decorations, &r plain) and \n for a second line. display-max-players is only the
+# number shown after the slash; it limits nothing.
+[status]
+motd = "Conduit"
+display-max-players = 100
+
+# A 64x64 PNG, relative to this file. (example)
+# favicon = "server-icon.png"
+
+# Turned on and off with /conduit maintenance. While it is on, players see motd in
+# the server list and kick-message if they try to join.
+[maintenance]
+enabled = true
+# Whether Conduit comes up already in maintenance.
+active-on-start = false
+kick-message = "This network is currently under maintenance. Please try again later."
+motd = "Conduit — under maintenance"
+# Names that may still join while it is on.
+allowlist = []
+
+
+# ============================================================================
+#  VERSIONS  --  which clients may join, and how their packets are translated
+# ============================================================================
+
+# ViaVersion translation. It is what gives a cross-version player sounds,
+# particles, scoreboards, titles and boss bars; Conduit's own translators drop
+# those. "via-preferred" still falls back to them where Via has no path. Set
+# enabled = false for native-only translation and accept the drops.
+# See docs/VIAVERSION.md and docs/LICENSING_VIA.md (GPLv3 Via* artifacts).
+[translation]
+enabled = true
+engine = "via-preferred"
+via-backwards = true
+via-rewind = true
+via-legacy = false
+data-folder = "via"
+
+# Turn clients away by Minecraft version. enabled = true with no allow, minimum or
+# maximum turns nobody away, and says so at start.
+[versions]
+enabled = false
+# Versions or protocol numbers, e.g. ["1.20.4", "1.21.5"].
+allow = []
+# What the server list reports. {versions} is filled in from the rules here.
+ping-version-name = "Conduit {versions}"
+kick-message = "This network only allows Minecraft {versions}."
+kick-message-range = "This network only allows Minecraft versions {versions}."
+
+# A range, instead of or alongside allow. (example)
+# minimum = "1.20.4"
+# maximum = "1.21.8"
+
+# Refuse a player whose version does not match the backend's exactly, rather than
+# translating for them. (default: false)
+# strict-backend-match = false
+
+
+# ============================================================================
+#  OPERATIONS  --  watching backends, and stopping cleanly
+# ============================================================================
+
+# Conduit pings each backend on a timer so routing can skip a dead one instead of
+# sending players who then bounce.
+[health]
+enabled = true
+interval-ms = 10000
+timeout-ms = 1500
+# Consecutive failures before a backend counts as down, successes before it counts
+# as up again.
+failure-threshold = 3
+success-threshold = 2
+
+# Ctrl+C, a service stop and /conduit shutdown all take this path: players are
+# told, plugins are disabled, then the process exits. timeout-ms is how long that
+# may take before the remaining connections are dropped.
+[shutdown]
+graceful-enabled = true
+timeout-ms = 5000
+message = "Conduit is shutting down."
+
+
+# ============================================================================
+#  PROTECTION  --  connection floods, bots, and client mod channels
+# ============================================================================
+
+# Per-source connection limits. Sources are grouped by address prefix, so one host
+# cannot spread a flood across its whole /64.
+[security.throttle]
+enabled = true
+# Connection attempts allowed per window-ms, and sockets held open at once.
+max-attempts = 40
+window-ms = 1000
+max-concurrent = 32
+ipv4-prefix = 32
+ipv6-prefix = 64
+# How often a throttled source is mentioned in the log.
+log-interval-ms = 5000
+
+# Connections that open and then do nothing earn strikes. strike-threshold of them
+# inside strike-window-ms blocks the source for block-duration-ms.
+[security.bot-filter]
+enabled = true
+strike-threshold = 10
+handshake-timeout-ms = 3000
+block-duration-ms = 60000
+strike-window-ms = 60000
+
+# What to do about plugin-message channels a client opens. The lists hold exact
+# channel names; default-action covers anything not in one.
+[security.channel-guard]
+enabled = false
+default-action = "log"
+block-list = ["wdl:init", "wdl:control"]
+log-list = ["schematica"]
+kick-list = []
+
+# The tighter limits used while /conduit attack is on, standing in for the ordinary
+# ones above.
+[security.attack-mode]
+throttle-max-attempts = 8
+bot-strike-threshold = 3
+
+
+# ============================================================================
+#  MODDED CLIENTS  --  Forge, NeoForge and Fabric handshakes
+# ============================================================================
+
+[modded]
+enabled = true
+known-packs-limit = 1024
+# Remembers a source's handshake so a reconnect does not repeat it.
+handshake-cache = true
+handshake-cache-capacity = 4096
+handshake-cache-ttl-ms = 300000
+forge-compat = true
+neoforge-compat = true
+fabric-compat = true
+# What happens to a modded handshake Conduit does not recognise: "allow" lets it
+# through, anything else refuses it.
+unknown-policy = "allow"
+# Packets arriving mid-handshake are held rather than dropped.
+packet-queue-enabled = true
+packet-queue-max-depth = 512
+log-mod-handshakes = false
+
+
+# ============================================================================
+#  OBSERVABILITY
+# ============================================================================
+
+# Metrics in Prometheus' text format at GET /metrics. Off unless an address is set.
+# No authentication: keep it on loopback or a private network. (restart)
+# [metrics]
+# prometheus-address = "127.0.0.1:9225"
+
+
+# ============================================================================
+#  UPDATES  --  keeping ViaVersion current
+# ============================================================================
+
+# ViaVersion is inside the Conduit jar, so translation works offline with nothing
+# to fetch. But a jar cannot update itself, and Via supports each new Minecraft
+# release well before a Conduit release can.
+#
+# With via = true, Conduit checks ViaVersion's own repository on start and, if
+# there is a newer release in the same version line, downloads it into lib/via and
+# uses it in place of the bundled copy. The jars it replaces are kept in
+# lib/via/superseded. A new major version is reported and not taken, because
+# Conduit is built against the internals of the one it ships with.
+#
+# Nothing here can stop Conduit starting. An unreachable repository, a blocked
+# proxy or a checksum that does not match all end the same way: one line in the
+# log and the bundled ViaVersion. To update Via by hand instead, put a complete
+# set of its five jars in lib/via -- Conduit prefers those whether it fetched them
+# or you did. (restart)
+[updates]
+via = true
+# Say that a newer version exists without downloading it.
+check-only = false
+# How long the check may take, in milliseconds.
+timeout-ms = 5000
+
+
+# Written by Conduit, so a newer version knows which settings this file predates.
+# Leave it alone.
+[ops]
+schema-version = 5

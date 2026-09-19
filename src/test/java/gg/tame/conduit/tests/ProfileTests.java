@@ -404,9 +404,16 @@ final class ProfileTests {
     int[] before = header(original);
     int[] after = header(merged);
     require(before[0] == 0x10 && after[0] == 0x10, "packet id preserved");
-    // Proxy literals: conduit(17), glist, plist(5), find, alert, ping, hub, gkick,
-    // server(5), send(6), slash-servers(5) → 48 nodes and 15 root children.
-    require(after[1] == before[1] + 48, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
+    // 54 nodes and 15 root children, for 5 servers:
+    //   5  the server-name literals, emitted once and shared by every parent that takes one
+    //   25 conduit: itself, 12 plain subcommands, drain, undrain, maintenance + on/off/status,
+    //      attack + on/off/status, cache + invalidate
+    //   1  glist, 1 plist, 2 find (+player), 2 alert (+message), 1 ping, 1 hub, 2 gkick (+player)
+    //   1  server, 8 send (itself, current, one branch per server, the player argument)
+    //   5  the /<server> shortcuts
+    // Sharing is what keeps this linear in the server count: a copy of the names under each parent
+    // made the packet grow with its square.
+    require(after[1] == before[1] + 54, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
     require(after[3] == before[3] + 15, "root gained exactly fifteen children");
     for (int index = 0; index < before[3]; index++) {
       require(rootChild(original, index) == rootChild(merged, index), "existing root child " + index + " unchanged");
@@ -420,6 +427,11 @@ final class ProfileTests {
         java.util.Arrays.copyOfRange(merged, rootNodeEnd(merged), rootNodeEnd(merged) + originalTail)),
         "backend nodes copied verbatim");
     require(new String(merged, java.nio.charset.StandardCharsets.UTF_8).contains("survival"), "server names present");
+    // The real check on the argument nodes: 26.2 moved every parser id down one when it dropped
+    // brigadier:float, and a wrong id makes the properties the wrong length, which shifts every byte
+    // after it and runs the reader off the end. Decoding the merged tree proves the bytes agree.
+    require(new String(merged, java.nio.charset.StandardCharsets.UTF_8).contains("minecraft:ask_server"),
+        "the player arguments ask Conduit for names");
   }
   /** {packetId, nodeCount, rootNodeOffset, rootChildCount} */
   private static int[] header(byte[] packet) throws Exception {

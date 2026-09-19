@@ -107,8 +107,33 @@ public final class MinecraftProxy implements AutoCloseable {
       boot.getMethod("install", gg.tame.conduit.api.ConduitProxy.class).invoke(null, runtime);
     } catch (ClassNotFoundException ignored) {
     } catch (ReflectiveOperationException exception) {
-      ConduitLog.error("Velocity compatibility layer failed to install", exception);
+      // The bundled jar carries the adapter but not the Velocity API jars, which ship beside it in
+      // lib/ and are optional. Running the jar on its own therefore reached here, and reported a
+      // stack trace at ERROR for an optional feature simply being absent -- which, on a first start
+      // with nothing but the jar, reads as Conduit having crashed. It is one line now.
+      String missing = missingVelocityApi(exception);
+      if (missing != null) {
+        ConduitLog.info("Velocity plugin support is off: the Velocity API is not on the class path ("
+            + missing + "). Conduit's own plugins are unaffected; put the lib/ folder that ships beside"
+            + " the jar back to load Velocity plugins.");
+      } else {
+        ConduitLog.error("Velocity compatibility layer failed to install", exception);
+      }
     }
+  }
+
+  /**
+   * The Velocity class the compatibility layer could not find, or null when it failed for some other
+   * reason -- which is still a real error and still gets a stack trace.
+   */
+  private static String missingVelocityApi(Throwable thrown) {
+    for (Throwable cause = thrown; cause != null; cause = cause.getCause()) {
+      boolean absent = cause instanceof NoClassDefFoundError || cause instanceof ClassNotFoundException;
+      String name = cause.getMessage() == null ? "" : cause.getMessage().replace('/', '.');
+      if (absent && name.startsWith("com.velocitypowered.")) return name;
+      if (cause.getCause() == cause) break;
+    }
+    return null;
   }
   public ConduitRuntime runtime() { return runtime; }
   /** Connections whose worker has not returned yet; zero means every socket and thread is back. */
@@ -120,7 +145,12 @@ public final class MinecraftProxy implements AutoCloseable {
     accepting = true;
     try { runtime.pluginRuntime().loadAll(); } catch (Exception exception) { ConduitLog.error("plugin load failed", exception); }
     runtime.started();
-    try (var workers = Executors.newThreadPerTaskExecutor(SocketThreads.factory())) {
+    // Not try-with-resources. ExecutorService#close() waits for every submitted task without a
+    // bound, and a task here is a whole player connection: one session parked in a socket read kept
+    // serve() from returning, main from returning and the JVM from exiting, which on Windows is a
+    // console window that never closes after /conduit shutdown. The drain below is bounded instead.
+    var workers = Executors.newThreadPerTaskExecutor(SocketThreads.factory());
+    try {
       while (running) {
         SocketChannel client;
         try {
@@ -150,9 +180,38 @@ public final class MinecraftProxy implements AutoCloseable {
         }
         workers.submit(() -> handle(client));
       }
+    } finally {
+      drain(workers);
     }
     // ProxyShutdownEvent is close()'s to fire, before it disables plugins. Fired here it raced
     // that disable, and plugins were usually gone before they heard the proxy was stopping.
+  }
+
+  /**
+   * Gives the connection workers the graceful-shutdown budget to finish, then stops waiting.
+   *
+   * <p>Players have already been kicked or moved by then, so a worker still running is one whose
+   * socket is not answering -- a half-open connection, or a peer that stopped reading. Waiting on it
+   * is waiting on a dead peer's TCP timeout, which is not Conduit's to spend. The threads are
+   * daemons on Windows and virtual elsewhere, so whatever is left does not hold the JVM open.
+   */
+  private void drain(java.util.concurrent.ExecutorService workers) {
+    long budget = Math.max(0, runtime.gracefulShutdown().settings().timeoutMs());
+    workers.shutdown();
+    try {
+      if (!workers.awaitTermination(budget, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        int left = connections.get();
+        // Interrupts the blocking reads, which is what a virtual thread needs to unpark.
+        workers.shutdownNow();
+        if (!workers.awaitTermination(1, java.util.concurrent.TimeUnit.SECONDS) && left > 0) {
+          ConduitLog.warn("Stopped waiting for " + left + " connection"
+              + (left == 1 ? "" : "s") + " that did not close within " + budget + "ms.");
+        }
+      }
+    } catch (InterruptedException interrupted) {
+      workers.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
   }
   private void handle(SocketChannel channel) {
     ConnectionThrottle.LeaseHolder leaseHolder = new ConnectionThrottle.LeaseHolder();
@@ -162,6 +221,26 @@ public final class MinecraftProxy implements AutoCloseable {
     ClientLoginMessages[] loginMessages = new ClientLoginMessages[1];
     try {
       remote = client.getInetAddress();
+      // Before anything judges this connection by its address: behind a reverse proxy the socket
+      // wears that service's address, and the header at the front of the stream is what says whose
+      // connection it really is. Read first, so the throttle, the bot filter and every ban that
+      // follows are applied to the player rather than to the service in front of them.
+      java.net.InetSocketAddress declared = null;
+      if (configuration.proxyProtocol()) {
+        try {
+          java.util.Optional<java.net.InetSocketAddress> header =
+              ProxyProtocol.read(client.getInputStream());
+          if (header.isPresent()) {
+            declared = header.get();
+            remote = declared.getAddress();
+          }
+        } catch (IOException malformed) {
+          // With proxy-protocol on, a connection without a usable header cannot be read at all:
+          // there is no way to know where the header stopped and the handshake began.
+          ConduitMetrics.current().malformedProtocol();
+          return;
+        }
+      }
       if (runtime.security().botFilter().isBlocked(remote)) {
         return;
       }
@@ -172,6 +251,7 @@ public final class MinecraftProxy implements AutoCloseable {
       int handshakeTimeout = runtime.security().botFilter().settings().handshakeTimeoutMs();
       client.setSoTimeout(handshakeTimeout);
       PacketTransport transport = opened[0] = new PacketTransport(client);
+      if (declared != null) transport.declareRemote(declared);
       transport.setReadDeadline(Long.getLong("conduit.loginDeadlineMillis", LOGIN_DEADLINE_MS));
       byte[] firstPacket;
       try {
@@ -202,7 +282,8 @@ public final class MinecraftProxy implements AutoCloseable {
       // Every ping comes through here, so the event is not even built unless someone listens.
       if (runtime.events().listening(gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.class)) {
         runtime.events().fire(new gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent(
-            (java.net.InetSocketAddress) client.getRemoteSocketAddress(), handshake.virtualHost(), handshake.protocolVersion(),
+            declared != null ? declared : (java.net.InetSocketAddress) client.getRemoteSocketAddress(),
+            handshake.virtualHost(), handshake.protocolVersion(),
             handshake.nextState() == 1 ? gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.STATUS
                 : handshake.nextState() == Handshake.TRANSFER ? gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.TRANSFER
                 : gg.tame.conduit.api.event.proxy.ConnectionHandshakeEvent.Intent.LOGIN));
@@ -217,7 +298,8 @@ public final class MinecraftProxy implements AutoCloseable {
           : statusFallbackProtocol();
       if (handshake.nextState() == 1) {
         runtime.security().botFilter().recordStatusPing(remote);
-        serveStatus(transport, protocol, handshake, (java.net.InetSocketAddress) client.getRemoteSocketAddress());
+        serveStatus(transport, protocol, handshake,
+            declared != null ? declared : (java.net.InetSocketAddress) client.getRemoteSocketAddress());
         return;
       }
       if (!ProtocolDefinition.hasCodec(handshake.protocolVersion())) {

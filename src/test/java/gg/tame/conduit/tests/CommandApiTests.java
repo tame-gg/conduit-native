@@ -73,6 +73,9 @@ public final class CommandApiTests {
     heapIsGatedAndSaysWhatItHolds();
     cacheInvalidateTakesLiteralAddressesOnly();
     commandTreeHoldsAcrossDirectProtocols();
+    mergeKeepsTreesEndingInAHighByte();
+    mergeKeepsATreeEndingInEightyHex();
+    greedyStringArgumentsUseTheParserIdClientsRead();
     pluginJarEndToEnd();
     badPluginJarsDoNotStopTheProxy();
     pluginsEnableInDependencyOrderAndStopInReverse();
@@ -498,6 +501,125 @@ public final class CommandApiTests {
   }
 
   /** A backend's own declare-commands: root plus one executable literal. */
+  /**
+   * A backend tree whose last node ends in a byte with the high bit set, which is what a real
+   * server's tree does whenever its final node carries a non-ASCII name or a properties payload
+   * ending in a raw float, double or long byte. The merge copies those bytes without decoding
+   * them, so it has to find where they stop without mistaking one of them for part of the
+   * trailing root index.
+   */
+  private static byte[] backendTreeEndingHigh(ProtocolDefinition protocol) throws Exception {
+    return backendTree(protocol, "café");
+  }
+
+
+  /**
+   * The parser numbering a 26.2 client actually reads, taken from a 26.2 server's own command
+   * tree rather than from a changelog.
+   *
+   * <p>In that tree {@code brigadier:string} is id 5 and id 4 is never written at all, which is
+   * the registry with {@code brigadier:float} still in it. Conduit believed 26.2 had dropped
+   * float and wrote its string arguments as 4. For a plain word argument that is survivable --
+   * the client reads 4 as {@code brigadier:long}, whose properties are also one byte when no
+   * bounds are set. For a greedy one it is not: the properties byte is 2, which as a long means
+   * "a maximum follows", so the client swallows the next eight bytes and reads every node after
+   * from the wrong offset until the packet runs out under it.
+   */
+  private static void greedyStringArgumentsUseTheParserIdClientsRead() throws Exception {
+    require(gg.tame.conduit.command.ParserIds.forProtocol(776).stringId() == 5,
+        "26.2 writes brigadier:string as 5");
+    require(gg.tame.conduit.command.ParserIds.forProtocol(765).stringId() == 5,
+        "1.20.4 writes brigadier:string as 5");
+
+    Fixture fixture = new Fixture();
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    byte[] declared = CommandGraphs.mergeProxyCommands(protocol, backendTree(protocol, "gamemode"),
+        fixture.names(), fixture.commands.names(), fixture.commands.displacedBuiltIns());
+    byte[] name = "message".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    int at = indexOf(declared, name);
+    require(at > 0, "the merged tree declares a message argument");
+    int parser = declared[at + name.length] & 0xFF;
+    int properties = declared[at + name.length + 1] & 0xFF;
+    require(parser == 5, "the greedy argument names parser 5, got " + parser);
+    require(properties == 2, "the greedy argument says greedy, got " + properties);
+  }
+
+  /**
+   * The silent case, and the one that kicked a real client: a last node ending in {@code 0x80}.
+   * Walking backwards from the end took that byte for part of the root index, and {@code 0x80 0x00}
+   * decodes to 0 exactly as {@code 0x00} does -- so the "root is node 0" check passed, the copy
+   * stopped a byte early, and the client was handed a tree with a byte missing out of the middle.
+   * A double's bounds are written as raw IEEE bytes, so ending in one is ordinary.
+   */
+  private static void mergeKeepsATreeEndingInEightyHex() throws Exception {
+    Fixture fixture = new Fixture();
+    ProtocolDefinition protocol = ProtocolDefinition.forVersion(776);
+    var bytes = new java.io.ByteArrayOutputStream();
+    byte[] node;
+    try (var output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(
+          gg.tame.conduit.protocol.ConnectionState.PLAY,
+          gg.tame.conduit.protocol.PacketDirection.SERVER_TO_CLIENT,
+          gg.tame.conduit.protocol.PacketKind.PLAY_DECLARE_COMMANDS));
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 2);
+      output.writeByte(0);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 1);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 1);
+      var tail = new java.io.ByteArrayOutputStream();
+      try (var nodeOut = new java.io.DataOutputStream(tail)) {
+        nodeOut.writeByte(0x02 | 0x04);
+        gg.tame.conduit.protocol.MinecraftOutput.varInt(nodeOut, 0);
+        gg.tame.conduit.protocol.MinecraftOutput.string(nodeOut, "amount");
+        // brigadier:double -- id 2 in the registry clients actually read -- then its flags
+        // byte and a max whose last byte is 0x80.
+        gg.tame.conduit.protocol.MinecraftOutput.varInt(nodeOut, 2);
+        nodeOut.writeByte(0x02);
+        nodeOut.writeLong(0x4059000000000080L);
+      }
+      node = tail.toByteArray();
+      output.write(node);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 0);
+    }
+    byte[] backend = bytes.toByteArray();
+    require((node[node.length - 1] & 0xFF) == 0x80, "the fixture must end in 0x80");
+
+    byte[] declared = CommandGraphs.mergeProxyCommands(protocol, backend, fixture.names());
+    // Not decoded: the merge's contract is that a backend's nodes are copied through untouched,
+    // whatever they hold. Losing any of them is the failure, and it is visible as bytes.
+    require(indexOf(declared, node) >= 0, "the backend's node was not copied through intact");
+    require(rootChildren(declared, gg.tame.conduit.command.ParserIds.forProtocol(776)).contains("server"),
+        "the proxy commands are still declared");
+  }
+
+  /** Where {@code needle} starts in {@code haystack}, or -1. */
+  private static int indexOf(byte[] haystack, byte[] needle) {
+    outer:
+    for (int start = 0; start + needle.length <= haystack.length; start++) {
+      for (int i = 0; i < needle.length; i++) {
+        if (haystack[start + i] != needle[i]) continue outer;
+      }
+      return start;
+    }
+    return -1;
+  }
+
+  /** The merge must not lose a byte of a tree that ends in one. */
+  private static void mergeKeepsTreesEndingInAHighByte() throws Exception {
+    Fixture fixture = new Fixture();
+    for (int version : new int[] { 393, 765, 776 }) {
+      ProtocolDefinition protocol = ProtocolDefinition.forVersion(version);
+      byte[] backend = backendTreeEndingHigh(protocol);
+      byte[] declared = CommandGraphs.mergeProxyCommands(protocol, backend, fixture.names());
+      var parsers = gg.tame.conduit.command.ParserIds.forProtocol(version);
+      // Decoding is the same structural check a client makes: a byte lost anywhere in the copied
+      // region shifts everything after it, and shows up here rather than as a kicked player.
+      CommandGraph.decode(body(declared), parsers);
+      List<String> roots = rootChildren(declared, parsers);
+      require(roots.contains("café"), version + " keeps a backend command ending in a high byte, got " + roots);
+      require(roots.contains("server"), version + " still declares /server, got " + roots);
+    }
+  }
+
   private static byte[] backendTree(ProtocolDefinition protocol, String literal) throws Exception {
     var bytes = new java.io.ByteArrayOutputStream();
     try (var output = new java.io.DataOutputStream(bytes)) {
@@ -800,19 +922,31 @@ public final class CommandApiTests {
       require(gg.tame.conduit.protocol.MinecraftInput.varInt(input) == expected, version + " keeps the packet id");
 
       // decode() validates every child and redirect index against the node count and refuses
-      // trailing bytes, so this is the structural check a client would otherwise make for us.
-      CommandGraph graph = CommandGraph.decode(body(declared));
-      List<String> roots = rootChildren(declared);
+      // trailing bytes, so this is the structural check a client would otherwise make for us. It is
+      // also what proves the argument nodes: a parser named the wrong way, or with the wrong id,
+      // makes its properties the wrong length and every byte after it shifts, which shows up here as
+      // an index out of bounds or trailing bytes rather than as a silently broken client.
+      CommandGraph graph = CommandGraph.decode(body(declared), gg.tame.conduit.command.ParserIds.forProtocol(version));
+      gg.tame.conduit.command.ParserIds parsers = gg.tame.conduit.command.ParserIds.forProtocol(version);
+      List<String> roots = rootChildren(declared, parsers);
       require(roots.contains("gamemode"), version + " keeps the backend's own command");
       for (String name : List.of("server", "send", "conduit", "glist", "plist", "find", "alert",
           "ping", "hub", "gkick", "lobby", "survival")) {
         require(roots.contains(name), version + " declares /" + name + ", got " + roots);
       }
       require(roots.stream().distinct().count() == roots.size(), version + " declares no name twice");
-      require(childrenOf(declared, "conduit").equals(CoreCommands.CONDUIT_SUBCOMMANDS),
+      require(childrenOf(declared, "conduit", parsers).equals(CoreCommands.CONDUIT_SUBCOMMANDS),
           version + " declares every /conduit subcommand");
-      require(childrenOf(declared, "server").equals(fixture.names()), version + " declares the servers under /server");
-      require(childrenOf(declared, "send").getFirst().equals("current"), version + " declares /send current");
+      require(childrenOf(declared, "server", parsers).equals(fixture.names()),
+          version + " declares the servers under /server");
+      require(childrenOf(declared, "send", parsers).getFirst().equals("current"),
+          version + " declares /send current");
+      // The point of the whole change: /conduit drain lists the servers, and /gkick has an argument
+      // the client will ask Conduit about instead of a dead end.
+      require(drainChildren(declared, parsers).equals(fixture.names()),
+          version + " declares the servers under /conduit drain, got " + drainChildren(declared, parsers));
+      require(childrenOf(declared, "gkick", parsers).equals(List.of("player")),
+          version + " declares a player argument under /gkick");
       require(graph.root() == 0, version + " root is node 0");
     }
   }
@@ -1015,34 +1149,71 @@ public final class CommandApiTests {
 
   /** Literal names hanging directly off the root of a declare-commands packet. */
   private static List<String> rootChildren(byte[] packet) throws Exception {
-    CommandGraph graph = CommandGraph.decode(body(packet));
-    return names(graph, graph.root());
+    return rootChildren(packet, gg.tame.conduit.command.ParserIds.INDEXED);
+  }
+
+  /** @param parsers how the release that wrote this tree names an argument node's parser */
+  private static List<String> rootChildren(byte[] packet, gg.tame.conduit.command.ParserIds parsers) throws Exception {
+    CommandGraph graph = CommandGraph.decode(body(packet), parsers);
+    return names(graph, graph.root(), parsers);
   }
 
   private static List<String> childrenOf(byte[] packet, String literal) throws Exception {
-    CommandGraph graph = CommandGraph.decode(body(packet));
-    for (int index : childIndexes(graph, graph.root())) {
-      if (literal.equals(nameOf(graph, index))) return names(graph, index);
+    return childrenOf(packet, literal, gg.tame.conduit.command.ParserIds.INDEXED);
+  }
+
+  private static List<String> childrenOf(byte[] packet, String literal, gg.tame.conduit.command.ParserIds parsers) throws Exception {
+    CommandGraph graph = CommandGraph.decode(body(packet), parsers);
+    for (int index : childIndexes(graph, graph.root(), parsers)) {
+      if (literal.equals(nameOf(graph, index, parsers))) return names(graph, index, parsers);
     }
     throw new IllegalStateException("no literal " + literal + " in the graph");
   }
 
+  /** The children of /conduit drain, two levels down, which no other helper reaches. */
+  private static List<String> drainChildren(byte[] packet, gg.tame.conduit.command.ParserIds parsers) throws Exception {
+    CommandGraph graph = CommandGraph.decode(body(packet), parsers);
+    for (int conduit : childIndexes(graph, graph.root(), parsers)) {
+      if (!"conduit".equals(nameOf(graph, conduit, parsers))) continue;
+      for (int subcommand : childIndexes(graph, conduit, parsers)) {
+        if ("drain".equals(nameOf(graph, subcommand, parsers))) return names(graph, subcommand, parsers);
+      }
+    }
+    throw new IllegalStateException("no /conduit drain in the graph");
+  }
+
   private static List<String> names(CommandGraph graph, int node) throws Exception {
+    return names(graph, node, gg.tame.conduit.command.ParserIds.INDEXED);
+  }
+
+  private static List<String> names(CommandGraph graph, int node, gg.tame.conduit.command.ParserIds parsers) throws Exception {
     List<String> result = new ArrayList<>();
-    for (int index : childIndexes(graph, node)) result.add(nameOf(graph, index));
+    for (int index : childIndexes(graph, node, parsers)) result.add(nameOf(graph, index, parsers));
     return result;
   }
 
   // CommandGraph.Node keeps its fields private; the encoded packet is the only public view of them.
   private static List<Integer> childIndexes(CommandGraph graph, int node) throws Exception {
-    return decoded(graph).get(node).children;
+    return childIndexes(graph, node, gg.tame.conduit.command.ParserIds.INDEXED);
+  }
+
+  private static List<Integer> childIndexes(CommandGraph graph, int node, gg.tame.conduit.command.ParserIds parsers) throws Exception {
+    return decoded(graph, parsers).get(node).children;
   }
 
   private static String nameOf(CommandGraph graph, int node) throws Exception {
-    return decoded(graph).get(node).name;
+    return nameOf(graph, node, gg.tame.conduit.command.ParserIds.INDEXED);
   }
 
-  private static List<RawNode> decoded(CommandGraph graph) throws Exception {
+  private static String nameOf(CommandGraph graph, int node, gg.tame.conduit.command.ParserIds parsers) throws Exception {
+    return decoded(graph, parsers).get(node).name;
+  }
+
+  /**
+   * Re-encodes and re-reads the graph, which is the only way at its private fields. A node keeps the
+   * parser form it was decoded with, so the flag has to travel with it.
+   */
+  private static List<RawNode> decoded(CommandGraph graph, gg.tame.conduit.command.ParserIds parsers) throws Exception {
     byte[] encoded = graph.encode(0);
     var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(encoded));
     gg.tame.conduit.protocol.MinecraftInput.varInt(input);
@@ -1057,7 +1228,10 @@ public final class CommandApiTests {
       int type = flags & 0x03;
       String name = (type == 1 || type == 2) ? gg.tame.conduit.protocol.MinecraftInput.string(input, 32767) : null;
       if (type == 2) {
-        int parser = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+        int parser = parsers.indexed()
+            ? parsers.canonical(gg.tame.conduit.protocol.MinecraftInput.varInt(input))
+            : gg.tame.conduit.command.ArgumentProperties.idFor(
+                gg.tame.conduit.protocol.MinecraftInput.string(input, 32767));
         gg.tame.conduit.command.ArgumentProperties.read(input, parser);
       }
       if ((flags & 0x10) != 0) gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);

@@ -26,6 +26,8 @@ public final class GracefulShutdown {
   }
 
   public void applySettings(ShutdownSettings replacement) { this.settings = replacement; }
+  /** The live settings, so the listener can spend the same budget draining its connection workers. */
+  public ShutdownSettings settings() { return settings; }
   public boolean isShuttingDown() { return shuttingDown.get(); }
   /** Players are kicked with {@code reason} rather than the configured message, if the shutdown has not begun. */
   public void kickWith(gg.tame.conduit.api.text.Text reason) { this.reason = reason; }

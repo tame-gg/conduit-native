@@ -377,6 +377,22 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return new java.net.InetSocketAddress(address, configuration.forwardedPlayerAddress().isPresent() ? 0 : client.remotePort());
   }
   @Override public java.net.InetSocketAddress virtualHost() { return handshake.virtualHost(); }
+  /**
+   * {@code username (ip:port)}, as the connection log names a player. The port is left off when
+   * the address was handed to us by a proxy in front of this one, because the port we hold then is
+   * our own link to that proxy and says nothing about where the player is.
+   */
+  /**
+   * The backend the connection log last announced this player on, which is not the same as the one
+   * they are wired to: a session that ends during configuration has a backend already and never
+   * reached the join line. Reporting this one keeps every "left" paired with a "joined".
+   */
+  private volatile String loggedBackend;
+  private String origin() {
+    String host = address.getHostAddress();
+    if (configuration.forwardedPlayerAddress().isPresent()) return username() + " (" + host + ")";
+    return username() + " (" + host + ":" + client.remotePort() + ")";
+  }
   @Override public java.util.concurrent.CompletableFuture<Boolean> connect(gg.tame.conduit.api.server.RegisteredServer server) {
     return connectWithResult(server).thenApply(gg.tame.conduit.api.player.ConnectResult::successful);
   }
@@ -586,6 +602,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     initial.setReadTimeoutMillis(0);
     synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); lock.notifyAll(); }
     players.add(this);
+    gg.tame.conduit.log.ConduitLog.info(origin() + " connected to the proxy");
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     long joined = System.nanoTime();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
@@ -614,6 +631,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    */
   public void leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus status) {
     if (!left.compareAndSet(false, true)) return;
+    String last = loggedBackend;
+    gg.tame.conduit.log.ConduitLog.info(last == null
+        ? origin() + " disconnected from the proxy"
+        : origin() + " left backend '" + last + "' (disconnected from the proxy)");
     try {
       if (displaced && status != gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN) {
         status = gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.CONFLICTING_LOGIN;
@@ -1779,6 +1800,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     try {
       byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names(), commands.displacedBuiltIns());
       commandsDeclared = true;
+      gg.tame.conduit.protocol.ProfileTrace.dumpCommandMerge(protocol, packet, merged);
       return merged;
     } catch (IOException exception) {
       System.err.println("Command tree merge skipped: " + exception);
@@ -2090,6 +2112,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     var first = firstConnected;
     if (first == null) return;
     firstConnected = null;
+    loggedBackend = first.getName();
+    gg.tame.conduit.log.ConduitLog.info(origin() + " joined backend '" + first.getName() + "'");
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first));
   }
 
@@ -2319,6 +2343,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       discard(previous);
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {
+        loggedBackend = targetView.getName();
+        gg.tame.conduit.log.ConduitLog.info(sourceView.isPresent()
+            ? origin() + " left backend '" + sourceView.get().getName()
+                + "' and joined backend '" + targetView.getName() + "'"
+            : origin() + " joined backend '" + targetView.getName() + "'");
         runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, sourceView, targetView));
         runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchEvent(this, sourceView, targetView));
       }

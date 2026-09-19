@@ -26,3 +26,6 @@ config/via/
 
 # scripts/build-dist.ps1 output: a local test build, not the distZip distribution.
 /dist/
+
+# The conduit.toml a first start from the repo root writes; the shipped copy is in src/main/resources.
+/conduit.toml

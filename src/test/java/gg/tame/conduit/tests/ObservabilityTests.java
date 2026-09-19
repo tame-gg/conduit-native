@@ -123,11 +123,14 @@ public final class ObservabilityTests {
     require(warnings.contains("Unknown setting health.interval_ms in typo.toml is ignored")
         && warnings.contains("Unknown setting helth.enabled in typo.toml is ignored"), "each unread setting is named:\n" + warnings);
     require(!warnings.contains(root.toString()), "by file name, not its path");
-    try (var shipped = Files.list(Path.of("config"))) {
-      for (Path config : shipped.filter(file -> file.toString().endsWith(".toml")).toList()) {
-        String shippedWarnings = stderrOf(() -> ConfigurationLoader.load(config));
-        require(!shippedWarnings.contains("Unknown setting"), config.getFileName() + " has settings Conduit does not read:\n" + shippedWarnings);
-      }
+    // The sample beside the jar, and the test configurations in config/.
+    List<Path> shippedConfigs = new java.util.ArrayList<>(List.of(Path.of("conduit.toml")));
+    try (var inConfigDir = Files.list(Path.of("config"))) {
+      inConfigDir.filter(file -> file.toString().endsWith(".toml")).forEach(shippedConfigs::add);
+    }
+    for (Path config : shippedConfigs) {
+      String shippedWarnings = stderrOf(() -> ConfigurationLoader.load(config));
+      require(!shippedWarnings.contains("Unknown setting"), config.getFileName() + " has settings Conduit does not read:\n" + shippedWarnings);
     }
   }
 

@@ -50,7 +50,7 @@ public final class ConfigurationLoader {
     List<String> lines;
     try { lines = Files.readAllLines(path); }
     catch (NoSuchFileException missing) {
-      throw new IllegalArgumentException(path.toAbsolutePath() + " does not exist. Copy the sample config/conduit.toml there and edit it.");
+      throw new IllegalArgumentException(path.toAbsolutePath() + " does not exist. Copy the sample conduit.toml there and edit it.");
     } catch (CharacterCodingException notUtf8) {
       throw new IllegalArgumentException(file + " is not UTF-8 text. Save it as UTF-8.");
     }
@@ -116,9 +116,12 @@ public final class ConfigurationLoader {
     Path configDirectory = path.toAbsolutePath().getParent();
     // Modern forwarding needs a secret and there is nothing useful to choose, so
     // an unset secret-file is a default rather than a mistake: the file sits
-    // beside the configuration and is created on first start.
+    // beside the configuration and is created on first start. It is created for
+    // every mode, not only "modern", so that turning modern forwarding on later
+    // is one line in this file and a copy into each backend -- an operator who
+    // had to generate the secret first tended to invent a weak one by hand.
     Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file"))
-        .or(() -> mode == ForwardingMode.MODERN ? Optional.of(DEFAULT_SECRET_FILE) : Optional.empty())
+        .or(() -> Optional.of(DEFAULT_SECRET_FILE))
         .map(value -> configDirectory.resolve(value).normalize());
     List<BackendServer> servers = new ArrayList<>();
     Map<String, String> lowerCaseNames = new HashMap<>();
@@ -155,26 +158,40 @@ public final class ConfigurationLoader {
     }
     ConduitConfiguration configuration = new ConduitConfiguration(listener, maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
-        forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()));
+        forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()),
+        optionalBoolean(values, "listener.proxy-protocol", false));
     if (configuration.forwardingSecretFile().isPresent()) {
       // Otherwise first read by the launcher, where a missing file was a bare NoSuchFileException stack trace.
       Path secretFile = configuration.forwardingSecretFile().get();
       if (createSecret && gg.tame.conduit.forwarding.ForwardingSecret.createIfAbsent(secretFile)) {
-        ConduitLog.warn("Created a modern forwarding secret at " + secretFile
-            + ". Every backend must be given the same value -- for Paper, velocity.secret in"
-            + " config/paper-global.yml -- and must run with online-mode=false, since Conduit"
-            + " authenticates instead. Until then those backends will refuse this proxy's logins.");
+        if (mode == ForwardingMode.MODERN) {
+          ConduitLog.warn("Created a modern forwarding secret at " + secretFile
+              + ". Every backend must be given the same value -- for Paper, velocity.secret in"
+              + " config/paper-global.yml -- and must run with online-mode=false, since Conduit"
+              + " authenticates instead. Until then those backends will refuse this proxy's logins.");
+        } else {
+          // Written ahead of being wanted, so forwarding.mode = "modern" is the
+          // only change needed later. Not a warning: nothing is wrong yet.
+          ConduitLog.info("Created a forwarding secret at " + secretFile + ". forwarding.mode is \""
+              + mode.name().toLowerCase(Locale.ROOT) + "\", so nothing uses it yet; set it to \"modern\" and copy this"
+              + " value into every backend when you want signed forwarding.");
+        }
       }
-      String text;
-      try { text = Files.readString(secretFile); }
-      catch (NoSuchFileException missing) {
-        // No trailing sentence: the loader appends `, found "<value>"` when the
-        // setting came from a line, and a full stop before that reads as a typo.
-        throw new IllegalArgumentException("forwarding.secret-file does not exist at " + secretFile
-            + " (starting Conduit creates it; --check-config does not write files)");
+      // Only modern forwarding reads it, so an unreadable or empty file is a
+      // mistake only then. In any other mode the file is a convenience, and
+      // refusing to start over one Conduit itself had just created would be absurd.
+      if (mode == ForwardingMode.MODERN) {
+        String text;
+        try { text = Files.readString(secretFile); }
+        catch (NoSuchFileException missing) {
+          // No trailing sentence: the loader appends `, found "<value>"` when the
+          // setting came from a line, and a full stop before that reads as a typo.
+          throw new IllegalArgumentException("forwarding.secret-file does not exist at " + secretFile
+              + " (starting Conduit creates it; --check-config does not write files)");
+        }
+        catch (IOException unreadable) { throw new IllegalArgumentException("forwarding.secret-file cannot be read at " + secretFile + " (" + unreadable.getClass().getSimpleName() + ")"); }
+        if (text.isBlank()) throw new IllegalArgumentException("forwarding.secret-file is empty at " + secretFile);
       }
-      catch (IOException unreadable) { throw new IllegalArgumentException("forwarding.secret-file cannot be read at " + secretFile + " (" + unreadable.getClass().getSimpleName() + ")"); }
-      if (text.isBlank()) throw new IllegalArgumentException("forwarding.secret-file is empty at " + secretFile);
     }
     configuration.ops().metrics().prometheusAddress().ifPresent(metrics -> {
       // Otherwise the bind failed at start, was logged once, and the proxy ran without metrics.
@@ -231,7 +248,7 @@ public final class ConfigurationLoader {
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
     return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory),
-        metrics(values));
+        metrics(values), updates(values));
   }
 
   private static MetricsSettings metrics(Map<String, String> values) {
@@ -240,6 +257,13 @@ public final class ConfigurationLoader {
     InetSocketAddress address = parseAddress(values, key);
     if (address.isUnresolved()) throw new IllegalArgumentException(key + " must be an IP address or a host name that resolves, with a port");
     return new MetricsSettings(Optional.of(address));
+  }
+
+  private static UpdateSettings updates(Map<String, String> values) {
+    return new UpdateSettings(
+        optionalBoolean(values, "updates.via", UpdateSettings.DEFAULT_VIA),
+        optionalBoolean(values, "updates.check-only", false),
+        optionalInteger(values, "updates.timeout-ms", UpdateSettings.DEFAULT_TIMEOUT_MS));
   }
 
   private static StatusSettings status(Map<String, String> values, Path configDirectory) {
@@ -382,9 +406,11 @@ public final class ConfigurationLoader {
   }
 
   private static AuthenticationSettings authentication(Map<String, String> values) {
+    // Online when the file does not say. Offline is the setting that lets anyone
+    // join as anyone, and it should not be what a missing line means.
     AuthenticationMode authMode = values.containsKey("authentication.mode")
         ? AuthenticationMode.parse(required(values, "authentication.mode"))
-        : AuthenticationMode.OFFLINE;
+        : AuthenticationMode.ONLINE;
     String url = values.getOrDefault("authentication.session-url", AuthenticationSettings.DEFAULT_SESSION_URL);
     int timeout = values.containsKey("authentication.timeout-millis") ? integer(values, "authentication.timeout-millis") : 15_000;
     return new AuthenticationSettings(authMode, url, timeout, optionalBoolean(values, "authentication.kick-existing-players", false));

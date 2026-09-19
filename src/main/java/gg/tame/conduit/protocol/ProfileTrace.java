@@ -191,6 +191,34 @@ public final class ProfileTrace {
       System.out.println("TRACE could not dump command tree: " + exception);
     }
   }
+  /** Set once, so a reconnect loop writes one pair of files rather than thousands. */
+  private static boolean commandMergeDumped;
+
+  /**
+   * Writes the backend's command tree and the merged one beside the configuration, for
+   * {@code -Dconduit.dumpCommands=true}.
+   *
+   * <p>Separate from {@link #dumpCommandTree}, which only fires when the merge refuses a tree.
+   * A merge that succeeds and still produces a packet the client cannot read leaves nothing to
+   * look at, and the tree that caused it only exists on the server that sent it -- so this is how
+   * those bytes are gotten off a real backend and into a test.
+   */
+  public static synchronized void dumpCommandMerge(ProtocolDefinition protocol, byte[] backend, byte[] merged) {
+    if (!Boolean.getBoolean("conduit.dumpCommands") || commandMergeDumped) return;
+    commandMergeDumped = true;
+    try {
+      int version = protocol.version().number();
+      java.nio.file.Path from = java.nio.file.Path.of("command-tree-backend-" + version + ".bin");
+      java.nio.file.Path to = java.nio.file.Path.of("command-tree-merged-" + version + ".bin");
+      java.nio.file.Files.write(from, backend);
+      java.nio.file.Files.write(to, merged);
+      System.out.println("Wrote the backend's " + backend.length + " byte command tree to "
+          + from.toAbsolutePath() + " and the merged " + merged.length + " byte one to " + to.toAbsolutePath());
+    } catch (Exception exception) {
+      System.out.println("Could not dump the command trees: " + exception);
+    }
+  }
+
   private static String line(String where, ConnectionState state, int id, String name) {
     return String.format("TRACE %-18s S2C %-13s id=0x%02X %s", where, state, id, name);
   }

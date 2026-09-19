@@ -93,16 +93,29 @@ public final class ConfigMigrator {
         entry("modded.packet-queue-enabled", "packet-queue-enabled = true"),
         entry("modded.packet-queue-max-depth", "packet-queue-max-depth = 512"),
         entry("modded.log-mod-handshakes", "log-mod-handshakes = false")));
+    appendMissingSection(appendix, present, added, "updates", List.of(
+        entry("updates.via", "via = " + UpdateSettings.DEFAULT_VIA),
+        entry("updates.check-only", "check-only = false"),
+        entry("updates.timeout-ms", "timeout-ms = " + UpdateSettings.DEFAULT_TIMEOUT_MS)));
     if (!present.contains("ops.schema-version")) {
       if (!appendix.isEmpty()) appendix.append('\n');
-      appendix.append("# Conduit Ops schema\n");
+      appendix.append("# Written by Conduit. It is how a newer version knows which settings to add to\n");
+      appendix.append("# this file; leave it alone.\n");
       appendix.append("[ops]\n");
       appendix.append("schema-version = ").append(TARGET_SCHEMA).append('\n');
       added.add("ops.schema-version");
       present.add("ops.schema-version");
     }
     if (added.isEmpty()) return new Result(false, List.of());
-    Files.writeString(path, (lines.isEmpty() || lines.get(lines.size() - 1).isBlank() ? "" : "\n") + appendix,
+    // One banner for the whole appendix. A header per section repeated the same
+    // sentence down the file, and read as though each section had arrived from a
+    // different version.
+    String banner = "\n# ------------------------------------------------------------------------\n"
+        + "#  Added by Conduit (configuration schema " + TARGET_SCHEMA + "), at their defaults.\n"
+        + "#  Settings this file did not have yet. Nothing here changes how Conduit\n"
+        + "#  behaved before they were written: each one is the value already in use.\n"
+        + "# ------------------------------------------------------------------------\n\n";
+    Files.writeString(path, (lines.isEmpty() || lines.get(lines.size() - 1).isBlank() ? "" : "\n") + banner + appendix,
         StandardCharsets.UTF_8, StandardOpenOption.APPEND);
     return new Result(true, added);
   }
@@ -115,7 +128,6 @@ public final class ConfigMigrator {
     }
     if (missing.isEmpty()) return;
     if (!appendix.isEmpty()) appendix.append('\n');
-    appendix.append("# Conduit Ops defaults (schema ").append(TARGET_SCHEMA).append(")\n");
     appendix.append('[').append(section).append("]\n");
     for (Map.Entry<String, String> entry : missing) {
       appendix.append(entry.getValue()).append('\n');

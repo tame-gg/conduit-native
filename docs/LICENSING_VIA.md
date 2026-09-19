@@ -87,17 +87,27 @@ downloads the ones the build uses.
 
 ### A binary distribution
 
-`gradle distZip`, `distTar` and `installDist` (see `build.gradle.kts`) produce
-the only supported binary distribution. It conveys object code for Conduit and
-for the four GPL Via jars, so the distribution itself carries what GPLv3
-requires:
+Two builds produce one: `gradle distZip`, `distTar` and `installDist` (see
+`build.gradle.kts`), and `scripts/build-jar.ps1`, whose single `conduit.jar` has
+the Via classes merged into it. Both convey object code for Conduit and for the
+four GPL Via jars, so both carry what GPLv3 requires:
 
 | In the distribution | Meets |
 |---|---|
 | `LICENSE`: Conduit's notice and the GPLv3 text | Sections 4 and 5: the license text, kept intact, accompanies the program |
 | `THIRD-PARTY-NOTICES` | Copyright and license notices for every bundled MIT and Apache-2.0 component |
 | `source/conduit/`: Conduit's source, build files, scripts and generators from the tree that was built | Section 6: Corresponding Source for Conduit, including "the scripts used to control" building it (section 1) |
-| `source/third-party/*.zip`: the upstream release-tag archives of ViaVersion 5.11.0, ViaBackwards 5.11.0, ViaRewind 4.1.3 and ViaLegacy v3.0.16, downloaded by the `fetchViaSource` task | Section 6: Corresponding Source for the GPL jars |
+| `source/third-party/*.zip`: the upstream release-tag archives of ViaVersion 5.11.0, ViaBackwards 5.11.0, ViaRewind 4.1.3 and ViaLegacy v3.0.16, downloaded by the `fetchViaSource` task or by `scripts/fetch-via-source.ps1` | Section 6: Corresponding Source for the GPL jars |
+
+`scripts/build-jar.ps1 -SkipSource` omits both source folders. What it produces
+is for running on the machine that built it and is not a distribution: handing
+it to anyone would convey the Via object code without its source. The script
+says so when the flag is used.
+
+The Via versions live in three places that have to agree: `build.gradle.kts`,
+`scripts/fetch-via.ps1` (the jars) and `scripts/fetch-via-source.ps1` (their
+source). Changing one alone produces a distribution whose source does not match
+its binaries.
 
 The Corresponding Source travels inside the same archive as the object code.
 That meets section 6 however the archive is published, whether as a
@@ -109,6 +119,21 @@ When the Via versions in `build.gradle.kts` change, the source archives follow,
 because the version values are shared. Anyone who conveys a bundle assembled
 some other way, for example `out/` zipped together with `lib/via/`, has to
 include the same items by hand.
+
+### An updated ViaVersion at runtime
+
+`[updates] via = true` has Conduit download a newer ViaVersion from
+`repo.viaversion.com` into `lib/via` and use it in place of the bundled copies.
+That is the operator's machine fetching a library from its own publisher, not
+Conduit conveying it, so it adds no obligation to Conduit's distribution and the
+jars involved never enter one.
+
+What it does mean is that a running Conduit may be combined with a Via the
+`source/third-party/` archives beside it do not correspond to. The Corresponding
+Source shipped with a distribution matches the Via merged into that jar; anyone
+who conveys the combination they are actually running -- the jar together with an
+updated `lib/via` -- has to include the source of that Via instead, from the same
+upstream tags.
 
 ## Open points
 

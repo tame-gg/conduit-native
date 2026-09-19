@@ -73,7 +73,7 @@ public final class CoreCommands {
         (source, arguments) -> completePlayers(players, arguments)));
     manager.register(new RegisteredCommand("conduit", List.of(), Permissions.CONDUIT_INFO,
         (source, arguments) -> conduit(source, runtime, registry, arguments),
-        (source, arguments) -> completeConduit(arguments)));
+        (source, arguments) -> completeConduit(source, registry, arguments)));
     for (String name : registry.names()) {
       String key = name.toLowerCase(Locale.ROOT);
       if (RESERVED.contains(key)) continue;
@@ -898,9 +898,33 @@ public final class CoreCommands {
     return prefix(players.onlineUsernames(), arguments.isEmpty() ? "" : arguments.getFirst());
   }
 
-  private static List<String> completeConduit(List<String> arguments) {
-    if (arguments.size() > 1) return List.of();
-    return prefix(CONDUIT_SUBCOMMANDS, arguments.isEmpty() ? "" : arguments.getFirst());
+  /**
+   * Tab completion for {@code /conduit}, past the subcommand as well as at it.
+   *
+   * <p>Only the subcommand used to complete, so {@code /conduit drain <TAB>} offered nothing and the
+   * server had to be named from memory -- the same for every subcommand that takes an argument. The
+   * console is included because it completes through this method too, and {@code shutdown} appears
+   * only there: it is refused for anyone else, and suggesting it to a player is an offer Conduit
+   * will not honour.
+   */
+  private static List<String> completeConduit(CommandSource source, ServerRegistry registry, List<String> arguments) {
+    if (arguments.size() <= 1) {
+      List<String> subcommands = new ArrayList<>(CONDUIT_SUBCOMMANDS);
+      if (source instanceof ConsoleCommandSource) subcommands.add("shutdown");
+      return prefix(subcommands, arguments.isEmpty() ? "" : arguments.getFirst());
+    }
+    String subcommand = arguments.getFirst().toLowerCase(Locale.ROOT);
+    if (arguments.size() == 2) {
+      return switch (subcommand) {
+        case "drain", "undrain" -> prefix(registry.names(), arguments.get(1));
+        case "maintenance", "attack", "attackmode" -> prefix(List.of("on", "off", "status"), arguments.get(1));
+        case "cache" -> prefix(List.of("invalidate"), arguments.get(1));
+        default -> List.of();
+      };
+    }
+    // /conduit cache invalidate takes the IP address a connection came from, which is not something
+    // there is a list of to suggest.
+    return List.of();
   }
 
   private static List<String> prefix(List<String> values, String prefix) {

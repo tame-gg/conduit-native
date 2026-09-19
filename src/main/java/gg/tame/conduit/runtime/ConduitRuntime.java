@@ -283,6 +283,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     health.close();
     scheduler.close();
     if (metricsEndpoint != null) metricsEndpoint.close();
+    // Via is deliberately not stopped here. Its manager is a per-JVM singleton that cannot be
+    // re-initialised, so a runtime closing would take translation away from every later one in the
+    // same process. Stopping it belongs to the process, and ConduitViaBootstrap owns that as a
+    // shutdown hook -- which the launcher's explicit exit is what finally reaches.
   }
 
   private static final class PlayerViews implements PlayerLookup {

@@ -5,12 +5,16 @@ import gg.tame.conduit.config.ConduitConfiguration;
 import gg.tame.conduit.config.ConfigurationLoader;
 import gg.tame.conduit.forwarding.ForwardingSecret;
 import gg.tame.conduit.forwarding.Forwarders;
+import gg.tame.conduit.log.ConduitLog;
 import gg.tame.conduit.network.MinecraftProxy;
 import java.nio.file.Path;
 
 public final class Main {
   private Main() {}
   public static void main(String[] arguments) throws Exception {
+    // Before anything can log: this is what puts ViaVersion, the Velocity compatibility layer and
+    // Conduit's own lines on one colour-coded console instead of two formats and two streams.
+    gg.tame.conduit.log.ConduitConsoleLogging.install();
     boolean checkOnly = arguments.length > 0 && arguments[0].equals("--check-config");
     if (arguments.length < (checkOnly ? 2 : 1)) {
       System.err.println("Usage: java gg.tame.conduit.launcher.Main [--check-config] <path to conduit.toml>");
@@ -19,11 +23,33 @@ public final class Main {
     Path configPath = Path.of(arguments[checkOnly ? 1 : 0]);
     ConduitConfiguration config;
     try {
+      // A bare folder is made startable before anything tries to read a configuration out of it: the
+      // jar carries the file it would otherwise have complained was missing.
+      gg.tame.conduit.config.ConfigBootstrap.ensure(configPath, !checkOnly);
+      // Then into this version's layout, keeping every value already set. Only a real start writes,
+      // so --check-config reads the file exactly as it is on disk.
+      if (!checkOnly) {
+        gg.tame.conduit.config.ConfigRewriter.report(configPath, gg.tame.conduit.config.ConfigRewriter.rewrite(configPath));
+      }
       // A real start may create the modern-forwarding secret; --check-config
       // validates and writes nothing.
       config = ConfigurationLoader.load(configPath, !checkOnly);
-      if (config.forwardingSecretFile().isPresent()) System.out.println("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
-      System.out.println("Authentication mode: " + config.authentication().mode().name().toLowerCase());
+      // The secret file is created in every mode, so its presence no longer means
+      // forwarding is signed. Only say so when something actually reads it.
+      if (config.forwardingMode() == gg.tame.conduit.config.ForwardingMode.MODERN && config.forwardingSecretFile().isPresent()) {
+        ConduitLog.info("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
+      } else {
+        ConduitLog.info("Player info forwarding: " + config.forwardingMode().name().toLowerCase(java.util.Locale.ROOT));
+      }
+      ConduitLog.info("Authentication mode: " + config.authentication().mode().name().toLowerCase(java.util.Locale.ROOT));
+      if (config.proxyProtocol()) {
+        // Said out loud on every start, because the setting moves who a connection claims to be
+        // out of the socket and into an unauthenticated header: whoever can reach the port decides.
+        ConduitLog.warn("listener.proxy-protocol is on: the address of every connection is taken"
+            + " from a PROXY header, which nothing signs. Reach " + config.listener().getHostString()
+            + ":" + config.listener().getPort() + " only from the reverse proxy that sends it,"
+            + " or anyone can claim any address and walk through a ban.");
+      }
       Forwarders.create(config);
     } catch (IllegalArgumentException | java.io.IOException invalid) {
       // The operator's mistake, not Conduit's: the message names it, and a stack trace would bury it.
@@ -52,11 +78,18 @@ public final class Main {
     }));
     try (MinecraftProxy listener = proxy) {
       listener.runtime().bindConfigPath(configPath);
-      System.out.println("Conduit foundation listening on " + config.listener().getHostString() + ":" + listener.port());
+      ConduitLog.info("Conduit " + gg.tame.conduit.Conduit.VERSION + " listening on "
+          + config.listener().getHostString() + ":" + listener.port());
       listener.probeBackends();
       consoleCommands(listener.runtime());
       listener.serve();
     }
+    // The shutdown is done and everything Conduit owns is closed. Anything still holding a
+    // foreground thread at this point belongs to a library or a plugin that did not stop one of its
+    // own, and waiting on it would leave the process -- and a Windows console window -- open for no
+    // reason. Exiting explicitly also gives run.bat the 0 it needs to close that window without a
+    // "press any key", while every failure above keeps its own nonzero code and its pause.
+    System.exit(0);
   }
 
   /** Commands typed at the proxy's own terminal. Daemon: it must not hold shutdown open. */

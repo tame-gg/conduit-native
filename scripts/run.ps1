@@ -1,8 +1,8 @@
-param([string]$ConfigPath = "config/conduit.toml")
+param([string]$ConfigPath = "conduit.toml")
 $ErrorActionPreference = "Stop"
 # Checked before the classpath, which can mean a full build: a missing file ended that wait in a stack trace.
 if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
-  [Console]::Error.WriteLine("No configuration at $ConfigPath. Copy the sample config/conduit.toml there (creating its folder if needed) and edit it, or pass -ConfigPath <file>.")
+  [Console]::Error.WriteLine("No configuration at $ConfigPath. Copy the sample conduit.toml there and edit it, or pass -ConfigPath <file>.")
   exit 1
 }
 # Conduit does not start without the Via jars, even with translation disabled: out/ alone is not a classpath.

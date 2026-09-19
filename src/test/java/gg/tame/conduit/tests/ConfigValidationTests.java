@@ -2,6 +2,8 @@
 package gg.tame.conduit.tests;
 
 import gg.tame.conduit.config.ConduitConfiguration;
+import gg.tame.conduit.config.ConfigRewriter;
+import gg.tame.conduit.config.ConfigTemplate;
 import gg.tame.conduit.config.ConfigurationLoader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
@@ -29,6 +31,8 @@ public final class ConfigValidationTests {
     metricsAddress();
     suspiciousValuesAreOneWarning();
     theLauncherPrintsOneLineAndNoStackTrace();
+    anOldLayoutIsRewrittenWithoutLosingValues();
+    aBareFolderIsMadeStartable();
     System.out.println("ConfigValidationTests OK");
   }
 
@@ -48,6 +52,113 @@ public final class ConfigValidationTests {
       fallback = ["lobby"]
       """;
 
+  /**
+   * An old file is brought up to the shipped layout without losing anything the operator wrote.
+   *
+   * <p>This is the test that makes the feature safe to have. A rewrite touches the one file an
+   * operator cannot be asked to write again, so what matters is not that the layout changes but that
+   * every value, every backend and every comment of theirs is still there afterwards -- and that a
+   * setting this build does not know is moved rather than deleted.
+   */
+  private static void anOldLayoutIsRewrittenWithoutLosingValues() throws Exception {
+    Path directory = TempFiles.dir("conduit-rewrite");
+    Path file = directory.resolve("conduit.toml");
+    // Schema 1: flat, unordered, and with a setting no version of Conduit reads.
+    Files.writeString(file, """
+        [listener]
+        host = "0.0.0.0"
+        port = 25569
+        max-frame-bytes = 1048576
+        [forwarding]
+        mode = "none"
+        [authentication]
+        mode = "offline"
+        kick-existing-players = true
+        # my main box
+        [servers.survival]
+        host = "127.0.0.1"
+        port = 25921
+        [servers.dev]
+        address = "127.0.0.1:25922"
+        [routing]
+        initial = ["survival"]
+        fallback = ["survival", "dev"]
+        [status]
+        motd = "&bMy Network&r\\nwelcome"
+        display-max-players = 250
+        [health]
+        interval-ms = 3000
+        [experimental]
+        turbo-mode = true
+        [ops]
+        schema-version = 1
+        """);
+
+    var result = ConfigRewriter.rewrite(file);
+    require(result.rewritten() && result.fromSchema() == 1, "an older file is rewritten, got " + result);
+    require(result.toSchema() == ConfigTemplate.schemaVersion(), "brought up to the shipped schema");
+    require(Files.exists(result.backup()), "the file it replaced is kept at " + result.backup());
+    require(result.carried().equals(List.of("experimental.turbo-mode")),
+        "a setting Conduit does not read is carried, not dropped, got " + result.carried());
+
+    // Every value survives, read back through the loader rather than by looking at the text.
+    ConduitConfiguration after = ConfigurationLoader.load(file);
+    require(after.listener().getPort() == 25569 && after.listener().getHostString().equals("0.0.0.0"), "listener kept");
+    require(after.authentication().mode() == gg.tame.conduit.config.AuthenticationMode.OFFLINE,
+        "an explicit offline is kept, even though the default is now online");
+    require(after.authentication().kickExistingPlayers(), "kick-existing-players kept");
+    require(after.ops().status().displayMaxPlayers() == 250, "display-max-players kept");
+    require(after.ops().health().intervalMs() == 3000, "an ops value kept");
+    require(after.initialBackends().equals(List.of("survival"))
+        && after.fallbackBackends().equals(List.of("survival", "dev")), "routing kept");
+
+    // The operator's backends, and only theirs: the template's example lobby must not appear.
+    List<String> names = new java.util.ArrayList<>();
+    for (var backend : after.backends()) names.add(backend.name());
+    require(names.equals(List.of("survival", "dev")), "the operator's servers, in order, got " + names);
+    require(after.backends().get(1).address().getPort() == 25922, "the address = \"host:port\" form kept");
+
+    String text = Files.readString(file);
+    require(text.contains("# my main box"), "a comment the operator wrote above a server is kept");
+    require(text.contains("#  NETWORK"), "the shipped layout's banners are now in the file");
+    require(text.contains("turbo-mode = true"), "the carried setting is still readable TOML");
+    // The sentence "Set enabled = false for native-only translation" looks like a setting and is not.
+    // Rendered as one, it both duplicated [maintenance] enabled and destroyed the sentence.
+    require(text.contains("# enabled = false for native-only translation"), "prose is not mistaken for a setting");
+    long inTemplate = ConfigTemplate.text().lines().filter(line -> line.strip().equals("enabled = true")).count();
+    require(text.lines().filter(line -> line.strip().equals("enabled = true")).count() == inTemplate,
+        "no setting line gained or lost: the rewrite renders the template, it does not invent lines");
+
+    // Idempotent: the file is now at this schema, so nothing happens a second time.
+    require(!ConfigRewriter.rewrite(file).rewritten(), "a file already at this schema is left alone");
+  }
+
+  /**
+   * A bare folder becomes startable. This is the download-the-jar-and-run-it path: the configuration
+   * Conduit was complaining about is one it ships, so it writes it instead of failing.
+   */
+  private static void aBareFolderIsMadeStartable() throws Exception {
+    Path directory = TempFiles.dir("conduit-firstrun");
+    Path file = directory.resolve("conduit.toml");
+    var created = gg.tame.conduit.config.ConfigBootstrap.ensure(file, true);
+    require(created.createdConfig(), "the configuration is written on a first start");
+    require(created.createdDirectories().contains("plugins"), "plugins/ is created, got " + created.createdDirectories());
+    require(Files.isDirectory(directory.resolve("plugins")), "plugins/ is a directory");
+    // And what it wrote must start Conduit. A first run that writes an invalid file is worse than one
+    // that writes nothing.
+    ConduitConfiguration fresh = ConfigurationLoader.load(file);
+    require(fresh.authentication().mode() == gg.tame.conduit.config.AuthenticationMode.ONLINE,
+        "the shipped default authenticates");
+    require(fresh.forwardingMode() == gg.tame.conduit.config.ForwardingMode.NONE, "and forwards nothing yet");
+    require(fresh.forwardingSecretFile().isPresent(), "but names a secret file, so modern is one line away");
+    require(!gg.tame.conduit.config.ConfigMigrator.migrate(file).changed(),
+        "the shipped file is complete, so nothing is appended to it on a first start");
+    // Twice is not a reset: an existing file is never overwritten.
+    Files.writeString(file, Files.readString(file) + "\n# mine\n");
+    require(!gg.tame.conduit.config.ConfigBootstrap.ensure(file, true).createdConfig(), "an existing file is left alone");
+    require(Files.readString(file).contains("# mine"), "and not overwritten");
+  }
+
   private static void aValidConfigurationLoadsAsBefore() throws Exception {
     String[] warnings = new String[1];
     ConduitConfiguration plain = load(BASE, warnings);
@@ -56,7 +167,12 @@ public final class ConfigValidationTests {
     require(plain.backends().size() == 1 && plain.backends().getFirst().name().equals("lobby")
         && plain.backends().getFirst().address().getPort() == 25566, "servers");
     require(plain.initialBackends().equals(List.of("lobby")) && plain.fallbackBackends().equals(List.of("lobby")), "routing");
-    require(plain.forwardingSecretFile().isEmpty() && plain.ops().metrics().prometheusAddress().isEmpty(), "defaults");
+    // The secret file defaults in every forwarding mode, not only modern: it is generated so that
+    // turning modern forwarding on later is one line here and a copy into each backend. Only
+    // ForwardingMode.MODERN reads it, which is what keeps mode = "none" from needing one to exist.
+    require(plain.forwardingSecretFile().orElseThrow().getFileName().toString().equals("forwarding.secret"),
+        "the secret file defaults beside the configuration in every mode");
+    require(plain.ops().metrics().prometheusAddress().isEmpty(), "defaults");
 
     // Trailing comments are TOML; they used to become part of the value.
     ConduitConfiguration commented = load("""
@@ -89,7 +205,7 @@ public final class ConfigValidationTests {
     fails(BASE.replace("initial = [\"lobby\"]", "initial = [\n  \"lobby\",\n]"),
         "conduit.toml line 11: an array must open and close on one line, found initial = [");
     fails(BASE + "[listener]\nport = 25570\n", "conduit.toml line 14: listener.port is already set on line 3, found port = 25570");
-    require(failure(Path.of("does-not-exist", "conduit.toml")).endsWith("conduit.toml does not exist. Copy the sample config/conduit.toml there and edit it."),
+    require(failure(Path.of("does-not-exist", "conduit.toml")).endsWith("conduit.toml does not exist. Copy the sample conduit.toml there and edit it."),
         "a missing file says what to do");
     Path latin1 = TempFiles.file("conduit", ".toml");
     Files.write(latin1, (BASE + "[status]\nmotd = \"Café\"\n").getBytes(StandardCharsets.ISO_8859_1));
@@ -222,7 +338,15 @@ public final class ConfigValidationTests {
     return config;
   }
 
-  /** Loads, putting what it printed to stderr in warnings[0]. */
+  /**
+   * Every console line opens with {@code [12:34:56 CET WARN]:}, and the clock in it cannot be
+   * asserted against. Stripping it back to the {@code WARN } the checks below are written in keeps
+   * them on the part that is the warning.
+   */
+  private static final java.util.regex.Pattern STAMP =
+      java.util.regex.Pattern.compile("\\[\\d{2}:\\d{2}:\\d{2} \\S+ (ERROR|WARN|INFO|DEBUG|TRACE)\\]: ");
+
+  /** Loads, putting what it printed to stderr in warnings[0], with the timestamps taken off. */
   private static ConduitConfiguration load(String toml, String[] warnings) throws Exception {
     Path config = write(toml);
     PrintStream original = System.err;
@@ -231,7 +355,7 @@ public final class ConfigValidationTests {
     try { return ConfigurationLoader.load(config); }
     finally {
       System.setErr(original);
-      warnings[0] = captured.toString(StandardCharsets.UTF_8);
+      warnings[0] = STAMP.matcher(captured.toString(StandardCharsets.UTF_8)).replaceAll("$1 ");
     }
   }
 
