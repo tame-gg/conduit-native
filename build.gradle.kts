@@ -18,11 +18,20 @@ application {
 repositories {
   mavenCentral()
   maven("https://repo.viaversion.com")
+  // velocity-api and its own Brigadier fork, which is published nowhere else.
+  maven("https://repo.papermc.io/repository/maven-public")
 }
 
 val viaVersion = "5.11.0"
 val viaRewind = "4.1.3"
 val viaLegacy = "3.0.16"
+val velocityVersion = "3.4.0"
+
+// The Velocity-compatibility adapter is built with the rest, not as a source set of its own: the
+// distribution is the whole install, and one that cannot load a Velocity plugin is a broken build
+// rather than a feature left out. scripts/build-jar.ps1 ships the same classes in its single jar,
+// and scripts/test.ps1 still compiles src/main on its own to keep core free of velocity-api.
+sourceSets.main { java.srcDir("src/compat-velocity/java") }
 
 dependencies {
   implementation("com.viaversion:viaversion-common:$viaVersion")
@@ -32,6 +41,16 @@ dependencies {
   implementation("io.netty:netty-all:4.1.118.Final")
   implementation("com.google.guava:guava:33.3.1-jre")
   implementation("it.unimi.dsi:fastutil:8.5.15")
+  // velocity-api's POM brings what a Velocity plugin links against: Adventure, Brigadier, Guice,
+  // Gson, SnakeYAML, Configurate, Caffeine, toml4j. What it leaves out, a plugin still expects:
+  implementation("com.velocitypowered:velocity-api:$velocityVersion")
+  // night-config's TOML reader, which Velocity's proxy carries and its POM does not name.
+  runtimeOnly("com.electronwill.night-config:toml:3.8.4")
+  // An SLF4J binding, so plugin and library logging lands in java.util.logging with Conduit's own.
+  runtimeOnly("org.slf4j:slf4j-jdk14:2.0.17")
+  // The Gson the jar build ships, which is the one the Velocity plugins were tested against;
+  // velocity-api's POM asks for an older one, and nothing else here raises it.
+  implementation("com.google.code.gson:gson:2.11.0")
 }
 
 // A distribution (distZip, distTar, installDist) conveys GPL object code: Conduit itself and the Via
