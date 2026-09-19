@@ -241,7 +241,45 @@ reached the 1.20.4 client as `id=336` and `id=340`, which are exactly
 `entity.cow.ambient` and `entity.cow.step` in 1.20.4's official registry. Those
 numbers passed through the table without anything asking for them.
 
-Still not verified by a human listening: no one has put an ear to it.
+### The official client as an independent decoder
+
+`scripts/_listen-sound-particle.ps1` joins the **official 1.13 client** through
+Conduit to a real 1.20.4 server and plays sounds and particles at it from the
+backend console. The scripted probe is Conduit's own code decoding Conduit's own
+output; the official client is not, so it is the one reader that can say the
+packets are well formed rather than merely self-consistent. Run of 2026-09-18:
+
+| | |
+|---|---|
+| client joined and stayed in the world | yes, still running at the end |
+| disconnects, internal exceptions | none |
+| Conduit translation failures | 0 |
+| sounds the client could not resolve | `minecraft:entity.warden.roar`, and only that |
+
+That one warning is the designed behaviour rather than a fault: 1.13 has no
+warden, so the sound reaches it as a Named Sound Effect and the client says it
+does not know that name. It also proves the name survived the crossing intact,
+since the client prints the name it was given. Every other sound resolved, which
+means each id Conduit sent was a sound 1.13's own sound engine could play.
+
+Particles were photographed as they were spawned:
+
+| Shot | Spawned | What the client drew |
+|---|---|---|
+| `listen-shot-flame-*.png` | `particle minecraft:flame` | the screen full of flames |
+| `listen-shot-block-*.png` | `particle minecraft:block minecraft:redstone_block` | **red** block particles |
+| `listen-shot-dust-*.png` | `particle minecraft:dust 1 0 0 4` | a wall of red dust at scale 4 |
+
+The block shot is the one that proves the payload path. A block particle carries
+a block state, and block state ids are no more interchangeable across these
+versions than particle ids: had the payload been copied rather than translated,
+the 1.13 client would have drawn some unrelated block's texture instead of
+redstone red.
+
+**Still not verified by a human listening.** Nobody has put an ear to it, and
+nothing above is a substitute: a wrong-but-valid sound would draw no warning
+from the client. What establishes that the sound is the *right* one is the id
+check against Mojang's registry, not this run.
 
 ## Particles
 
