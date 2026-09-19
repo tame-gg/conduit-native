@@ -107,15 +107,14 @@ public final class MinecraftProxy implements AutoCloseable {
       boot.getMethod("install", gg.tame.conduit.api.ConduitProxy.class).invoke(null, runtime);
     } catch (ClassNotFoundException ignored) {
     } catch (ReflectiveOperationException exception) {
-      // The bundled jar carries the adapter but not the Velocity API jars, which ship beside it in
-      // lib/ and are optional. Running the jar on its own therefore reached here, and reported a
-      // stack trace at ERROR for an optional feature simply being absent -- which, on a first start
-      // with nothing but the jar, reads as Conduit having crashed. It is one line now.
+      // The jar carries the Velocity API with the adapter, so this is a class path assembled some
+      // other way. An optional feature simply being absent is one line, not a stack trace at ERROR
+      // that reads as Conduit having crashed.
       String missing = missingVelocityApi(exception);
       if (missing != null) {
         ConduitLog.info("Velocity plugin support is off: the Velocity API is not on the class path ("
-            + missing + "). Conduit's own plugins are unaffected; put the lib/ folder that ships beside"
-            + " the jar back to load Velocity plugins.");
+            + missing + "). Conduit's own plugins are unaffected; start the conduit jar itself, which"
+            + " carries the Velocity API, to load Velocity plugins.");
       } else {
         ConduitLog.error("Velocity compatibility layer failed to install", exception);
       }
@@ -465,7 +464,7 @@ public final class MinecraftProxy implements AutoCloseable {
     if (runtime.maintenance().settings().allowsUsername(player.username())) return true;
     PermissionProvider provider = runtime.permissions();
     try {
-      // A default that grants every node would let everyone in.
+      // A provider answering the same for everyone must not decide who gets in.
       return provider.manages(player)
           && (provider.hasPermission(player, Permissions.MAINTENANCE_BYPASS) || provider.hasPermission(player, Permissions.CONDUIT_ADMIN));
     } catch (RuntimeException | LinkageError failure) {

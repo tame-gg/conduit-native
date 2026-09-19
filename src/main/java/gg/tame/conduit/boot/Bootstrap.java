@@ -23,8 +23,8 @@ import java.util.Map;
  * over {@code [the override jars, then everything that was already on the class path]} with the
  * <em>platform</em> loader as its parent, not the application loader -- delegation goes to the parent
  * first, so a child whose parent could see the jar would find the bundled Via there and the override
- * would never be reached. The whole original class path is carried across so that the optional
- * Velocity API jars in {@code lib/} are not lost in the process.
+ * would never be reached. The whole original class path is carried across, so that nothing else on
+ * it -- the Velocity API merged into the jar included -- is lost in the process.
  *
  * <p>Nothing in this package may touch a Conduit or Via class: see {@link ViaArtifacts}. It reads the
  * configuration with {@link BootConfig} rather than the real loader for the same reason.

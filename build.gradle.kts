@@ -30,7 +30,7 @@ dependencies {
   implementation("com.viaversion:viarewind-common:$viaRewind")
   implementation("net.raphimc:ViaLegacy:$viaLegacy")
   implementation("io.netty:netty-all:4.1.118.Final")
-  implementation("com.google.guava:guava:33.0.0-jre")
+  implementation("com.google.guava:guava:33.3.1-jre")
   implementation("it.unimi.dsi:fastutil:8.5.15")
 }
 

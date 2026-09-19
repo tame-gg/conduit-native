@@ -10,13 +10,15 @@
 # -SkipSource leaves both out. That is for running the build on this machine only;
 # the result is not something to give to anyone else.
 #
-# What goes in: Conduit's own classes and generated tables, plus the runtime
-# dependencies from lib/via -- the same set build.gradle.kts declares. The
-# Velocity-compatibility jars in lib/ are deliberately left out and shipped
-# beside the jar instead: lib/ carries guava 33.3.1 and lib/via carries 33.0.0,
-# and merging both into one jar would leave whichever was unpacked last shadowing
-# the other. run.bat puts that folder on the classpath when it is present, which
-# is all the compatibility layer needs.
+# What goes in: Conduit's own classes and generated tables, the runtime
+# dependencies from lib/via -- the same set build.gradle.kts declares -- and the
+# Velocity-compatibility libraries from lib/ (scripts/fetch-velocity-compat.ps1):
+# velocity-api and what its POM needs at run time. They are merged rather than
+# shipped beside the jar because `java -jar` reads no class path but the jar's,
+# and because a Velocity plugin must link against the very classes Conduit's
+# adapter uses: its loader delegates to the class path the adapter came from.
+# The two sets share no library: Guava is only in lib/via, at the version both
+# ask for, and the build refuses two versions of anything.
 param([string]$Out = "dist", [switch]$SkipBuild, [switch]$SkipSource)
 
 $ErrorActionPreference = "Stop"
@@ -51,16 +53,40 @@ try {
   # and module descriptor go too, since the merged jar has one of its own and is
   # a plain classpath jar.
   $services = @{}
-  foreach ($archive in Get-ChildItem (Join-Path $lib "via") -Filter *.jar | Where-Object { $_.Name -notlike "*-sources.jar" }) {
+  $runtime = @(Get-ChildItem (Join-Path $lib "via") -Filter *.jar) + @(Get-ChildItem $lib -Filter *.jar) |
+    Where-Object { $_.Name -notlike "*-sources.jar" }
+  # Two versions of one library would leave whichever was unpacked last shadowing the other.
+  $seen = @{}
+  foreach ($archive in $runtime) {
+    $id = $archive.Name -replace '-\d[^-]*(-.*)?\.jar$', ''
+    if ($seen.ContainsKey($id) -and $seen[$id] -ne $archive.Name) { throw "both $($seen[$id]) and $($archive.Name) would go into the jar" }
+    $seen[$id] = $archive.Name
+  }
+  foreach ($archive in $runtime) {
     $one = Join-Path $stage ".one"
     New-Item -ItemType Directory -Force -Path $one | Out-Null
     Push-Location $one
     & $jarExe --extract --file $archive.FullName
     Pop-Location
     Remove-Item (Join-Path $one "META-INF\MANIFEST.MF") -Force -ErrorAction SilentlyContinue
-    Remove-Item (Join-Path $one "module-info.class") -Force -ErrorAction SilentlyContinue
+    # Multi-release jars carry one under META-INF/versions/<n>/ as well.
+    Get-ChildItem $one -Recurse -Filter "module-info.class" | Remove-Item -Force
     Get-ChildItem (Join-Path $one "META-INF") -Include *.SF,*.DSA,*.RSA,*.EC -Recurse -ErrorAction SilentlyContinue |
       Remove-Item -Force
+    # Annotation-processor registrations are for a compiler, not a running proxy; velocity-api has one.
+    Remove-Item (Join-Path $one "META-INF\services\javax.annotation.processing.Processor") -Force -ErrorAction SilentlyContinue
+    Remove-Item (Join-Path $one "META-INF\gradle") -Recurse -Force -ErrorAction SilentlyContinue
+
+    # License and notice files keep their text, in a folder named for their jar: Guava, Guice and
+    # Caffeine all ship a META-INF/LICENSE, and merged they would overwrite one another -- and
+    # Guice's NOTICE is one Apache-2.0 says must travel with it.
+    $legal = @(Get-ChildItem $one, (Join-Path $one "META-INF") -File -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '^(LICENSE|NOTICE|COPYING)' })
+    if ($legal.Count -gt 0) {
+      $keep = Join-Path $one ("META-INF\licenses\" + $archive.BaseName)
+      New-Item -ItemType Directory -Force -Path $keep | Out-Null
+      $legal | Move-Item -Destination $keep -Force
+    }
 
     # Service files name implementations one per line, and two jars can both
     # contribute to the same service. Copying one over the other loses whichever
@@ -88,12 +114,17 @@ try {
   # The test tree is left out: this is a jar of Conduit, not of its harness.
   Copy-Item (Join-Path $classes "*") $stage -Recurse -Force
   Remove-Item (Join-Path $stage "gg\tame\conduit\tests") -Recurse -Force -ErrorAction SilentlyContinue
+  # The jar may travel on its own, so it carries Conduit's license and the third-party notices.
+  Copy-Item (Join-Path $repo "LICENSE"), (Join-Path $repo "THIRD-PARTY-NOTICES") (Join-Path $stage "META-INF") -Force
 
   $manifest = Join-Path $stage "conduit-manifest.txt"
   @(
     # The bootstrap, not the launcher: it decides whether a newer ViaVersion in
     # lib/via displaces the one merged into this jar, then calls the launcher.
     "Main-Class: gg.tame.conduit.boot.Bootstrap",
+    # Configurate, night-config and adventure's SLF4J logger keep classes for newer JDKs under
+    # META-INF/versions/, which a jar only uses when it says it is multi-release.
+    "Multi-Release: true",
     "Implementation-Title: Conduit",
     "Implementation-Version: $version",
     ""
@@ -104,14 +135,40 @@ try {
   & $jarExe --create --file $jar --manifest $manifest (Get-ChildItem $stage -Exclude "conduit-manifest.txt" | ForEach-Object { $_.Name })
   Pop-Location
   if (-not (Test-Path $jar)) { throw "jar was not created" }
+
+  # The jar a user downloads is the whole install, so a jar that cannot load a Velocity plugin is a
+  # broken build, not an optional feature left out. One class from each library the adapter and
+  # velocity-api need at run time, the adapter itself, and the notices that must travel with them.
+  $entries = @(& $jarExe --list --file $jar)
+  $required = @(
+    "gg/tame/conduit/compat/velocity/VelocityBoot.class",
+    "com/velocitypowered/api/plugin/Plugin.class",
+    "net/kyori/adventure/text/Component.class",
+    "net/kyori/adventure/text/minimessage/MiniMessage.class",
+    "net/kyori/adventure/text/serializer/ansi/ANSIComponentSerializer.class",
+    "com/mojang/brigadier/CommandDispatcher.class",
+    "com/google/common/collect/ImmutableList.class",
+    "com/google/gson/Gson.class",
+    "com/google/inject/Injector.class",
+    "org/slf4j/Logger.class",
+    "org/slf4j/jul/JDK14LoggerAdapter.class",
+    "org/yaml/snakeyaml/Yaml.class",
+    "org/spongepowered/configurate/hocon/HoconConfigurationLoader.class",
+    "com/electronwill/nightconfig/toml/TomlParser.class",
+    "com/github/benmanes/caffeine/cache/Caffeine.class",
+    "com/moandjiezana/toml/Toml.class",
+    "META-INF/LICENSE",
+    "META-INF/THIRD-PARTY-NOTICES",
+    "META-INF/licenses/guice-6.0.0/NOTICE"
+  )
+  $missing = @($required | Where-Object { $entries -notcontains $_ })
+  if ($missing.Count -gt 0) { throw "the jar is missing what Velocity plugins need at run time: $($missing -join ', ')" }
+  # Velocity's Brigadier, not Mojang's: only the fork has what velocity-api's own classes call.
+  $brigadier = & (Join-Path $jdk "javap.exe") -cp $jar com.mojang.brigadier.builder.ArgumentBuilder
+  if (-not ($brigadier -match "requiresWithContext")) { throw "the jar's Brigadier is not Velocity's fork" }
 } finally {
   Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 }
-
-# Optional: the Velocity compatibility jars, for loading Velocity plugins.
-New-Item -ItemType Directory -Force -Path (Join-Path $outDir "lib") | Out-Null
-Copy-Item (Join-Path $lib "*.jar") (Join-Path $outDir "lib") -Force
-Get-ChildItem (Join-Path $outDir "lib") -Filter "*-sources.jar" | Remove-Item -Force
 
 # conduit.toml sits beside the jar: plugins/, via/ and forwarding.secret are all
 # resolved against the folder it is in. Taken from src/main/resources, which is the
@@ -162,14 +219,9 @@ REM No check that the configuration exists: Conduit ships the file and writes it
 REM on a first start, along with plugins\ and forwarding.secret. Refusing here was
 REM the proxy declining to do something it is perfectly able to do.
 
-REM lib\ holds the Velocity-compatibility jars. It is optional: without it
-REM Conduit runs normally and only Velocity plugins are unavailable.
-set "CP=conduit-VERSION.jar"
-if exist "lib\*.jar" set "CP=conduit-VERSION.jar;lib\*"
-
 echo Starting Conduit with "%CONFIG%"
 echo.
-java -Xms512M -Xmx1G -cp "%CP%" gg.tame.conduit.boot.Bootstrap "%CONFIG%"
+java -Xms512M -Xmx1G -jar conduit-VERSION.jar "%CONFIG%"
 set "CODE=%ERRORLEVEL%"
 
 echo.
@@ -185,7 +237,6 @@ Write-Host ""
 Write-Host "  $outDir\$jarName  ($jarSize MB, runnable on its own)"
 Write-Host "  $outDir\run.bat"
 Write-Host "  $outDir\conduit.toml  (and conduit-26.2.toml)"
-Write-Host "  $outDir\lib\     $((Get-ChildItem (Join-Path $outDir 'lib') -Filter *.jar).Count) optional jars for Velocity plugins"
 if (-not $SkipSource) {
   Write-Host "  $outDir\source\  Corresponding Source for Conduit and the GPL Via jars"
 }

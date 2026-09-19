@@ -89,7 +89,10 @@ downloads the ones the build uses.
 
 Two builds produce one: `gradle distZip`, `distTar` and `installDist` (see
 `build.gradle.kts`), and `scripts/build-jar.ps1`, whose single `conduit.jar` has
-the Via classes merged into it. Both convey object code for Conduit and for the
+the Via classes merged into it, and the Velocity-compatibility libraries (MIT,
+Apache-2.0, LGPL-3.0 night-config, public-domain aopalliance) with them; each of
+those keeps its own license and notice files under `META-INF/licenses/<jar>/`,
+and the jar carries `LICENSE` and `THIRD-PARTY-NOTICES` in `META-INF/`. Both convey object code for Conduit and for the
 four GPL Via jars, so both carry what GPLv3 requires:
 
 | In the distribution | Meets |
