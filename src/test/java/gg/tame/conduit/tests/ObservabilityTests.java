@@ -123,8 +123,11 @@ public final class ObservabilityTests {
     require(warnings.contains("Unknown setting health.interval_ms in typo.toml is ignored")
         && warnings.contains("Unknown setting helth.enabled in typo.toml is ignored"), "each unread setting is named:\n" + warnings);
     require(!warnings.contains(root.toString()), "by file name, not its path");
-    // The sample beside the jar, and the test configurations in config/.
-    List<Path> shippedConfigs = new java.util.ArrayList<>(List.of(Path.of("conduit.toml")));
+    // The sample the jar ships and writes on a first start, and the test configurations in config/.
+    // From src/main/resources rather than the repo root: the copy there is written by running the
+    // proxy from the repo root and is gitignored, so this check only ran on a machine that had.
+    List<Path> shippedConfigs = new java.util.ArrayList<>(
+        List.of(Path.of("src", "main", "resources", "gg", "tame", "conduit", "config", "conduit.toml")));
     try (var inConfigDir = Files.list(Path.of("config"))) {
       inConfigDir.filter(file -> file.toString().endsWith(".toml")).forEach(shippedConfigs::add);
     }
