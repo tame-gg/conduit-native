@@ -153,11 +153,20 @@ public final class ConfigValidationTests {
         "conduit.toml line 6: forwarding.mode must be none or modern: Conduit does not implement legacy forwarding, found \"legacy\"");
     fails(BASE.replace("mode = \"none\"", "mode = \"velocity\""), "conduit.toml line 6: forwarding.mode must be none or modern, found \"velocity\"");
     String modern = BASE.replace("mode = \"none\"", "mode = \"modern\"");
-    fails(modern, "conduit.toml: forwarding.secret-file is required for modern forwarding");
+    // An unset secret-file under modern forwarding is a default, not a mistake:
+    // the file sits beside the configuration and a start creates it. Validating
+    // still fails, because it writes nothing, and it says so rather than naming
+    // a setting the operator has no useful value for.
+    Path defaulted = write(modern);
+    require(failure(defaulted).equals("conduit.toml: forwarding.secret-file does not exist at "
+        + defaulted.getParent().resolve("forwarding.secret")
+        + " (starting Conduit creates it; --check-config does not write files)"),
+        "a defaulted secret path: " + failure(defaulted));
     String withSecret = modern.replace("[servers.lobby]", "secret-file = \"forwarding.secret\"\n[servers.lobby]");
     Path config = write(withSecret);
     require(failure(config).equals("conduit.toml line 7: forwarding.secret-file does not exist at "
-        + config.getParent().resolve("forwarding.secret") + ", found \"forwarding.secret\""), "a missing secret: " + failure(config));
+        + config.getParent().resolve("forwarding.secret") + " (starting Conduit creates it; --check-config does not write files), found \"forwarding.secret\""),
+        "a missing secret: " + failure(config));
     Files.writeString(config.getParent().resolve("forwarding.secret"), " \n");
     require(failure(config).startsWith("conduit.toml line 7: forwarding.secret-file is empty at "), "an empty secret: " + failure(config));
     Files.writeString(config.getParent().resolve("forwarding.secret"), "s3cret\n");

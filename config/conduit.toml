@@ -1,24 +1,78 @@
+# Conduit configuration.
+#
+# A commented-out line is one of two things, and which one is always said:
+#   (default: X)  the value Conduit uses when the line stays commented out.
+#                 Uncomment it only to change it.
+#   (example)     a value with no default. Nothing happens until you write your own.
+#
+# Settings marked "restart" are read once at start; the rest are re-read by
+# /conduit reload.
+
 [listener]
+# Where players connect. 127.0.0.1 accepts only this machine; use 0.0.0.0 to
+# accept from the network. (restart)
 host = "127.0.0.1"
 port = 25565
 max-frame-bytes = 1048576
 
+# How a backend learns who the player is.
+#
+# Conduit authenticates the player (see [authentication]) and the backends then
+# run with online-mode=false, because they are behind the proxy and cannot check
+# with Mojang themselves. Forwarding is how the identity Conduit established gets
+# to them -- and how they know it really came from Conduit.
+#
+#   "none"    nothing is forwarded. The backend sees the proxy's address and
+#             whatever name the client claimed. Fine for a local test, and only
+#             that: with online-mode=false a backend on a reachable port will let
+#             anyone in as anyone.
+#   "modern"  the Velocity-style signed handshake. The backend must be told the
+#             same secret (Paper: velocity.secret in config/paper-global.yml) and
+#             rejects anything that cannot prove it. This is the one to use.
+#   "legacy" / "bungeeguard"  for backends that only speak those. Weaker; see the
+#             README before choosing one.
 [forwarding]
 mode = "none"
-# secret-file = "secrets/forwarding.secret"
+# The shared secret, relative to this file. Created on first start if it is not
+# there, and the same value has to be set on every backend.
+# (default: "forwarding.secret", used when mode = "modern")
+# secret-file = "forwarding.secret"
 
+# Who checks the player is who they say they are.
+#
+# This is the section that decides whether your network is open to anyone. The
+# backends are not checking -- they run online-mode=false -- so if Conduit does
+# not check either, nobody does.
+#
+#   "online"   Conduit does the Mojang handshake itself: encryption, then
+#              hasJoined. It gets the real UUID, name and skin, and forwards
+#              those. This is what a public server wants.
+#   "offline"  whatever name the client sent is taken at face value. Anyone can
+#              be anyone. For local testing, cracked networks, or when something
+#              in front of Conduit has already authenticated.
+#
+# Online mode without forwarding = "modern" is half a door: Conduit knows who the
+# player is, and the backend has no way to tell that the connection came from
+# Conduit at all.
 [authentication]
 mode = "offline"
+# Where the Mojang session check goes. Change only for a proxy or a private
+# authentication service. (default: the Mojang session server)
 # session-url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
+# How long that check may take. (default: 5000)
 # timeout-millis = 5000
-# A login of a player who is already connected is refused. true ends the existing session instead
-# and lets the new login in; in offline mode that lets anyone who types a name kick its player.
+# A login by a player who is already connected is refused. true ends the existing
+# session instead and lets the new login in; in offline mode that lets anyone who
+# types a name kick its player. (default: false)
 # kick-existing-players = false
 
+# The backends, one block each. The name is what /server takes and what shows in
+# /glist. Use host + port, or address = "host:port".
 [servers.lobby]
 host = "127.0.0.1"
 port = 25566
 
+# A second backend. (example)
 # [servers.survival]
 # host = "127.0.0.1"
 # port = 25567

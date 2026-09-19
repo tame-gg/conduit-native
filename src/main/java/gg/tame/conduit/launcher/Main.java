@@ -19,7 +19,9 @@ public final class Main {
     Path configPath = Path.of(arguments[checkOnly ? 1 : 0]);
     ConduitConfiguration config;
     try {
-      config = ConfigurationLoader.load(configPath);
+      // A real start may create the modern-forwarding secret; --check-config
+      // validates and writes nothing.
+      config = ConfigurationLoader.load(configPath, !checkOnly);
       if (config.forwardingSecretFile().isPresent()) System.out.println("Modern forwarding secret loaded (fingerprint " + ForwardingSecret.load(config.forwardingSecretFile().get()).fingerprint() + ").");
       System.out.println("Authentication mode: " + config.authentication().mode().name().toLowerCase());
       Forwarders.create(config);
@@ -32,7 +34,7 @@ public final class Main {
     if (checkOnly) { System.out.println("Configuration valid."); return; }
     Path plugins = configPath.toAbsolutePath().getParent() == null ? Path.of("plugins") : configPath.toAbsolutePath().getParent().resolve("plugins");
     // Loaded again only when defaults were appended: every load repeats the file's warnings.
-    if (gg.tame.conduit.config.ConfigMigrator.migrate(configPath).changed()) config = ConfigurationLoader.load(configPath);
+    if (gg.tame.conduit.config.ConfigMigrator.migrate(configPath).changed()) config = ConfigurationLoader.load(configPath, true);
     MinecraftProxy proxy;
     try {
       proxy = new MinecraftProxy(config, gg.tame.conduit.auth.Authenticators.create(config.authentication()), gg.tame.conduit.crypto.RsaKeys.generate(), plugins);

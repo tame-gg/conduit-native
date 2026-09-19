@@ -193,9 +193,30 @@ public final class AllTests {
     Files.writeString(config, "[listener]\nhost=\"127.0.0.1\"\nport=25565\nmax-frame-bytes=64\n[forwarding]\nmode=\"none\"\n[servers.smp]\naddress=\"127.0.0.1:25921\"\n[routing]\ninitial=[\"smp\"]\nfallback=[\"smp\"]\n");
     require(ConfigurationLoader.load(config).backends().getFirst().address().getPort() == 25921, "address form");
     require(ConfigurationLoader.load(config).authentication().mode() == gg.tame.conduit.config.AuthenticationMode.OFFLINE, "missing authentication must default to offline");
+    // Modern forwarding needs a secret, and an unset secret-file is a default
+    // rather than a mistake: the file sits beside the configuration. Validating
+    // must not create it, so this still fails, and it says where to get one.
     Files.writeString(config, configuration("modern"));
-    try { ConfigurationLoader.load(config); throw new AssertionError("modern mode accepted without secret"); }
-    catch (IllegalArgumentException expected) { }
+    try { ConfigurationLoader.load(config); throw new AssertionError("modern mode accepted with no secret on disk"); }
+    catch (IllegalArgumentException expected) {
+      require(expected.getMessage().contains("forwarding.secret"), "the error names the file: " + expected.getMessage());
+    }
+    require(!Files.exists(config.toAbsolutePath().getParent().resolve("forwarding.secret")),
+        "validating a configuration writes nothing");
+
+    // Starting does create it, and then loads cleanly.
+    var started = ConfigurationLoader.load(config, true);
+    Path secret = config.toAbsolutePath().getParent().resolve("forwarding.secret");
+    require(started.forwardingSecretFile().orElseThrow().equals(secret), "the default secret path is beside the config");
+    require(Files.exists(secret), "starting creates the secret");
+    String written = Files.readString(secret).trim();
+    require(written.length() >= 40, "the generated secret is long enough to be one: " + written.length());
+
+    // A second start keeps the secret it already has: regenerating would leave
+    // every backend configured with the old one unable to accept a login.
+    ConfigurationLoader.load(config, true);
+    require(Files.readString(secret).trim().equals(written), "an existing secret is left alone");
+    Files.delete(secret);
   }
   private static void decodeHandshakeAndSelectBackend() throws Exception {
     byte[] packet = new byte[] {0, (byte) 0xFD, 5, 5, 'l', 'o', 'c', 'a', 'l', 0x63, (byte) 0xDD, 2};

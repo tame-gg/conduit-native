@@ -23,6 +23,9 @@ import java.util.Set;
 
 /** Minimal, strict TOML subset for the foundation configuration. */
 public final class ConfigurationLoader {
+  /** Where a modern-forwarding secret lives when the configuration does not say. */
+  private static final String DEFAULT_SECRET_FILE = "forwarding.secret";
+
   private ConfigurationLoader() {}
 
   /**
@@ -30,7 +33,19 @@ public final class ConfigurationLoader {
    * operator: the file, the line and what is written there when it comes from one setting, and what
    * is allowed. The launcher prints it alone, without a stack trace.
    */
+  /** Reads and validates a configuration, writing nothing. */
   public static ConduitConfiguration load(Path path) throws IOException {
+    return load(path, false);
+  }
+
+  /**
+   * Reads and validates a configuration.
+   *
+   * @param createSecret when true, a modern-forwarding secret file that does not
+   *     exist yet is created rather than refused. Only a real start passes true:
+   *     validating a configuration must not write to the disk it is validating.
+   */
+  public static ConduitConfiguration load(Path path, boolean createSecret) throws IOException {
     String file = String.valueOf(path.getFileName());
     List<String> lines;
     try { lines = Files.readAllLines(path); }
@@ -74,7 +89,7 @@ public final class ConfigurationLoader {
       values.put(key, value);
     }
     try {
-      ConduitConfiguration configuration = build(path, values, serverOrder);
+      ConduitConfiguration configuration = build(path, values, serverOrder, createSecret);
       // A misspelt setting was silently ignored, and its default quietly used in its place.
       for (String key : new java.util.TreeSet<>(values.keySet())) {
         if (!values.read.contains(key)) ConduitLog.warn("Unknown setting " + key + " in " + file + " is ignored");
@@ -90,14 +105,21 @@ public final class ConfigurationLoader {
     }
   }
 
-  private static ConduitConfiguration build(Path path, Settings values, List<String> serverOrder) {
+  private static ConduitConfiguration build(Path path, Settings values, List<String> serverOrder,
+      boolean createSecret) throws IOException {
     String file = String.valueOf(path.getFileName());
     InetSocketAddress listener = new InetSocketAddress(required(values, "listener.host"), port(values, "listener.port"));
     // Unresolved, it failed only at bind, as an UnresolvedAddressException with no message at all.
     if (listener.isUnresolved()) throw new IllegalArgumentException("listener.host must be an IP address or a host name that resolves, such as 0.0.0.0 or 127.0.0.1");
     int maxFrame = integer(values, "listener.max-frame-bytes");
     ForwardingMode mode = ForwardingMode.parse(required(values, "forwarding.mode"));
-    Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file")).map(value -> path.toAbsolutePath().getParent().resolve(value).normalize());
+    Path configDirectory = path.toAbsolutePath().getParent();
+    // Modern forwarding needs a secret and there is nothing useful to choose, so
+    // an unset secret-file is a default rather than a mistake: the file sits
+    // beside the configuration and is created on first start.
+    Optional<Path> secret = Optional.ofNullable(values.get("forwarding.secret-file"))
+        .or(() -> mode == ForwardingMode.MODERN ? Optional.of(DEFAULT_SECRET_FILE) : Optional.empty())
+        .map(value -> configDirectory.resolve(value).normalize());
     List<BackendServer> servers = new ArrayList<>();
     Map<String, String> lowerCaseNames = new HashMap<>();
     for (String name : serverOrder) {
@@ -137,9 +159,20 @@ public final class ConfigurationLoader {
     if (configuration.forwardingSecretFile().isPresent()) {
       // Otherwise first read by the launcher, where a missing file was a bare NoSuchFileException stack trace.
       Path secretFile = configuration.forwardingSecretFile().get();
+      if (createSecret && gg.tame.conduit.forwarding.ForwardingSecret.createIfAbsent(secretFile)) {
+        ConduitLog.warn("Created a modern forwarding secret at " + secretFile
+            + ". Every backend must be given the same value -- for Paper, velocity.secret in"
+            + " config/paper-global.yml -- and must run with online-mode=false, since Conduit"
+            + " authenticates instead. Until then those backends will refuse this proxy's logins.");
+      }
       String text;
       try { text = Files.readString(secretFile); }
-      catch (NoSuchFileException missing) { throw new IllegalArgumentException("forwarding.secret-file does not exist at " + secretFile); }
+      catch (NoSuchFileException missing) {
+        // No trailing sentence: the loader appends `, found "<value>"` when the
+        // setting came from a line, and a full stop before that reads as a typo.
+        throw new IllegalArgumentException("forwarding.secret-file does not exist at " + secretFile
+            + " (starting Conduit creates it; --check-config does not write files)");
+      }
       catch (IOException unreadable) { throw new IllegalArgumentException("forwarding.secret-file cannot be read at " + secretFile + " (" + unreadable.getClass().getSimpleName() + ")"); }
       if (text.isBlank()) throw new IllegalArgumentException("forwarding.secret-file is empty at " + secretFile);
     }
