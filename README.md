@@ -72,7 +72,7 @@ Do **not** read the catalog as "everything is supported."
 | 1.20.1 | 763 | no | DIRECT / codec |
 | 1.20.3 / 1.20.4 | 765 | yes | DIRECT; 1.20.4 login/Play previously verified |
 | 1.20.5 / 1.20.6 | 766 | yes | DIRECT codec; translated path from 765 is PARTIAL |
-| 26.2 | 776 | yes | DIRECT codec; real vanilla PLAY verification pending |
+| 26.2 | 776 | yes | DIRECT / VERIFIED — the official 26.2 client joined a real 26.2 server through Conduit and stood in the world, on the DIRECT path (`config/conduit-26.2.toml`) |
 
 ### Catalog releases (identity only unless codec listed above)
 
@@ -104,6 +104,8 @@ mouse/keyboard play was not exercised here. Sounds and particles are no longer o
 it: both are checked against real 1.13 and 1.20.4 servers, comparing the registry
 id that reaches the client against Mojang's own registry report rather than
 against Conduit's own table. Nobody has listened to or looked at them, though.
+
+To try 26.2 yourself: `scripts/build-dist.ps1` packages a runnable build into `dist/`, and `dist/run.cmd` starts it on `config/conduit-26.2.toml`, which routes to the provisioned 26.2, second 26.2 and 1.20.4 backends so `/server` covers DIRECT, a same-version switch and the Via-carried cross-version hop.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 

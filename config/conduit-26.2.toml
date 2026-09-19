@@ -1,0 +1,95 @@
+# Conduit for testing a real Minecraft 26.2 client (protocol 776).
+#
+# Connect the client to 127.0.0.1:25565. It starts on the 26.2 backend, and
+# `/server <name>` moves it between the three below, which is where the
+# interesting parts are:
+#
+#   v262    26.2 -> 26.2. DIRECT: same codec on both sides, nothing translated.
+#           This is the path README calls "DIRECT codec; real vanilla PLAY
+#           verification pending", so it is the gap this config exists to close.
+#   v262b   a second 26.2 backend, so `/server` exercises a seamless switch
+#           between two same-version servers.
+#   v1204   26.2 -> 1.20.4. TRANSLATED, carried by ViaVersion: Conduit has no
+#           native 776 <-> 765 translator and deliberately does not pretend to.
+#           Switching here from v262 is the cross-version case.
+#
+# Ports match the provisioned servers under work/: mc262 (25626), mc262-b
+# (26626) and mc1204 (25604). All three are offline-mode, which is why
+# authentication is offline here; do not copy this file to anything reachable.
+
+[listener]
+host = "0.0.0.0"
+port = 25565
+max-frame-bytes = 2097152
+
+[forwarding]
+# The provisioned backends are plain vanilla with no forwarding secret
+# configured, so nothing is forwarded. A backend expecting modern forwarding
+# would reject a login made this way.
+mode = "none"
+
+[authentication]
+mode = "offline"
+
+# On by default since sounds, particles and the rest of cross-version play
+# depend on it. engine = "via-preferred" still falls back to a native translator
+# for any ordered pair Via has no path for.
+[translation]
+enabled = true
+engine = "via-preferred"
+via-backwards = true
+via-rewind = true
+via-legacy = false
+data-folder = "via"
+
+[servers.v262]
+host = "127.0.0.1"
+port = 25626
+
+[servers.v262b]
+host = "127.0.0.1"
+port = 26626
+
+[servers.v1204]
+host = "127.0.0.1"
+port = 25604
+
+[routing]
+# Start on the same-version backend: a DIRECT join first, so a failure later is
+# known to belong to the switch or the translation rather than to the login.
+initial = ["v262"]
+fallback = ["v262", "v1204"]
+
+[status]
+motd = "Conduit 26.2 test\n/server v262 | v262b | v1204"
+display-max-players = 20
+
+[health]
+enabled = true
+interval-ms = 10000
+timeout-ms = 1500
+failure-threshold = 3
+success-threshold = 2
+
+[shutdown]
+graceful-enabled = true
+timeout-ms = 5000
+message = "Conduit is shutting down."
+
+[maintenance]
+enabled = true
+active-on-start = false
+kick-message = "This network is currently under maintenance. Please try again later."
+motd = "Conduit — under maintenance"
+allowlist = []
+
+# Left off: a version gate would only get in the way of the thing being tested.
+[versions]
+enabled = false
+allow = []
+ping-version-name = "Conduit {versions}"
+kick-message = "This network only allows Minecraft {versions}."
+kick-message-range = "This network only allows Minecraft versions {versions}."
+
+[ops]
+schema-version = 3
