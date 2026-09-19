@@ -39,8 +39,8 @@ string. `run.ps1` needs the file to exist: copy `config/conduit.toml` to `run/` 
 `[translation] enabled = true` is the default, with `engine = "via-preferred"`: ViaVersion /
 ViaBackwards / ViaRewind are the cross-version engine and Conduit's native translators are the
 fallback for any ordered pair Via has no path for. This is what gives a cross-version player
-particles, scoreboards, titles and boss bars, which the native pairs below drop — and sounds on
-every native pair except 393 ↔ 765, which now has generated sound tables of its own.
+scoreboards, titles and boss bars, which the native pairs below drop — and sounds and particles on
+every native pair except 393 ↔ 765, which now has generated tables of its own.
 
 Set `enabled = false` for native-only translation, and read the completeness column before you do.
 See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`. **Minecraft 26.3 is not supported by Via
@@ -93,15 +93,16 @@ version loses sounds because of anything in this table.
 | Client → Backend | Native support | Completeness of the native path |
 |---|---|---|
 | same codec (393, 763, 765, 766, 776) | DIRECT | FULL for mature paths; 393 PARTIAL until real-client verified |
-| **393 ↔ 765** | **TRANSLATED** | **CORE GAMEPLAY VERIFIED (bidirectional)** — login, world, movement, blocks, entities, health, chat, items, inventory, containers (including chest open/click/close), equipment, metadata and attributes against real vanilla clients/servers via scripted probes. Sounds are translated in both directions through generated registry tables (662 ↔ 1539 sound events, resolved by name), including a plugin's own sounds via Named Sound Effect. Particles, scoreboards, titles, boss bars, block-entity data, recipes and advancements are still dropped on purpose by *this translator*; Via carries them. Not equivalent to a human gameplay session. See `docs/VALIDATION_393_765.md`. |
+| **393 ↔ 765** | **TRANSLATED** | **CORE GAMEPLAY VERIFIED (bidirectional)** — login, world, movement, blocks, entities, health, chat, items, inventory, containers (including chest open/click/close), equipment, metadata and attributes against real vanilla clients/servers via scripted probes. Sounds and particles are translated in both directions through generated registry tables (662 ↔ 1539 sound events, 50 ↔ 101 particle types, all resolved by name), including a plugin's own sounds via Named Sound Effect and the block, item and dust payloads particles carry. Scoreboards, titles, boss bars, block-entity data, recipes and advancements are still dropped on purpose by *this translator*; Via carries them. Not equivalent to a human gameplay session. See `docs/VALIDATION_393_765.md`. |
 | 765 ↔ 766 | TRANSLATED | PARTIAL (control/login/config; Join Game unsupported) |
 | 765 → 776 | none | no native translator; carried by Via under the default engine |
 
 **393 ↔ 765 is CORE GAMEPLAY VERIFIED, not FULL.** Ordinary survival play crosses
 the pair in both directions under scripted real-client/server probes, but the
 dropped list above is intentional for the native translator and human
-mouse/keyboard play was not exercised here. Sounds are no longer on it, but no
-human has listened to them either: they are covered by tests, not by an ear.
+mouse/keyboard play was not exercised here. Sounds and particles are no longer on
+it, but nobody has listened to or looked at them either: they are covered by
+tests, not by an ear or an eye.
 
 26.2 clientbound `minecraft:hello` (Encryption Request) includes a trailing **Should Authenticate** boolean that 1.20.4 does not. Initial routing prefers backends whose probed protocol is DIRECT for the connecting client (so 26.2 clients skip 1.20.4 lobby).
 

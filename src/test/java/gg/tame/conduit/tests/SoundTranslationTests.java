@@ -42,12 +42,25 @@ public final class SoundTranslationTests {
    * from: 1.13's sound registry read out of its own jar, 1.20.4's from its
    * {@code --reports} output. They are asserted so that a regenerated or
    * hand-edited table that quietly shifts cannot pass.
+   *
+   * <p>Id 15 is here because it was wrong once. The 1.13 table was first built
+   * from the declaration order of the jar's sound-event holder and checked
+   * against 1.14's registry, on the assumption that a registry's order does not
+   * change. 1.14 reordered the sound registry wholesale, so that check passed a
+   * table in which 448 of 662 ids were wrong, id 15 among them. 1.13's registry
+   * is alphabetical by identifier and 1.14's is not; the tables now come from
+   * the registry's own by-id lookup, calibrated against a registry whose ids the
+   * 1.13 server does report.
    */
   private static void registriesAreTheRealOnes() {
     require(SoundRegistries.size(393) == 662, "1.13 has 662 sound events");
     require(SoundRegistries.size(765) == 1539, "1.20.4 has 1539 sound events");
     require(SoundRegistries.name(393, 0).orElseThrow().equals("minecraft:ambient.cave"),
         "1.13 sound 0 is ambient.cave");
+    require(SoundRegistries.name(393, 15).orElseThrow()
+        .equals("minecraft:block.beacon.activate"), "1.13 sound 15 is block.beacon.activate");
+    require(SoundRegistries.name(393, 14).orElseThrow().equals("minecraft:block.anvil.use"),
+        "1.13 sound 14 is block.anvil.use");
     require(SoundRegistries.name(765, 0).orElseThrow()
         .equals("minecraft:entity.allay.ambient_with_item"), "1.20.4 sound 0 is the allay");
     require(SoundRegistries.translates(393, 765) && SoundRegistries.translates(765, 393),

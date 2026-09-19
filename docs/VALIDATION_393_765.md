@@ -174,14 +174,23 @@ is why sounds were dropped here at first — dropping beat playing the wrong one
 the server's own `--reports` dump. 1.13's cannot: its reports predate the
 registry dump, so `tools/DumpRegistry.java` reads the registry out of the 1.13
 jar instead, which is the same provenance the block and item tables already have.
+Ids come from the registry's own by-id lookup, not from the order anything is
+declared or iterated in.
 
-**The 1.13 dump is verified, not trusted.** Its ids come from the declaration
-order of the jar's sound-event holder, which is an inference about how the
-registry was filled, so the generator checks it against a third official
-registry — a later version that still has every one of those names. If the order
-is real, those names appear there in the same relative order. All 662 appear in
-1.14's registry in exactly this order. The check is fatal; a dump that fails it
-is not used.
+**The dumper is calibrated, not trusted.** It reads ids out of an obfuscated jar,
+so it is pointed at the one 1.13 registry whose ids are already known — the item
+registry, which `items.json` does report — and its output must reproduce that
+report exactly, all 785 entries in order. Only then is the sound dump used.
+
+**This table was wrong once, and the way it was wrong is worth recording.** It
+was first built from the declaration order of the jar's sound-event holder and
+checked against 1.14's registry, on the assumption that a registry's order never
+changes once fixed. It does change: 1.13's sound registry is alphabetical by
+identifier and 1.14's is not, so that check passed a table in which **448 of 662
+ids were wrong** — two sounds in three would have played as something else. The
+cross-version check has been removed, because it cannot tell a right table from a
+wrong one; the calibration above can, and `SoundTranslationTests` pins id 15,
+which is one of the ids that was wrong.
 
 | | |
 |---|---|
@@ -204,14 +213,53 @@ an entity.
 Not verified by a human listening. The tables and the packet translation are
 covered by `SoundTranslationTests`; no real-client audio check was run.
 
+## Particles
+
+Translated, in both directions, through generated registry tables.
+
+Particles failed on three counts at once, which is why they outlasted sounds:
+the registry index means a different particle on each side (1.13 has 50 types,
+1.20.4 has 101), the packet's own layout changed, and four particles carry a
+payload naming the sender's own registries.
+
+```text
+1.13  (393)  i32 id | bool | f32 x | f32 y | f32 z | f32 off*3 | f32 data  | i32 count | payload
+1.20.4 (765) VarInt | bool | f64 x | f64 y | f64 z | f32 off*3 | f32 speed | i32 count | payload
+```
+
+So the id widens to a VarInt and the position to doubles: forwarding the bytes
+could never have worked even where an id happened to agree.
+
+| Payload | Carried by | Handling |
+|---|---|---|
+| block state | `block`, `falling_dust` | translated through the same block table the chunk path uses |
+| item stack | `item` | translated through `ItemCodec` |
+| four floats | `dust` | red, green, blue and scale mean the same on both sides |
+| none | the other 46 | nothing follows the count |
+
+A 1.20.4 particle whose payload 1.13 has no shape for — `dust_color_transition`,
+`vibration`, `sculk_charge` — has no 1.13 id either, so the id lookup drops it
+before its payload is ever read.
+
+| | |
+|---|---|
+| 1.13 particle types | 50 |
+| 1.20.4 particle types | 101 |
+| mapped both ways | 49 |
+| no counterpart | `barrier`, which 1.18 replaced with `block_marker` — a different particle taking a block state, not a rename this table could make |
+
+Same provenance and the same calibration as sounds: `tools/gen_particles.py` from
+a `tools/DumpRegistry.java` dump of the 1.13 jar, with the dumper required to
+reproduce `items.json` exactly first. The particle table was generated with the
+by-id lookup from the start and so never had the fault the sound table had.
+
+Not verified by a human watching. Covered by `ParticleTranslationTests`.
+
 ## Deliberately unsupported
 
 Each of these is recognised and dropped on purpose, so the drop is a decision
 and not a fatal unknown:
 
-- **Particles** — registry ids are version-specific and unmapped; a wrong id
-  draws an unrelated particle. Their payloads (block states, item stacks, dust
-  colours) and wire layout differ too, so a table alone would not be enough.
 - **Scoreboards, teams, titles, boss bars, the tab list, statistics, maps and
   trade lists** — display only.
 - **Block-entity data and block actions** — these name block-entity and block
@@ -242,8 +290,8 @@ and not a fatal unknown:
 vanilla 1.13 / 1.20.4 servers (login, configuration bridge, world entry, chunks,
 movement, block place/break, chest open/click/close, inventory, equipment,
 metadata, attributes, health, chat, keepalive). Not FULL Minecraft compatibility:
-particles, scoreboards, titles, boss bars, block-entity NBT, recipes and
-advancements remain intentionally unsupported. Sounds are supported: see below.
+scoreboards, titles, boss bars, block-entity NBT, recipes and advancements
+remain intentionally unsupported. Sounds and particles are supported: see below.
 
 ## Reproducing
 

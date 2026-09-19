@@ -1,39 +1,34 @@
 #!/usr/bin/env python3
-"""Generate Conduit's 393 <-> 765 sound id tables from OFFICIAL Mojang data.
+"""Generate Conduit's 393 <-> 765 particle id tables from OFFICIAL Mojang data.
 
-A sound is sent on the wire as a registry index, and the two registries do not
-agree: 1.13 has 662 sound events, 1.20.4 has 1539, and the additions are spread
-through the list rather than appended, so passing an index through plays an
-unrelated sound. That is why the translator dropped every sound until now.
+A particle travels as a registry index, and the registries do not agree: 1.13 has
+50 particle types and 1.20.4 has 101, with the additions spread through the list
+rather than appended. So an index means a different particle on each side.
 
-Input, per side, is Mojang's own registry:
+Input, per side, is Mojang's own registry, exactly as for sounds:
 
   1.20.4  `registries.json` from the server's own report:
             java -DbundlerMainClass=net.minecraft.data.Main -jar server.jar --reports
 
-  1.13    the 1.13 server's `--reports` predates the registry dump, so its
-          registry is read out of its jar instead (see tools/DumpRegistry.java):
+  1.13    read out of its jar, because its reports predate the registry dump:
             javac -d out tools/DumpRegistry.java
-            java -cp out DumpRegistry mc113/server.jar minecraft:ambient.cave sounds_393.txt
+            java -cp out DumpRegistry mc113/server.jar minecraft:explosion particles_393.txt
             java -cp out DumpRegistry mc113/server.jar minecraft:diamond_sword items_393.txt
-
-Nothing here is copied from another proxy and nothing is guessed from id
-arithmetic: every mapping is resolved by name.
 
 **The dumper is calibrated, not trusted.** It reads ids out of an obfuscated jar,
 so the second dump above points it at the one 1.13 registry whose ids are already
 known -- items.json, which the 1.13 server does report -- and its output must
-reproduce that report exactly. Only then is the sound dump used.
+reproduce that report exactly. Only then is the particle dump used.
 
 Do not check a dump by comparing it against a later version's registry: a
 registry's order is not stable. 1.14 reordered the sound registry wholesale, and
-an earlier version of this script accepted a sound table in which two ids out of
-three were wrong because it assumed otherwise.
+an earlier version of the sound generator accepted a table in which two ids out
+of three were wrong because it assumed otherwise.
 
 Usage:
-  python tools/gen_sounds.py <sounds_393.txt> <items_393.txt> <reports-1.13-dir> <reports-1.20.4-dir>
+  python tools/gen_particles.py <particles_393.txt> <items_393.txt> <reports-1.13-dir> <reports-1.20.4-dir>
 
-Writes the binary tables under src/main/resources/gg/tame/conduit/protocol/sound/.
+Writes the binary tables under src/main/resources/gg/tame/conduit/protocol/particle/.
 Table format: little-endian i32 length, then that many little-endian i32 entries.
 A -1 entry means "no mapping" and callers must fail closed.
 """
@@ -46,31 +41,19 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RES = ROOT / "src/main/resources/gg/tame/conduit/protocol/sound"
+RES = ROOT / "src/main/resources/gg/tame/conduit/protocol/particle"
 
-# Real Mojang renames between 1.13 and 1.20.4, each verified to exist on both
-# sides by the `missing` report this script prints. Not similarity guesses.
-SOUND_RENAMES_393_TO_765 = {
-    # 1.16 renamed the mob and every sound it owns.
-    "minecraft:entity.zombie_pigman.ambient": "minecraft:entity.zombified_piglin.ambient",
-    "minecraft:entity.zombie_pigman.angry": "minecraft:entity.zombified_piglin.angry",
-    "minecraft:entity.zombie_pigman.death": "minecraft:entity.zombified_piglin.death",
-    "minecraft:entity.zombie_pigman.hurt": "minecraft:entity.zombified_piglin.hurt",
-    # 1.16 split the single Nether track per biome; nether_wastes is the biome
-    # the old track played in.
-    "minecraft:music.nether": "minecraft:music.nether.nether_wastes",
-}
+# Real Mojang renames between 1.13 and 1.20.4. None so far: every 1.13 particle
+# that still exists kept its name. Kept for the same reason the sound table keeps
+# its own -- so that a future rename is recorded here rather than silently lost.
+PARTICLE_RENAMES_393_TO_765: dict[str, str] = {}
 
-# 1.13 sounds with no 1.20.4 counterpart at all. Listed so that a name turning up
-# unmapped is a decision recorded here rather than an unexplained hole; each maps
-# to -1 and is dropped, which is what happened to every sound before this table.
-SOUNDS_REMOVED_AFTER_393 = {
-    # Parrots stopped imitating these: 1.14 removed the first three, and the
-    # zombie pigman imitation did not come back under the piglin name.
-    "minecraft:entity.parrot.imitate.enderman",
-    "minecraft:entity.parrot.imitate.polar_bear",
-    "minecraft:entity.parrot.imitate.wolf",
-    "minecraft:entity.parrot.imitate.zombie_pigman",
+# 1.13 particles with no 1.20.4 counterpart. `barrier` is the whole list: 1.18
+# replaced it with `block_marker`, which is a different particle taking a block
+# state as its payload rather than a standalone one, so it is not a rename that
+# this table could make. It maps to -1 and that one packet is dropped.
+PARTICLES_REMOVED_AFTER_393 = {
+    "minecraft:barrier",
 }
 
 
@@ -144,7 +127,7 @@ def write_names(path: Path, names: list[str]) -> None:
     print(f"  {path.relative_to(ROOT)}: {len(names)} names")
 
 
-def sound_map(source: list[str], target: list[str], renames: dict[str, str]) -> list[int]:
+def particle_map(source: list[str], target: list[str], renames: dict[str, str]) -> list[int]:
     index = {name: position for position, name in enumerate(target)}
     return [index.get(renames.get(name, name), -1) for name in source]
 
@@ -162,28 +145,28 @@ def main() -> None:
     reports765 = Path(sys.argv[4])
 
     calibrate(calibration, reports393)
-    sounds393 = read_dump(dump)
-    sounds765 = registry(reports765, "minecraft:sound_event")
-    print(f"1.13 sounds: {len(sounds393)}; 1.20.4 sounds: {len(sounds765)}")
+    particles393 = read_dump(dump)
+    particles765 = registry(reports765, "minecraft:particle_type")
+    print(f"1.13 particles: {len(particles393)}; 1.20.4 particles: {len(particles765)}")
 
-    unmapped = [name for name in sounds393
-                if SOUND_RENAMES_393_TO_765.get(name, name) not in set(sounds765)]
-    unexpected = [name for name in unmapped if name not in SOUNDS_REMOVED_AFTER_393]
+    unmapped = [name for name in particles393
+                if PARTICLE_RENAMES_393_TO_765.get(name, name) not in set(particles765)]
+    unexpected = [name for name in unmapped if name not in PARTICLES_REMOVED_AFTER_393]
     if unexpected:
         raise SystemExit(
-            "FATAL: 1.13 sounds with no 1.20.4 counterpart that this script does not know about: "
-            f"{unexpected}. Add a rename to SOUND_RENAMES_393_TO_765 or record the removal in "
-            "SOUNDS_REMOVED_AFTER_393; do not let a sound go unmapped unexplained."
+            "FATAL: 1.13 particles with no 1.20.4 counterpart that this script does not know "
+            f"about: {unexpected}. Add a rename to PARTICLE_RENAMES_393_TO_765 or record the "
+            "removal in PARTICLES_REMOVED_AFTER_393; do not let one go unmapped unexplained."
         )
 
-    print("sounds:")
-    write_table(RES / "sounds_393_to_765.bin",
-                sound_map(sounds393, sounds765, SOUND_RENAMES_393_TO_765))
-    write_table(RES / "sounds_765_to_393.bin",
-                sound_map(sounds765, sounds393, invert(SOUND_RENAMES_393_TO_765)))
-    write_names(RES / "sounds_393_names.txt", sounds393)
-    write_names(RES / "sounds_765_names.txt", sounds765)
-    print(f"1.13 sounds with no 1.20.4 counterpart (dropped): {sorted(unmapped)}")
+    print("particles:")
+    write_table(RES / "particles_393_to_765.bin",
+                particle_map(particles393, particles765, PARTICLE_RENAMES_393_TO_765))
+    write_table(RES / "particles_765_to_393.bin",
+                particle_map(particles765, particles393, invert(PARTICLE_RENAMES_393_TO_765)))
+    write_names(RES / "particles_393_names.txt", particles393)
+    write_names(RES / "particles_765_names.txt", particles765)
+    print(f"1.13 particles with no 1.20.4 counterpart (dropped): {sorted(unmapped)}")
 
 
 if __name__ == "__main__":

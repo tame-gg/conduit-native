@@ -17,9 +17,9 @@ data-folder = "via"
 ```
 
 Default is **enabled**, with `engine = "via-preferred"`. Without it a cross-version player loses
-every packet the native pair drops: particles, scoreboards, titles, boss bars, block-entity data,
-recipes and advancements, and sounds on every native pair except 393 ↔ 765, which has generated
-sound tables of its own (see `docs/VALIDATION_393_765.md`). Via carries all of those, and
+every packet the native pair drops: scoreboards, titles, boss bars, block-entity data, recipes and
+advancements, and sounds and particles on every native pair except 393 ↔ 765, which has generated
+tables of its own (see `docs/VALIDATION_393_765.md`). Via carries all of those, and
 `via-preferred` still falls back to a native translator for any ordered pair Via has no path for,
 so turning it on costs no native coverage.
 

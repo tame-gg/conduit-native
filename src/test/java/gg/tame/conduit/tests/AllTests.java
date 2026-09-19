@@ -84,6 +84,7 @@ public final class AllTests {
     Phase16ModernProtocolTests.run();
     Phase17_393_765_TranslationTests.run();
     SoundTranslationTests.run();
+    ParticleTranslationTests.run();
     Phase18_393_765_WorldTests.run();
     Phase19_393_765_ItemTests.run();
     Phase20_393_404_TranslationTests.run();

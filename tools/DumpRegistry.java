@@ -3,13 +3,13 @@
 import java.io.File;
 import java.io.PrintWriter;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.ArrayList;
 import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.LinkedHashSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,18 +25,11 @@ import java.util.jar.JarFile;
  * same registries at boot. The source is Mojang's own jar, the same provenance the block and item
  * tables already have; nothing here comes from another proxy.
  *
- * <p>The jar is obfuscated, so nothing is looked up by name. What is looked for is the class that
- * declares the registry's entries as static fields — {@code SoundEvents} holds one static field per
- * sound, {@code Particles} one per particle type — found by scanning for the class whose static
- * fields yield the probe identifier. Those fields are declared in registration order, so their
- * order is the registry's order, and the id of an entry is its position.
- *
- * <p><b>That last step is an inference, so it is checked rather than trusted.</b>
- * {@code tools/gen_sound_particle.py} verifies the dump against the {@code registries.json} of a
- * later version that still contains every one of these identifiers: if the order here is the real
- * registration order, the same names appear in the same relative order there. For 1.13 sounds, all
- * 662 names appear in 1.14's registry in exactly this order. A dump that fails that check must not
- * be used.
+ * <p>The jar is obfuscated, so nothing is looked up by name. The registry is found by what it
+ * holds: every static field of every class is examined for an object that can list its keys and
+ * whose keys include the probe identifier. <b>Ids are then asked of the registry</b>, through its
+ * own by-id lookup, rather than inferred from declaration or iteration order — an order that
+ * happened to be right would be indistinguishable from one that was not.
  *
  * <pre>
  *   javac -d out tools/DumpRegistry.java
@@ -46,10 +39,17 @@ import java.util.jar.JarFile;
  * The probe is any identifier the wanted registry certainly contains, for example
  * {@code minecraft:ambient.cave} for sounds or {@code minecraft:explosion} for particles.
  * Run it on a JDK the jar supports: JDK 8 for 1.13.
+ *
+ * <p>{@code tools/gen_sounds.py} and {@code tools/gen_particles.py} additionally check a dump
+ * against the {@code registries.json} of a later version that still contains every one of these
+ * identifiers, which catches a registry read wrongly as well as one read from the wrong field.
  */
 public final class DumpRegistry {
-  /** Fewer static fields than this and the class cannot be a registry holder worth dumping. */
+  /** A registry smaller than this is something else that happens to hold identifiers. */
   private static final int MINIMUM_ENTRIES = 16;
+  /** Packages that cannot hold a Minecraft registry; skipped so their classes are never loaded. */
+  private static final String[] NOT_MINECRAFT =
+      { "io.", "com.", "org.", "java", "it.", "oshi", "gnu.", "jline", "joptsimple" };
 
   private DumpRegistry() {}
 
@@ -66,20 +66,42 @@ public final class DumpRegistry {
     bootRegistries(loader);
 
     for (String className : classNames(jar)) {
+      if (skip(className)) continue;
       Class<?> candidate;
       try {
         candidate = Class.forName(className, false, loader);
       } catch (Throwable notLoadable) {
         continue;
       }
-      List<String> identifiers = identifiersOf(candidate);
-      if (identifiers.size() >= MINIMUM_ENTRIES && identifiers.contains(probe)) {
+      Field[] declared;
+      try {
+        declared = candidate.getDeclaredFields();
+      } catch (Throwable unresolvable) {
+        continue;
+      }
+      for (Field field : declared) {
+        if (!Modifier.isStatic(field.getModifiers()) || field.getType().isPrimitive()) continue;
+        Object value;
+        try {
+          field.setAccessible(true);
+          value = field.get(null);
+        } catch (Throwable inaccessible) {
+          continue;
+        }
+        if (value == null || !holdsProbe(value, probe)) continue;
+        List<String> identifiers = readByIds(value);
+        if (identifiers == null) {
+          System.err.println("found a registry holding " + probe + " at " + className + "."
+              + field.getName() + " but could not read its ids");
+          System.exit(1);
+        }
         write(out, identifiers);
-        System.out.println(className + ": " + identifiers.size() + " entries -> " + out);
+        System.out.println(className + "." + field.getName() + ": " + identifiers.size()
+            + " entries -> " + out);
         return;
       }
     }
-    System.err.println("no class in " + jar + " declares " + probe);
+    System.err.println("no registry in " + jar + " contains " + probe);
     System.exit(1);
   }
 
@@ -97,70 +119,97 @@ public final class DumpRegistry {
         .invoke(null, (Object) new String[] {"--output", output.getAbsolutePath()});
   }
 
-  /**
-   * The identifier of every static field of this class, in declaration order.
-   *
-   * <p>A registry entry carries its own identifier in an instance field — a sound event holds the
-   * name it was registered under. The field is found by what it holds rather than by its name,
-   * which is obfuscated. Only classes whose static fields all share one type are considered, so a
-   * class that merely happens to hold a few identifiers is not mistaken for a registry.
-   */
-  private static List<String> identifiersOf(Class<?> type) {
-    Field[] declared;
-    try {
-      declared = type.getDeclaredFields();
-    } catch (Throwable unresolvable) {
-      return new ArrayList<String>();
-    }
-    Map<Class<?>, Integer> byFieldType = new HashMap<Class<?>, Integer>();
-    for (Field field : declared) {
-      if (!Modifier.isStatic(field.getModifiers())) continue;
-      Integer count = byFieldType.get(field.getType());
-      byFieldType.put(field.getType(), count == null ? 1 : count + 1);
-    }
-    Class<?> entryType = null;
-    int best = 0;
-    for (Map.Entry<Class<?>, Integer> entry : byFieldType.entrySet()) {
-      if (entry.getValue() > best && !entry.getKey().isPrimitive()) {
-        best = entry.getValue();
-        entryType = entry.getKey();
-      }
-    }
-    List<String> identifiers = new ArrayList<String>();
-    // Reading a static field initialises its class, which for a jar this size is most of the game.
-    // A registry holder declares one field per entry, so a class with few is not one: rule it out
-    // on the field count alone, before anything is read.
-    if (entryType == null || best < MINIMUM_ENTRIES) return identifiers;
-    for (Field field : declared) {
-      if (!Modifier.isStatic(field.getModifiers()) || field.getType() != entryType) continue;
-      Object value;
+  /** Whether this object can list its keys and one of them is the probe. */
+  private static boolean holdsProbe(Object candidate, String probe) {
+    Set<String> keys = keys(candidate);
+    return keys != null && keys.size() >= MINIMUM_ENTRIES && keys.contains(probe);
+  }
+
+  /** The identifiers a registry lists, or null when this object does not list any. */
+  private static Set<String> keys(Object candidate) {
+    for (Method method : candidate.getClass().getMethods()) {
+      if (method.getParameterTypes().length != 0) continue;
+      if (!Set.class.isAssignableFrom(method.getReturnType())
+          && !Map.class.isAssignableFrom(method.getReturnType())) continue;
+      Object result;
       try {
-        field.setAccessible(true);
-        value = field.get(null);
-      } catch (Throwable inaccessible) {
-        return new ArrayList<String>();
+        method.setAccessible(true);
+        result = method.invoke(candidate);
+      } catch (Throwable notAccessor) {
+        continue;
       }
-      String identifier = identifierOf(value);
-      if (identifier == null) return new ArrayList<String>();  // not every entry names itself
+      Iterable<?> entries = result instanceof Map ? ((Map<?, ?>) result).keySet()
+          : result instanceof Set ? (Set<?>) result : null;
+      if (entries == null) continue;
+      Set<String> keys = new HashSet<String>();
+      try {
+        for (Object entry : entries) {
+          String text = String.valueOf(entry);
+          if (!looksLikeIdentifier(text)) return null;
+          keys.add(text);
+        }
+      } catch (Throwable notIterable) {
+        continue;
+      }
+      if (!keys.isEmpty()) return keys;
+    }
+    return null;
+  }
+
+  /**
+   * The registry's entries, indexed by the registry's own ids.
+   *
+   * <p>Asked of the registry one id at a time rather than read off an iteration: a registry is free
+   * to iterate in any order it likes, and one that happens to iterate in id order is
+   * indistinguishable from one that does not until it is wrong on somebody's server. Null when the
+   * object has no usable by-id lookup, when the ids are not a dense 0..n-1 range, or when an entry
+   * does not resolve back to an identifier.
+   */
+  private static List<String> readByIds(Object registry) {
+    int size = keys(registry).size();
+    Method byId = null;
+    for (Method method : registry.getClass().getMethods()) {
+      Class<?>[] parameters = method.getParameterTypes();
+      if (parameters.length != 1 || parameters[0] != int.class) continue;
+      if (method.getReturnType() == void.class || method.getReturnType().isPrimitive()) continue;
+      method.setAccessible(true);
+      byId = method;
+      break;
+    }
+    if (byId == null) return null;
+
+    List<String> identifiers = new ArrayList<String>();
+    Set<String> seen = new HashSet<String>();
+    for (int id = 0; id < size; id++) {
+      Object entry;
+      try {
+        entry = byId.invoke(registry, Integer.valueOf(id));
+      } catch (Throwable failed) {
+        return null;
+      }
+      if (entry == null) return null;                     // a hole: the ids are not 0..n-1
+      String identifier = keyOf(registry, entry);
+      if (identifier == null || !seen.add(identifier)) return null;
       identifiers.add(identifier);
     }
     return identifiers;
   }
 
-  /** The one identifier-shaped value held by this object, or null when it holds none. */
-  private static String identifierOf(Object entry) {
-    if (entry == null) return null;
-    for (Field field : entry.getClass().getDeclaredFields()) {
-      if (Modifier.isStatic(field.getModifiers())) continue;
-      Object value;
+  /** The identifier a registry gives one of its entries, asked of the registry. */
+  private static String keyOf(Object registry, Object entry) {
+    for (Method method : registry.getClass().getMethods()) {
+      Class<?>[] parameters = method.getParameterTypes();
+      if (parameters.length != 1 || !parameters[0].isInstance(entry)) continue;
+      if (method.getReturnType().isPrimitive()) continue;
+      Object result;
       try {
-        field.setAccessible(true);
-        value = field.get(entry);
-      } catch (Throwable inaccessible) {
+        method.setAccessible(true);
+        result = method.invoke(registry, entry);
+      } catch (Throwable notAccessor) {
         continue;
       }
-      if (value == null) continue;
-      String text = String.valueOf(value);
+      if (result == null) continue;
+      String text = String.valueOf(result);
       if (looksLikeIdentifier(text)) return text;
     }
     return null;
@@ -178,6 +227,13 @@ public final class DumpRegistry {
     return true;
   }
 
+  private static boolean skip(String className) {
+    for (String prefix : NOT_MINECRAFT) {
+      if (className.startsWith(prefix)) return true;
+    }
+    return false;
+  }
+
   private static List<String> classNames(File jar) throws Exception {
     List<String> names = new ArrayList<String>();
     JarFile file = new JarFile(jar);
@@ -185,7 +241,7 @@ public final class DumpRegistry {
       Enumeration<JarEntry> entries = file.entries();
       while (entries.hasMoreElements()) {
         String name = entries.nextElement().getName();
-        if (!name.endsWith(".class") || name.contains("$")) continue;
+        if (!name.endsWith(".class")) continue;
         names.add(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
       }
     } finally {
@@ -195,10 +251,6 @@ public final class DumpRegistry {
   }
 
   private static void write(File out, List<String> identifiers) throws Exception {
-    Set<String> seen = new LinkedHashSet<String>(identifiers);
-    if (seen.size() != identifiers.size()) {
-      throw new IllegalStateException("the same identifier is declared twice: not a registry");
-    }
     File parent = out.getParentFile();
     if (parent != null) parent.mkdirs();
     PrintWriter writer = new PrintWriter(out, "UTF-8");

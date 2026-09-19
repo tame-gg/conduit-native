@@ -798,15 +798,27 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
       }
 
       case PLAY_WORLD_PARTICLES -> {
-        // Same registry caveat as sounds, but particles are purely decorative and
-        // carry no state, so a mismatch is harmless rather than confusing. The
-        // wire layout genuinely differs (id i32->VarInt, coords f32->f64), so the
-        // fields are reshaped rather than copied.
+        // Same registry caveat as sounds -- 1.13 has 50 particle types and 1.20.4
+        // has 101, with the additions spread through the list -- and the wire
+        // layout differs too (id i32->VarInt, coords f32->f64), so the fields are
+        // reshaped rather than copied. Four particles also carry a payload naming
+        // the sender's own block or item registry; ParticleCodec translates those
+        // through the same tables the chunk and inventory paths use.
         if (!target.defines(ConnectionState.PLAY, direction, kind)) {
           yield new TranslationResult.Dropped("particles not defined on target");
         }
-        yield new TranslationResult.Dropped(
-            "particle registry ids are version-specific and unmapped; decorative only");
+        if (source.version().number() == target.version().number()) {
+          yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+              kind, ConnectionState.PLAY, direction, PlayPackets.body(packet)));
+        }
+        byte[] particle = gg.tame.conduit.protocol.particle.ParticleCodec.translate(
+            source.version().number(), target.version().number(), PlayPackets.body(packet));
+        if (particle == null) {
+          yield new TranslationResult.Dropped(
+              "particle has no counterpart in the target registry, or its payload does");
+        }
+        yield new TranslationResult.Translated(new gg.tame.conduit.protocol.semantic.OpaquePacket(
+            kind, ConnectionState.PLAY, direction, particle));
       }
 
       case PLAY_ENTITY_EQUIPMENT -> {
@@ -1165,13 +1177,14 @@ public final class Protocol393To765Translator implements ProtocolTranslator {
         // Recognised and dropped on purpose. Each of these is either display-only
         // (scoreboards, titles, boss bars, the tab list, statistics) or names
         // something from the sending era's own registry that this pair has no
-        // verified mapping for (block-entity types, paintings, particles, map and
-        // trade payloads). Dropping costs the feature; forwarding the bytes would
+        // verified mapping for (block-entity types, paintings, map and trade
+        // payloads). Dropping costs the feature; forwarding the bytes would
         // desynchronise the stream, and a fail-closed proxy would end the session.
         //
-        // Sounds are no longer among them: Sound Effect and Named Sound Effect are
-        // translated through the generated registry tables. Entity Sound Effect
-        // stays here because 1.13 has no packet that plays a sound on an entity.
+        // Sounds and particles are no longer among them: Sound Effect, Named Sound
+        // Effect and Particle are translated through generated registry tables.
+        // Entity Sound Effect stays because 1.13 has no packet that plays a sound
+        // on an entity.
         // These are the deliberately-unsupported set for 393 <-> 765, not an
         // oversight, and none of them gates world entry or movement.
         yield new TranslationResult.Dropped(
