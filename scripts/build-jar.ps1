@@ -12,13 +12,15 @@
 #
 # What goes in: Conduit's own classes and generated tables, the runtime
 # dependencies from lib/via -- the same set build.gradle.kts declares -- and the
-# Velocity-compatibility libraries from lib/ (scripts/fetch-velocity-compat.ps1):
-# velocity-api and what its POM needs at run time. They are merged rather than
-# shipped beside the jar because `java -jar` reads no class path but the jar's,
-# and because a Velocity plugin must link against the very classes Conduit's
-# adapter uses: its loader delegates to the class path the adapter came from.
-# The two sets share no library: Guava is only in lib/via, at the version both
-# ask for, and the build refuses two versions of anything.
+# Velocity plugin runtime named by config/velocity-runtime.lock, which
+# `gradle lockVelocityRuntime` resolves from velocity-api's own POM. The lock is
+# read here rather than lib/ globbed, so what a release carries is decided by the
+# build and not by whatever a developer's lib/ happens to hold. They are merged
+# rather than shipped beside the jar because `java -jar` reads no class path but
+# the jar's, and because a Velocity plugin must link against the very classes
+# Conduit's adapter uses: its loader delegates to the class path the adapter came
+# from. The two sets share no library: Guava is only in lib/via, at the version
+# both ask for, and the build refuses two versions of anything.
 param([string]$Out = "dist", [switch]$SkipBuild, [switch]$SkipSource)
 
 $ErrorActionPreference = "Stop"
@@ -53,8 +55,19 @@ try {
   # and module descriptor go too, since the merged jar has one of its own and is
   # a plain classpath jar.
   $services = @{}
-  $runtime = @(Get-ChildItem (Join-Path $lib "via") -Filter *.jar) + @(Get-ChildItem $lib -Filter *.jar) |
-    Where-Object { $_.Name -notlike "*-sources.jar" }
+  # The Velocity plugin runtime by name from the lock, not by globbing lib/: a release must carry
+  # the set the build resolved, and a jar nobody put in lib/ is a broken release, not a smaller one.
+  $velocityRuntime = foreach ($line in Get-Content (Join-Path $repo "config/velocity-runtime.lock")) {
+    if (-not $line.Trim() -or $line.StartsWith("#")) { continue }
+    $name = [System.IO.Path]::GetFileName(($line -split "`t")[0])
+    $file = Join-Path $lib $name
+    if (-not (Test-Path $file)) {
+      throw "config/velocity-runtime.lock names $name, which is not in $lib. Run scripts/fetch-velocity-compat.ps1."
+    }
+    Get-Item $file
+  }
+  $runtime = @(Get-ChildItem (Join-Path $lib "via") -Filter *.jar |
+    Where-Object { $_.Name -notlike "*-sources.jar" }) + @($velocityRuntime)
   # Two versions of one library would leave whichever was unpacked last shadowing the other.
   $seen = @{}
   foreach ($archive in $runtime) {
