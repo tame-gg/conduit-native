@@ -224,6 +224,14 @@ public final class MinecraftProxy implements AutoCloseable {
     ClientLoginMessages[] loginMessages = new ClientLoginMessages[1];
     try {
       remote = client.getInetAddress();
+      int handshakeTimeout = runtime.security().botFilter().settings().handshakeTimeoutMs();
+      // Before the first read of any kind, not merely before the handshake. The PROXY header below
+      // is read from a socket that nothing else has bounded yet, and it is read before the throttle
+      // and the bot filter have seen the connection at all -- so a peer that opened a connection,
+      // sent "PROXY " and then stopped parked this worker, its connection slot and its file
+      // descriptor for as long as it cared to, and nothing rate-limited how many it could do that
+      // with. The deadline below bounds the login; this bounds everything before it.
+      client.setSoTimeout(handshakeTimeout);
       // Before anything judges this connection by its address: behind a reverse proxy the socket
       // wears that service's address, and the header at the front of the stream is what says whose
       // connection it really is. Read first, so the throttle, the bot filter and every ban that
@@ -251,8 +259,6 @@ public final class MinecraftProxy implements AutoCloseable {
       if (decision == ConnectionThrottle.Decision.THROTTLED) {
         return;
       }
-      int handshakeTimeout = runtime.security().botFilter().settings().handshakeTimeoutMs();
-      client.setSoTimeout(handshakeTimeout);
       PacketTransport transport = opened[0] = new PacketTransport(client);
       if (declared != null) transport.declareRemote(declared);
       transport.setReadDeadline(Long.getLong("conduit.loginDeadlineMillis", LOGIN_DEADLINE_MS));
