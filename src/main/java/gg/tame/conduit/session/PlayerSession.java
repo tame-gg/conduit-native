@@ -2087,6 +2087,23 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       lock.notifyAll();
     }
     discard(lost);
+    // The walk below opens a socket and logs in to it, once per candidate, each with its own
+    // connect timeout. That is far too long to hold a relay thread, and on a watched session this
+    // runs on one: a backend dying takes every player on it down this path at once, and the worker
+    // pool is bounded, so the players still on healthy backends would stop being relayed while
+    // their neighbours were dialled somewhere else. The same reasoning, and the same thread, as
+    // transferTo. Everything above this point is immediate and stays where it is: the session is
+    // SWITCHING and the lost backend is off the selector before this thread goes back to relaying,
+    // so its end of stream cannot be dispatched again and read as the session being over.
+    if (gg.tame.conduit.network.ConnectionSelector.onWorkerThread()) {
+      gg.tame.conduit.network.SocketThreads.start(() -> fallbackFrom(lost));
+      return;
+    }
+    fallbackFrom(lost);
+  }
+
+  /** The candidates, in order, until one takes the player or there is nothing left to try. */
+  private void fallbackFrom(BackendConnection lost) {
     Set<String> failed = new HashSet<>();
     failed.add(ServerRegistry.normalize(lost.server().name()));
     sendMessage(Text.of(lost.server().name() + " is unavailable.").color(TextColor.RED));
