@@ -34,8 +34,10 @@ import net.kyori.adventure.text.format.NamedTextColor;
  * which alias was typed. Bodies run on the adapter's threads, never the player's connection thread.
  *
  * <p>BrigadierCommand trees are parsed, permission-checked, executed and completed here with the
- * Brigadier library against the full command line. Clients are sent only the command's literal
- * name, as for every Conduit command, not its argument nodes.
+ * Brigadier library against the full command line. Clients are sent the command's literal name and
+ * one greedy {@code ask_server} argument under it, as Velocity declares a SimpleCommand or a
+ * RawCommand -- see {@code CommandGraphs#addLiteral}, which does it for every registered command
+ * rather than only for these.
  */
 final class VelocityCommandHost implements CommandManager {
   private static final long SUGGEST_WAIT_MS = 3_000;

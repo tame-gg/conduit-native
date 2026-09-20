@@ -322,9 +322,12 @@ public final class CommandGraphs {
     literals.add(new ProxyNode.Literal("gkick", player(arguments)));
     literals.add(new ProxyNode.Literal("server", servers));
     literals.add(new ProxyNode.Literal("send", sendFirst));
-    // A built-in a plugin displaced is declared as that plugin's commands are, a bare literal: the
-    // built-in's own children would have the client suggest arguments the plugin never takes.
-    literals.replaceAll(literal -> displaced.contains(literal.name()) ? new ProxyNode.Literal(literal.name()) : literal);
+    // One node, shared by every command below whose shape Conduit does not know -- see rawArguments.
+    List<ProxyNode> rawArguments = arguments ? List.of(new ProxyNode.Argument("arguments", true, true)) : List.of();
+    // A built-in a plugin displaced is declared as that plugin's commands are: the built-in's own
+    // children would have the client suggest arguments the plugin never takes.
+    literals.replaceAll(literal -> displaced.contains(literal.name())
+        ? new ProxyNode.Literal(literal.name(), rawArguments) : literal);
     // Every name is marked emitted, shown or not, so a hidden built-in is not declared again below as
     // a bare literal from the registered names.
     java.util.LinkedHashSet<String> emitted = new java.util.LinkedHashSet<>();
@@ -333,8 +336,8 @@ public final class CommandGraphs {
     // /<server> shortcuts first, then whatever else is registered -- plugin commands and their
     // aliases. A name the built-ins already own is theirs: a second literal for it would give the
     // root two children of the same name and the client would parse against the childless one.
-    for (String name : serverNames) addLiteral(literals, emitted, name, shown);
-    for (String name : extraNames) addLiteral(literals, emitted, name, shown);
+    for (String name : serverNames) addLiteral(literals, emitted, name, shown, List.of());
+    for (String name : extraNames) addLiteral(literals, emitted, name, shown, rawArguments);
     return List.copyOf(literals);
   }
 
@@ -343,12 +346,25 @@ public final class CommandGraphs {
     return arguments ? List.of(new ProxyNode.Argument("player", false, true)) : List.of();
   }
 
+  /**
+   * A command Conduit knows only by name: the literal, plus {@code children}.
+   *
+   * <p>For a plugin's command those children are one greedy {@code ask_server} string, which is what
+   * Velocity declares for a SimpleCommand or a RawCommand, and it is the whole of this bug. A bare
+   * literal is a command that takes nothing: a 1.13+ client parses {@code /lpv user Kyle info}
+   * against it, finds {@code lpv} matched and twelve characters left it has no node for, and paints
+   * the line red -- while Conduit, which parses the line itself, runs it perfectly. The greedy
+   * string soaks up the rest of the line, so the client sees a complete parse, and {@code ask_server}
+   * sends the completion request that a childless literal never triggered either.
+   *
+   * <p>A server-name shortcut passes nothing: {@code /lobby} really does take no arguments.
+   */
   private static void addLiteral(List<ProxyNode> literals, java.util.Set<String> emitted, String name,
-      java.util.function.Predicate<String> shown) {
+      java.util.function.Predicate<String> shown, List<ProxyNode> children) {
     if (name == null) return;
     String key = name.toLowerCase(java.util.Locale.ROOT);
     if (key.isBlank() || !emitted.add(key) || !shown.test(key)) return;
-    literals.add(new ProxyNode.Literal(key));
+    literals.add(new ProxyNode.Literal(key, children));
   }
 
   /** A Declare Commands packet holding nothing but an empty root, for the merge to append to. */

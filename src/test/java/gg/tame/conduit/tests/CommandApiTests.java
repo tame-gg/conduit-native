@@ -68,6 +68,7 @@ public final class CommandApiTests {
     conduitSubcommandsMatchTheGraph();
     helpListsWhatTheSourceMayRun();
     graphCarriesPluginCommands();
+    aPluginCommandsArgumentsParseOnTheClient();
     graphSurvivesReDeclareAfterSwitch();
     legacyAndModernCompletionAgree();
     eventsReachSupertypeListeners();
@@ -118,7 +119,9 @@ public final class CommandApiTests {
     require(fixture.commands.displacedBuiltIns().equals(Set.of("hub", "lobby", "server")), "displaced " + fixture.commands.displacedBuiltIns());
     byte[] graph = CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765), fixture.names(), fixture.commands.names(),
         fixture.commands.displacedBuiltIns());
-    require(childrenOf(graph, "server").isEmpty(), "the graph declares the plugin's /server, not the built-in's server list");
+    require(childrenOf(graph, "server").equals(List.of("arguments")),
+        "the graph declares the plugin's /server -- free arguments, not the built-in's server list -- got "
+            + childrenOf(graph, "server"));
     List<String> roots = rootChildren(graph);
     require(roots.contains("hub") && roots.contains("lobby") && roots.stream().distinct().count() == roots.size(), "each name declared once, got " + roots);
 
@@ -699,6 +702,85 @@ public final class CommandApiTests {
     require(roots.contains("warp") && roots.contains("w"), "plugin command and alias declared, got " + roots);
     require(roots.contains("server") && roots.contains("lobby"), "built-ins and server shortcuts kept");
     require(roots.stream().distinct().count() == roots.size(), "no duplicate root literal, got " + roots);
+  }
+
+  /**
+   * A plugin's command has to parse on the client, not just run on the proxy.
+   *
+   * <p>Every registered command used to be declared as a childless literal, so a 1.13+ client
+   * matched {@code lpv} and then had no node for the rest of {@code /lpv user Kyle permission info}.
+   * Brigadier calls that a syntax error and the client paints the whole line red -- while Conduit,
+   * which parses the line itself, ran it perfectly. Hence "red in chat but works".
+   *
+   * <p>Checked by parsing with Brigadier, which is the client's own parser, against a dispatcher
+   * rebuilt from the bytes Conduit sends. Asserting the node is merely present would not catch it:
+   * a non-greedy string argument is present too, and leaves {@code /lpv user Kyle} just as red.
+   */
+  private static void aPluginCommandsArgumentsParseOnTheClient() throws Exception {
+    Fixture fixture = new Fixture();
+    // As LuckPerms and MiniMOTD register: several aliases of one command, and a one-word command.
+    fixture.commands.register(new TestPlugin("luckperms"), cmd("luckperms", List.of("lp", "lpv", "perms")));
+    fixture.commands.register(new TestPlugin("minimotd"), cmd("minimotd", List.of()));
+    byte[] packet = CommandGraphs.proxyOnly(ProtocolDefinition.forVersion(765), fixture.names(), fixture.commands.names());
+
+    require(childrenOf(packet, "lpv").equals(List.of("arguments")), "a plugin command takes an argument, got "
+        + childrenOf(packet, "lpv"));
+    com.mojang.brigadier.CommandDispatcher<Object> client = clientDispatcher(packet);
+    for (String line : List.of("lpv user Kyle permission info", "lp group default info", "luckperms sync",
+        "minimotd reload", "perms editor", "server lobby", "alert hello there")) {
+      var parse = client.parse(line, new Object());
+      require(parse.getReader().getRemainingLength() == 0 && parse.getExceptions().isEmpty(),
+          "the client parses /" + line + " (" + parse.getReader().getRemainingLength() + " chars left over, "
+              + parse.getExceptions().size() + " errors) -- it would be red");
+    }
+    // A server shortcut really does take nothing, so it keeps the parse error that says so.
+    require(client.parse("lobby nonsense", new Object()).getReader().getRemainingLength() > 0,
+        "a /<server> shortcut still takes no arguments");
+  }
+
+  /**
+   * The command tree as the client's Brigadier sees it, built from the encoded packet: literals, and
+   * {@code brigadier:string} arguments in the word, quotable or greedy form their one property byte
+   * names. Conduit writes no other parser.
+   */
+  private static com.mojang.brigadier.CommandDispatcher<Object> clientDispatcher(byte[] packet) throws Exception {
+    var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(body(packet)));
+    int count = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+    List<List<Integer>> children = new ArrayList<>();
+    List<com.mojang.brigadier.tree.CommandNode<Object>> built = new ArrayList<>();
+    var dispatcher = new com.mojang.brigadier.CommandDispatcher<Object>();
+    for (int index = 0; index < count; index++) {
+      int flags = input.readUnsignedByte();
+      int childCount = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+      List<Integer> kids = new ArrayList<>(childCount);
+      for (int child = 0; child < childCount; child++) kids.add(gg.tame.conduit.protocol.MinecraftInput.varInt(input));
+      children.add(kids);
+      if ((flags & 0x08) != 0) gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+      int type = flags & 0x03;
+      String name = (type == 1 || type == 2) ? gg.tame.conduit.protocol.MinecraftInput.string(input, 32767) : null;
+      com.mojang.brigadier.tree.CommandNode<Object> node;
+      if (type == 0) {
+        node = dispatcher.getRoot();
+      } else if (type == 1) {
+        node = com.mojang.brigadier.builder.LiteralArgumentBuilder.<Object>literal(name).executes(context -> 1).build();
+      } else {
+        int parser = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+        require(parser == gg.tame.conduit.command.ParserIds.INDEXED.stringId(), "only brigadier:string is written, got " + parser);
+        var string = switch (gg.tame.conduit.protocol.MinecraftInput.varInt(input)) {
+          case 2 -> com.mojang.brigadier.arguments.StringArgumentType.greedyString();
+          case 1 -> com.mojang.brigadier.arguments.StringArgumentType.string();
+          default -> com.mojang.brigadier.arguments.StringArgumentType.word();
+        };
+        node = com.mojang.brigadier.builder.RequiredArgumentBuilder.<Object, String>argument(name, string)
+            .executes(context -> 1).build();
+      }
+      if ((flags & 0x10) != 0) gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);
+      built.add(node);
+    }
+    for (int index = 0; index < count; index++) {
+      for (int child : children.get(index)) built.get(index).addChild(built.get(child));
+    }
+    return dispatcher;
   }
 
   /**
