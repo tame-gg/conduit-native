@@ -119,9 +119,11 @@ public final class PacketTransport {
     // the frame length is inside the encrypted stream, so ciphertext cannot be asked whether it
     // holds a whole frame. The same cipher, carrying on from exactly where this stream left it.
     this.decryptCipher = decrypt;
+    this.encryptCipher = encrypt;
     state = EncryptionState.ENCRYPTED;
   }
   private Cipher decryptCipher;
+  private Cipher encryptCipher;
   private volatile ConnectionSelector.Registration attached;
 
   /**
@@ -136,28 +138,49 @@ public final class PacketTransport {
   public ConnectionSelector.Registration attachTo(ConnectionSelector selector, ConnectionSelector.Handler handler) throws IOException {
     java.nio.channels.SocketChannel channel = socket == null ? null : socket.getChannel();
     if (channel == null) return null;
+    if (state == EncryptionState.CLOSED) throw new IOException("the connection closed during login");
     readDeadline = 0;
-    ChannelReader reader = new ChannelReader(channel);
+    // Everything the old streams hold is dealt with while the channel is still blocking. Registering
+    // first makes it non-blocking, and this flush -- through the socket's own output stream -- then
+    // throws IllegalBlockingModeException, which only shows up when the buffer is not already empty.
+    synchronized (writeLock) { output.flush(); }
     // Plaintext the old chain is holding: at most what the socket had when it was last asked, plus
     // the one byte hungUp() may have pushed back.
     int buffered = input.available();
-    if (buffered > 0) reader.seed(input.readNBytes(buffered));
-    if (decryptCipher != null) reader.decryptWith(decryptCipher);
-    ConnectionSelector.Registration registration = selector.register(channel, reader, handler);
+    byte[] carried = buffered > 0 ? input.readNBytes(buffered) : new byte[0];
+    ConnectionSelector.Registration registration = selector.register(channel, carried, decryptCipher, handler);
     synchronized (writeLock) {
-      // Whatever the old buffered stream still holds goes out before the new one takes over.
-      output.flush();
-      this.input = reader;
-      this.output = registration.output();
+      this.input = registration.input();
+      // The encrypting layer is put back on top of the new stream. Replacing the whole chain sent
+      // an encrypted client everything after its login in plaintext, and it sat there waiting for a
+      // packet it could read. The reader needs no such layer: it decrypts as it fills, because the
+      // frame length is inside the encrypted stream.
+      this.output = encryptCipher == null ? registration.output()
+          : CipherStreams.encrypting(registration.output(), encryptCipher);
     }
     this.attached = registration;
     return registration;
   }
 
-  /** Whether a whole frame is buffered, for a caller that must not block; true off the selector. */
-  public boolean hasCompleteFrame(int maximumFrameBytes) {
+  /** Whether there is a channel behind the socket, which a connection has to have to be watched. */
+  public boolean selectable() { return socket != null && socket.getChannel() != null; }
+
+  /** Fills until a whole frame is buffered; false when the socket has no more to give just now. */
+  public boolean nextFrameReady(int maximumFrameBytes) throws IOException {
     ConnectionSelector.Registration registration = attached;
-    return registration == null || registration.hasCompleteFrame(maximumFrameBytes);
+    return registration == null || registration.nextFrameReady(maximumFrameBytes);
+  }
+
+  /** Whether what this connection's packets are written to is too far behind to be given more. */
+  public boolean sinkCongested() {
+    ConnectionSelector.Registration registration = attached;
+    return registration != null && registration.sinkCongested();
+  }
+
+  /** Whether the peer has hung up and everything it sent has been read. */
+  public boolean ended() {
+    ConnectionSelector.Registration registration = attached;
+    return registration != null && registration.ended();
   }
 
   /** Takes whatever the socket has now, for a worker draining a connection; 0 off the selector. */

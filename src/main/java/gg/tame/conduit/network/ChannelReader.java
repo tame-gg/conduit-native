@@ -111,33 +111,48 @@ final class ChannelReader extends InputStream {
     return tail - at >= length;
   }
 
+  /**
+   * Fills until a whole frame is buffered, and answers whether there is one.
+   *
+   * <p>False means the socket has nothing more to give this time round, not that the peer is gone;
+   * {@link #ended()} tells those apart. The look-ahead is one frame and stops there, so a dispatch
+   * cannot drain a flooding peer indefinitely: whatever is left makes the connection readable
+   * again, and the pause for a congested sink is weighed before it is read once more.
+   */
+  boolean nextFrameReady(int maximumFrameBytes) throws IOException {
+    while (!hasCompleteFrame(maximumFrameBytes)) {
+      if (fill() <= 0) return false;
+    }
+    return true;
+  }
+
   /** Buffered bytes, which is what {@code available()} on the socket stream used to answer. */
   @Override public int available() { return tail - head; }
 
   @Override public int read() throws IOException {
-    if (head == tail && !refill()) return starved();
+    if (head == tail) return starved();
     return buffer[head++] & 0xff;
   }
 
   @Override public int read(byte[] destination, int offset, int length) throws IOException {
     if (length == 0) return 0;
-    if (head == tail && !refill()) return starved();
+    if (head == tail) return starved();
     int count = Math.min(length, tail - head);
     System.arraycopy(buffer, head, destination, offset, count);
     head += count;
     return count;
   }
 
-  /** True once there is at least one byte to serve. */
-  private boolean refill() throws IOException {
-    compact();
-    return fill() > 0;
-  }
-
   /**
-   * A read that ran past what was buffered. Callers read only whole frames, so this is a bug here
-   * rather than a peer being slow, and it says so instead of reporting an end of stream that would
-   * be taken for the peer hanging up.
+   * A read that ran past what was buffered.
+   *
+   * <p>Deliberately not a refill. A worker fills once and then relays the whole frames that brought,
+   * and anything still on the socket is a second dispatch -- which is where backpressure is
+   * weighed. Refilling here instead would let one dispatch drain a flooding server for as long as
+   * it kept sending, queueing all of it for a client that may be reading far slower.
+   *
+   * <p>Callers read only whole frames, so reaching this is a bug here rather than a peer being
+   * slow, and it says so instead of reporting an end of stream that would be taken for a hang-up.
    */
   private int starved() throws IOException {
     if (ended) return -1;

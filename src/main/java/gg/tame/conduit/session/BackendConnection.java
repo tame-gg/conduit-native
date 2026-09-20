@@ -29,7 +29,7 @@ public final class BackendConnection implements AutoCloseable {
   private final ProtocolDefinition protocol;
   private final int maxFrameBytes;
   private final Object writeLock = new Object();
-  private final OutputStream output;
+  private OutputStream output;
   private final java.util.concurrent.atomic.AtomicBoolean closed = new java.util.concurrent.atomic.AtomicBoolean();
   private boolean brandSeen;
   public BackendConnection(BackendServer server, Socket socket, ProtocolDefinition protocol, PlayerInfoForwarder forwarder,
@@ -42,7 +42,9 @@ public final class BackendConnection implements AutoCloseable {
   }
   public static Socket open(BackendServer server) throws IOException {
     long start = System.nanoTime();
-    Socket socket = new Socket();
+    // Through a channel so the connection can later be watched by the ConnectionSelector: a plain
+    // Socket has none, and a session whose backend cannot be selected keeps a thread for it.
+    Socket socket = java.nio.channels.SocketChannel.open().socket();
     try { socket.connect(server.address(), 3_000); }
     catch (IOException unreachable) {
       ConduitMetrics.current().backendConnectFailed();
@@ -92,9 +94,9 @@ public final class BackendConnection implements AutoCloseable {
   public ConnectionState state() { return login.state(); }
   public PacketCompression compression() { return login.compression(); }
   public BackendLoginPipeline login() { return login; }
-  public int available() throws IOException { return socket.getInputStream().available(); }
+  public int available() throws IOException { return input().available(); }
   public byte[] readUncompressed() throws IOException {
-    byte[] packet = login.compression().unwrap(MinecraftFrames.read(socket.getInputStream(), maxFrameBytes));
+    byte[] packet = login.compression().unwrap(MinecraftFrames.read(input(), maxFrameBytes));
     ConduitMetrics.current().inbound(packet.length);
     return packet;
   }
@@ -120,7 +122,9 @@ public final class BackendConnection implements AutoCloseable {
     if (rewritten.isPresent()) { brandSeen = true; return rewritten.get(); }
     return packet;
   }
-  public void setReadTimeoutMillis(int millis) throws IOException { socket.setSoTimeout(millis); }
+  // A backend on the selector is non-blocking and has no read to bound: it is read only when a
+  // whole frame is already buffered, and never waited on.
+  public void setReadTimeoutMillis(int millis) throws IOException { if (attached == null) socket.setSoTimeout(millis); }
   public boolean brandSeen() { return brandSeen; }
   public void markBrandSeen() { brandSeen = true; }
   /**
@@ -131,7 +135,72 @@ public final class BackendConnection implements AutoCloseable {
    */
   @Override public void close() {
     if (!closed.compareAndSet(false, true)) return;
+    gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
+    if (registration != null) registration.cancel();
     try { socket.close(); } catch (IOException ignored) { }
     ConduitMetrics.current().backendClosed();
+  }
+
+  // --- watching this backend instead of parking a thread on it ------------------------------------
+
+  private volatile gg.tame.conduit.network.ConnectionSelector.Registration attached;
+  private java.io.InputStream blocking;
+
+  /** Whether there is a channel behind the socket, which a connection has to have to be watched. */
+  public boolean selectable() { return socket.getChannel() != null; }
+
+  /**
+   * Moves this backend onto the selector, carrying whatever the blocking stream had already taken
+   * off the socket. Null when there is no channel to watch, and the caller then keeps its thread.
+   */
+  public gg.tame.conduit.network.ConnectionSelector.Registration attachTo(
+      gg.tame.conduit.network.ConnectionSelector selector,
+      gg.tame.conduit.network.ConnectionSelector.Handler handler) throws IOException {
+    java.nio.channels.SocketChannel channel = socket.getChannel();
+    if (channel == null) return null;
+    // While the channel is still blocking: registering makes it non-blocking, and a flush through
+    // the socket's own output stream after that throws IllegalBlockingModeException.
+    synchronized (writeLock) { output.flush(); }
+    java.io.InputStream current = input();
+    int buffered = current.available();
+    byte[] carried = buffered > 0 ? current.readNBytes(buffered) : new byte[0];
+    gg.tame.conduit.network.ConnectionSelector.Registration registration =
+        selector.register(channel, carried, handler);
+    synchronized (writeLock) {
+      this.output = registration.output();
+    }
+    this.attached = registration;
+    return registration;
+  }
+
+  /** Fills until a whole frame is buffered; false when the socket has no more to give just now. */
+  public boolean nextFrameReady() throws IOException {
+    gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
+    return registration == null || registration.nextFrameReady(maxFrameBytes);
+  }
+
+  /** Whether the client this backend's packets are written to is too far behind to be given more. */
+  public boolean sinkCongested() {
+    gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
+    return registration != null && registration.sinkCongested();
+  }
+
+  /** Whether the backend has hung up and everything it sent has been read. */
+  public boolean ended() {
+    gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
+    return registration != null && registration.ended();
+  }
+
+  /** Takes whatever the socket has now: bytes added, 0 for none, -1 once the backend has hung up. */
+  public int fill() throws IOException {
+    gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
+    return registration == null ? 0 : registration.fill();
+  }
+
+  private java.io.InputStream input() throws IOException {
+    gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
+    if (registration != null) return registration.input();
+    if (blocking == null) blocking = socket.getInputStream();
+    return blocking;
   }
 }

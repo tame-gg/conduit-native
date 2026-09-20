@@ -117,6 +117,28 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   public CommandManager commandManager() { return commands; }
   public PlayerManager playerManager() { return players; }
   public BackendSelector selector() { return selector; }
+  private final Object connectionSelectorLock = new Object();
+  private gg.tame.conduit.network.ConnectionSelector connectionSelector;
+  /**
+   * Where playing connections are watched, built on the first player to reach a server so that a
+   * proxy nobody has joined does not start selector threads for nobody.
+   *
+   * <p>Null when one could not be opened, which is not fatal: a session that cannot be watched keeps
+   * the thread per socket it has always had, and says so once rather than refusing the player.
+   */
+  public gg.tame.conduit.network.ConnectionSelector connectionSelector() {
+    synchronized (connectionSelectorLock) {
+      if (connectionSelector == null && !closed.get()) {
+        try {
+          connectionSelector = new gg.tame.conduit.network.ConnectionSelector();
+        } catch (java.io.IOException failed) {
+          gg.tame.conduit.log.ConduitLog.warn("Could not open a connection selector, so every player"
+              + " keeps a thread per socket: " + failed.getMessage());
+        }
+      }
+      return connectionSelector;
+    }
+  }
   public ConduitEventManager eventBus() { return events; }
   @Override public String version() { return Conduit.VERSION; }
   @Override public int apiVersion() { return Conduit.API_VERSION; }
@@ -307,6 +329,9 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     plugins.closeLoaders();
     health.close();
     scheduler.close();
+    synchronized (connectionSelectorLock) {
+      if (connectionSelector != null) connectionSelector.close();
+    }
     if (metricsEndpoint != null) metricsEndpoint.close();
     // Via is deliberately not stopped here. Its manager is a per-JVM singleton that cannot be
     // re-initialised, so a runtime closing would take translation away from every later one in the

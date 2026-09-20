@@ -215,6 +215,9 @@ public final class MinecraftProxy implements AutoCloseable {
   }
   private void handle(SocketChannel channel) {
     ConnectionThrottle.LeaseHolder leaseHolder = new ConnectionThrottle.LeaseHolder();
+    boolean watched = false;
+    // Set once there is a session to own it; before that the finally releases directly.
+    Runnable released = null;
     InetAddress remote = null;
     Socket client = channel.socket();
     PacketTransport[] opened = new PacketTransport[1];
@@ -342,8 +345,19 @@ public final class MinecraftProxy implements AutoCloseable {
       // From here the client is a Player: plugins set it up first, and only then is anything decided
       // about it, so that a permission plugin already knows the player when maintenance asks.
       requestGameProfile(pipeline, playerAddress, handshake, messages);
-      try (PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
-          handshake, firstPacket, loginStart, playerAddress)) {
+      PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
+          handshake, firstPacket, loginStart, playerAddress);
+      // What this connection owes back whenever it ends, and once however many paths reach it: a
+      // watched session outlives this thread and releases itself, a session read on threads of its
+      // own is released by the finally below, and a session that stopped being watched part way
+      // through setting it up can reach both.
+      java.util.concurrent.atomic.AtomicBoolean releasedOnce = new java.util.concurrent.atomic.AtomicBoolean();
+      Runnable release = () -> {
+        if (releasedOnce.compareAndSet(false, true)) release(loginMessages, opened, client, leaseHolder);
+      };
+      player.onEnded(release);
+      released = release;
+      try {
         if (!claimIdentity(player, transport, protocol)) return;
         try {
           runtime.events().fire(new PlayerSetupEvent(player));
@@ -351,8 +365,16 @@ public final class MinecraftProxy implements AutoCloseable {
         } finally {
           // Whatever ended the login, plugins that set something up for this player hear it once;
           // every path that knows why has already said so, and this is for the ones that threw.
-          player.leave(LoginStatus.CANCELLED_BY_PROXY);
+          if (!player.watched()) player.leave(LoginStatus.CANCELLED_BY_PROXY);
         }
+      } finally {
+        if (!player.watched()) player.close();
+      }
+      if (player.watched()) {
+        // The player is online and read by the selector from here. Returning without the release
+        // below is the whole point: this thread is free, and the connection keeps none.
+        watched = true;
+        return;
       }
     } catch (IOException exception) { ConduitLog.warn("Connection closed: " + exception.getMessage()); }
     catch (RuntimeException | Error unexpected) {
@@ -364,14 +386,30 @@ public final class MinecraftProxy implements AutoCloseable {
       throw unexpected;
     }
     finally {
-      if (loginMessages[0] != null) loginMessages[0].close();
-      // Through the transport once there is one: it ends the output first, so a client still sending
-      // reads the last thing it was sent -- a disconnect's reason -- before the socket goes.
-      if (opened[0] != null) opened[0].close();
-      else try { client.close(); } catch (IOException ignored) { }
-      runtime.security().throttle().release(leaseHolder.lease);
-      connections.decrementAndGet();
+      if (!watched) {
+        if (released != null) released.run();
+        else release(loginMessages, opened, client, leaseHolder);
+      }
     }
+  }
+
+  /**
+   * Everything one connection holds, given back exactly once: its login buffers, its socket, its
+   * per-source throttle lease and its place in the connection count.
+   *
+   * <p>Called from {@code handle}'s finally for a connection that ends there -- a ping, a refused
+   * login, a session read on threads of its own -- and from the session itself for one the selector
+   * watches, which ends long after the thread that logged it in has gone.
+   */
+  private void release(ClientLoginMessages[] loginMessages, PacketTransport[] opened, Socket client,
+                       ConnectionThrottle.LeaseHolder leaseHolder) {
+    if (loginMessages[0] != null) loginMessages[0].close();
+    // Through the transport once there is one: it ends the output first, so a client still sending
+    // reads the last thing it was sent -- a disconnect's reason -- before the socket goes.
+    if (opened[0] != null) opened[0].close();
+    else try { client.close(); } catch (IOException ignored) { }
+    runtime.security().throttle().release(leaseHolder.lease);
+    connections.decrementAndGet();
   }
   /**
    * One player, one session: the last of the proxy's own checks, before any plugin hears of the

@@ -54,6 +54,33 @@ public final class ConnectionSelector implements AutoCloseable {
   private static final int WORKER_THREADS =
       Math.max(4, Runtime.getRuntime().availableProcessors() * 2);
 
+  /**
+   * How often a selector looks for a connection whose peer has stopped reading, and so also the
+   * longest it waits in {@code select}.
+   *
+   * <p>Well under the write deadline on purpose. Sampled at the deadline itself, a peer that is
+   * reading slowly but steadily is judged on whichever single instant the sweep happened to land
+   * on, and a full send buffer makes that instant look like a dead connection; sampled ten times
+   * within it, any byte that moves is seen and the connection is kept.
+   */
+  private static final long SWEEP_INTERVAL_MILLIS = 100;
+  private static final long SWEEP_INTERVAL_NANOS =
+      java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(SWEEP_INTERVAL_MILLIS);
+
+  /** How much a paused connection may have buffered before the sweep stops topping it up. */
+  private static final int PAUSED_READ_CEILING_BYTES = 64 * 1024;
+
+  private static final ThreadLocal<Boolean> IN_WORKER = new ThreadLocal<>();
+
+  /**
+   * Whether this thread is relaying a connection for the selector.
+   *
+   * <p>Work that would block for long -- opening a backend and logging in to it for a server switch
+   * -- must not run on one of these: the pool is bounded, and a handful of switches would take every
+   * thread that the rest of the players are relayed on. Such work goes to a thread of its own.
+   */
+  public static boolean onWorkerThread() { return IN_WORKER.get() != null; }
+
   private final Loop[] loops = new Loop[SELECTOR_THREADS];
   private final ExecutorService workers;
   private final AtomicInteger next = new AtomicInteger();
@@ -89,6 +116,8 @@ public final class ConnectionSelector implements AutoCloseable {
     final AtomicBoolean busy = new AtomicBoolean();
     final AtomicBoolean done = new AtomicBoolean();
     volatile SelectionKey key;
+    /** The connection this one's reads are written to, whose congestion pauses those reads. */
+    private volatile Registration sink;
 
     Registration(SocketChannel channel, ChannelReader reader, Handler handler, Loop loop) {
       this.channel = channel;
@@ -104,27 +133,59 @@ public final class ConnectionSelector implements AutoCloseable {
     public boolean hasCompleteFrame(int maximumFrameBytes) { return reader.hasCompleteFrame(maximumFrameBytes); }
     /** Takes whatever the channel has now: bytes added, 0 for none, -1 once the peer has hung up. */
     public int fill() throws IOException { return reader.fill(); }
+    /** Fills until a whole frame is buffered; false when the socket has no more to give just now. */
+    public boolean nextFrameReady(int maximumFrameBytes) throws IOException { return reader.nextFrameReady(maximumFrameBytes); }
+    /** Whether the peer has hung up and everything it sent has been read. */
+    public boolean ended() { return reader.ended(); }
+    /**
+     * Whether what this feeds is too far behind to be given more. A relay asks between packets and
+     * stops when it says yes: read on regardless and a flooding server is buffered here in full for
+     * a client reading a fraction of it, which is what the bound in ChannelWriter would then end
+     * the connection over.
+     */
+    public boolean sinkCongested() {
+      Registration downstream = sink;
+      return downstream != null && !downstream.done.get() && downstream.writer.congested();
+    }
     /** Sends what is queued before the socket is shut down, for a disconnect the peer is owed. */
     public void flushBeforeClose(long millis) { writer.flushBeforeClose(millis); }
+    /**
+     * Says where what is read here ends up, which is what makes backpressure work: while that
+     * connection's peer is behind, this one stops being read, and the operating system slows its
+     * own peer down rather than the difference piling up in the proxy. A switch points this at the
+     * backend the player moved to.
+     */
+    public void feeds(Registration sink) { this.sink = sink; }
+
     /** Takes the connection off the selector; the caller owns the channel from then on. */
     public void cancel() { finish(this, null); }
   }
 
+  /** Watches a connection that was never encrypted. */
+  public Registration register(SocketChannel channel, byte[] carriedPlaintext, Handler handler) throws IOException {
+    return register(channel, carriedPlaintext, null, handler);
+  }
+
   /**
-   * Watches a connection. The reader must already hold anything read off the socket before now, and
-   * the channel is put into non-blocking mode here.
+   * Watches a connection, from here on non-blocking.
+   *
+   * <p>{@code carriedPlaintext} is what the blocking stream being replaced had already taken off the
+   * socket and not yet handed out; without it those bytes would be lost at the changeover. {@code
+   * decrypt} is the cipher that stream was decrypting with, which the buffer carries on with from
+   * exactly where it left off.
    */
-  public Registration register(SocketChannel channel, ChannelReader reader, Handler handler) throws IOException {
+  public Registration register(SocketChannel channel, byte[] carriedPlaintext, javax.crypto.Cipher decrypt,
+                               Handler handler) throws IOException {
     if (!running) throw new IOException("the proxy is stopping");
     Loop loop = loops[Math.floorMod(next.getAndIncrement(), loops.length)];
+    ChannelReader reader = new ChannelReader(channel);
+    reader.seed(carriedPlaintext);
+    if (decrypt != null) reader.decryptWith(decrypt);
     channel.configureBlocking(false);
     Registration registration = new Registration(channel, reader, handler, loop);
     loop.add(registration);
     return registration;
   }
-
-  /** A reader for a channel that is about to be registered. */
-  public static ChannelReader readerFor(SocketChannel channel) { return new ChannelReader(channel); }
 
   private void finish(Registration registration, String reason) {
     if (!registration.done.compareAndSet(false, true)) return;
@@ -156,7 +217,13 @@ public final class ConnectionSelector implements AutoCloseable {
           registration.key = registration.channel.register(selector, SelectionKey.OP_READ, registration);
         } catch (ClosedChannelException gone) {
           finish(registration, "the connection closed before it was watched");
+          return;
         }
+        // Once, straight away, whether or not the socket has anything new. A connection arrives here
+        // with bytes the blocking stream had already taken off it, and those will never make the
+        // socket readable again: waiting for readability to start reading loses whatever the peer
+        // had already sent, which for a client that had its first packet in flight is the session.
+        hand(registration);
       });
     }
 
@@ -189,7 +256,7 @@ public final class ConnectionSelector implements AutoCloseable {
     @Override public void run() {
       while (alive) {
         try {
-          selector.select(1_000);
+          selector.select(SWEEP_INTERVAL_MILLIS);
           applyPending();
           if (!alive) break;
           var ready = selector.selectedKeys().iterator();
@@ -198,6 +265,7 @@ public final class ConnectionSelector implements AutoCloseable {
             ready.remove();
             dispatch(key);
           }
+          sweep();
         } catch (java.nio.channels.ClosedSelectorException | IOException failure) {
           if (alive) ConduitLog.warn("connection selector " + index + ": " + failure);
           if (!selector.isOpen()) break;
@@ -207,6 +275,50 @@ public final class ConnectionSelector implements AutoCloseable {
         }
       }
       try { selector.close(); } catch (IOException ignored) { }
+    }
+
+    private long sweptAt;
+
+    /**
+     * Looks over every watched connection for one whose peer has stopped taking bytes. Only this
+     * finds them: such a connection is written to by nobody once backpressure has paused what feeds
+     * it, and never becomes writable, so no event of its own is coming.
+     */
+    private void sweep() {
+      long now = System.nanoTime();
+      if (now - sweptAt < SWEEP_INTERVAL_NANOS) return;
+      sweptAt = now;
+      for (SelectionKey key : selector.keys()) {
+        if (!(key.attachment() instanceof Registration registration) || registration.done.get()) continue;
+        registration.writer.checkProgress();
+        String broken = registration.writer.failure();
+        if (broken != null) { finish(registration, broken); continue; }
+        checkPeerGone(key, registration);
+      }
+    }
+
+    /**
+     * Asks a paused connection whether its peer is still there.
+     *
+     * <p>A connection held back because what it feeds is congested has no read interest, so the
+     * selector would not report it readable even once its peer has hung up: the session would sit
+     * there until the write deadline noticed the other half. Reading it here is safe because a
+     * paused connection is in no worker's hands -- both the handing out and this run on the selector
+     * thread -- and it is bounded by refusing to do it once a fair amount is already buffered.
+     */
+    private void checkPeerGone(SelectionKey key, Registration registration) {
+      if (registration.busy.get() || !key.isValid()) return;
+      try {
+        if ((key.interestOps() & SelectionKey.OP_READ) != 0) return;
+      } catch (CancelledKeyException gone) {
+        return;
+      }
+      if (registration.reader.available() >= PAUSED_READ_CEILING_BYTES) return;
+      try {
+        if (registration.reader.fill() < 0) finish(registration, "the peer closed the connection");
+      } catch (IOException gone) {
+        finish(registration, gone.getMessage() == null ? gone.getClass().getSimpleName() : gone.getMessage());
+      }
     }
 
     private void applyPending() {
@@ -229,23 +341,38 @@ public final class ConnectionSelector implements AutoCloseable {
           if (broken != null) { finish(registration, broken); return; }
         }
         if (!key.isReadable()) return;
-        // Taken away for as long as a worker holds this connection, so the selector does not hand
-        // it out twice and the reader stays a single thread's.
-        key.interestOps(key.interestOps() & ~SelectionKey.OP_READ);
-        if (!registration.busy.compareAndSet(false, true)) return;
-        try {
-          workers.execute(() -> work(registration));
-        } catch (RejectedExecutionException stopping) {
-          registration.busy.set(false);
-          finish(registration, "the proxy is stopping");
-        }
+        hand(registration);
       } catch (CancelledKeyException gone) {
         finish(registration, "the connection closed");
       }
     }
 
+    /**
+     * Gives a connection to a worker. Its read interest is taken away first, so the selector does
+     * not hand the same connection to a second worker while the first is still in it and the reader
+     * stays a single thread's; the worker puts the interest back when it is done.
+     */
+    private void hand(Registration registration) {
+      SelectionKey key = registration.key;
+      if (key == null || !key.isValid() || registration.done.get()) return;
+      try {
+        key.interestOps(key.interestOps() & ~SelectionKey.OP_READ);
+      } catch (CancelledKeyException gone) {
+        finish(registration, "the connection closed");
+        return;
+      }
+      if (!registration.busy.compareAndSet(false, true)) return;
+      try {
+        workers.execute(() -> work(registration));
+      } catch (RejectedExecutionException stopping) {
+        registration.busy.set(false);
+        finish(registration, "the proxy is stopping");
+      }
+    }
+
     private void work(Registration registration) {
       String reason = null;
+      IN_WORKER.set(Boolean.TRUE);
       try {
         if (registration.done.get()) return;
         if (!registration.handler.onReadable()) reason = "the session ended";
@@ -255,15 +382,22 @@ public final class ConnectionSelector implements AutoCloseable {
         ConduitLog.error("connection worker", unexpected);
         reason = "an error while relaying";
       } finally {
+        IN_WORKER.remove();
         registration.busy.set(false);
       }
       if (reason != null) {
         finish(registration, reason);
         return;
       }
-      // Back on watch. Level-triggered, so anything that arrived while the worker ran is reported
-      // straight away rather than waiting for the next byte after it.
-      want(registration, SelectionKey.OP_READ);
+      // Back on watch, unless what this feeds is behind: then it waits until that peer has caught
+      // up. Level-triggered, so anything that arrived meanwhile is reported straight away rather
+      // than waiting for the next byte after it.
+      Registration sink = registration.sink;
+      if (sink != null && !sink.done.get() && sink.writer.congested()) {
+        sink.writer.resumeWhenDrained(() -> want(registration, SelectionKey.OP_READ));
+      } else {
+        want(registration, SelectionKey.OP_READ);
+      }
     }
   }
 }

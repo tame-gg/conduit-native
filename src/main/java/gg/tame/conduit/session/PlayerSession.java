@@ -614,16 +614,108 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (expectClientLoginAck) enteredConfiguration(initial);
     firstConnected = runtime.registered(initial.server().name()).orElse(null);
     if (configurationEntered == null) connectedToFirst();
+    this.joinedAtNanos = joined;
+    if (watch(initial)) return;
     Thread backendReader = gg.tame.conduit.network.SocketThreads.start(this::readBackend);
     try { readClient(); }
     finally {
-      closed = true;
-      players.remove(this);
-      gg.tame.conduit.metrics.ConduitMetrics.current().playerLeft(System.nanoTime() - joined);
-      leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
       backendReader.interrupt();
-      close();
+      ended();
     }
+  }
+
+  /** {@link System#nanoTime} at the join, for the played-for figure {@link #ended} reports. */
+  private volatile long joinedAtNanos;
+  /** Runs once the session is really over, whenever that turns out to be; see {@link #onEnded}. */
+  private volatile Runnable onEnded = () -> { };
+  private final java.util.concurrent.atomic.AtomicBoolean endedOnce = new java.util.concurrent.atomic.AtomicBoolean();
+  private volatile boolean watched;
+
+  /**
+   * What to run when the session ends, for a caller that cannot wait for it on the stack.
+   *
+   * <p>A watched session outlives the thread that logged it in -- that is the point -- so the
+   * connection slot, the throttle lease and the login's own buffers cannot be released by that
+   * thread's {@code finally} any more. They are released here instead, on whichever thread finds
+   * the session over.
+   */
+  public void onEnded(Runnable action) { this.onEnded = action; }
+
+  /** Whether the session is being watched rather than read by threads of its own. */
+  public boolean watched() { return watched; }
+
+  /**
+   * Hands both sockets to the selector, so that a player who is merely online costs no thread.
+   *
+   * <p>False when either end cannot be watched -- a transport built over plain streams, as the
+   * tests build one -- and the caller then reads them on two threads as it always did. Both or
+   * neither: half a relay watched and half on a thread is a shape nothing else here expects.
+   */
+  private boolean watch(BackendConnection initial) {
+    var selector = runtime.connectionSelector();
+    if (selector == null || !client.selectable() || !initial.selectable()) return false;
+    try {
+      var backendWatch = watchBackend(initial);
+      clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
+        @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
+        @Override public void onClosed(String reason) { ended(); }
+      });
+      // Each direction knows where its packets end up, so that a peer falling behind stops the
+      // other being read rather than being buffered here. A blocking write used to do this by
+      // itself, by holding the thread that was reading the other socket.
+      pair(clientWatch, backendWatch);
+      watched = true;
+      return true;
+    } catch (IOException failed) {
+      // Nothing is half-done that matters: a backend already registered is unregistered by the
+      // close that ending the session runs, and the session has not been handed out yet.
+      gg.tame.conduit.log.ConduitLog.warn("Could not watch " + username() + "'s connection, so it keeps"
+          + " a thread per socket: " + (failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage()));
+      return false;
+    }
+  }
+
+  /**
+   * Watches one backend. Registered per connection, so a switch simply stops watching the backend
+   * it replaced -- {@link BackendConnection#close()} does that -- and starts watching its own.
+   */
+  private gg.tame.conduit.network.ConnectionSelector.Registration watchBackend(BackendConnection connection) throws IOException {
+    var selector = runtime.connectionSelector();
+    if (selector == null || !watchable(connection)) return null;
+    return connection.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
+      @Override public boolean onReadable() throws IOException { return relayBufferedFromBackend(connection); }
+      @Override public void onClosed(String reason) {
+        // Only the live backend going means the session is over. One the player has already been
+        // switched off is expected to end, and says nothing about the player.
+        if (connection == backend && !closed) ended();
+      }
+    });
+  }
+
+  /** The client's watch, so a switch can point it at the backend the player moved to. */
+  private volatile gg.tame.conduit.network.ConnectionSelector.Registration clientWatch;
+
+  private static void pair(gg.tame.conduit.network.ConnectionSelector.Registration client,
+                           gg.tame.conduit.network.ConnectionSelector.Registration backend) {
+    if (client == null || backend == null) return;
+    client.feeds(backend);
+    backend.feeds(client);
+  }
+
+  private boolean watchable(BackendConnection connection) { return connection != null && connection.selectable(); }
+
+  /**
+   * The session is over, however it ended and on whatever thread noticed. Once, because a watched
+   * session has two connections that can each be the one to notice.
+   */
+  private void ended() {
+    if (!endedOnce.compareAndSet(false, true)) return;
+    closed = true;
+    players.remove(this);
+    gg.tame.conduit.metrics.ConduitMetrics.current().playerLeft(System.nanoTime() - joinedAtNanos);
+    leave(gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN);
+    close();
+    onEnded.run();
   }
   /**
    * Tells plugins the player is gone: once, the first time any path that ends the session gets here,
@@ -1297,50 +1389,67 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private void readClient() {
     clientReader = Thread.currentThread();
     try {
-      while (!closed) {
-        byte[] packet = client.read(configuration.maxFrameBytes());
-        keepAlive.read(clientState.state(), packet);
-        if (ProtocolTrace.enabled()) {
-          try {
-            ProtocolTrace.note("client packet " + clientState.state() + " id=0x"
-                + Integer.toHexString(PlayPackets.packetId(packet)) + " len=" + packet.length);
-          } catch (Exception ignored) { }
-        }
-        if (handleClientPacket(packet)) continue;
-        if (lifecycle.get() == SessionLifecycle.SWITCHING) {
-          BackendConnection target = switchingTarget;
-          if (target != null && clientState.state() == ConnectionState.CONFIGURATION) {
-            byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
-            if (outbound != null) target.writeUncompressed(outbound);
-          } else if (configuration.modded().packetQueueEnabled() && target != null) {
-            try {
-              switchQueue.enqueue(SwitchPacketQueue.Destination.NEW_BACKEND, packet,
-                  clientState.state() == ConnectionState.PLAY ? SwitchPacketQueue.ConnectionPhase.PLAY
-                      : SwitchPacketQueue.ConnectionPhase.CONFIGURATION);
-            } catch (SwitchPacketQueue.OverflowException overflow) {
-              throw new IOException(overflow.getMessage(), overflow);
-            }
-          }
-          continue;
-        }
-        if (awaitingBackendJoinGame.holding()) {
-          // Dropped rather than queued, deliberately. What a client sends in this window is its
-          // position and look for a world it is about to be moved out of, and the new backend will
-          // place it itself; replaying any of it afterwards would fight that. The client resends
-          // both within a tick of arriving.
-          continue;
-        }
-        BackendConnection target = switchingTarget != null ? switchingTarget : backend;
-        if (target != null) {
-          if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY, target)) {
-            continue;
-          }
-          byte[] outbound = towardBackend(clientState.state(), packet);
-          if (outbound != null) target.writeUncompressed(outbound);
-          flushTranslatorExtras(target);
+      while (!closed) relayFromClient(client.read(configuration.maxFrameBytes()));
+    } catch (IOException ignored) { }
+  }
+
+  /**
+   * Everything the client has sent that is already buffered, for a session the selector watches.
+   *
+   * <p>Only whole frames are read, so no read here waits: when the buffer runs out the worker
+   * returns and the connection goes back to being watched, costing nothing until the next packet.
+   * False ends the session.
+   */
+  private boolean relayBufferedFromClient() throws IOException {
+    if (closed) return false;
+    while (!closed && !client.sinkCongested() && client.nextFrameReady(configuration.maxFrameBytes())) {
+      relayFromClient(client.read(configuration.maxFrameBytes()));
+    }
+    return !closed && !client.ended();
+  }
+
+  /** One packet from the client, wherever it was read. */
+  private void relayFromClient(byte[] packet) throws IOException {
+    keepAlive.read(clientState.state(), packet);
+    if (ProtocolTrace.enabled()) {
+      try {
+        ProtocolTrace.note("client packet " + clientState.state() + " id=0x"
+            + Integer.toHexString(PlayPackets.packetId(packet)) + " len=" + packet.length);
+      } catch (Exception ignored) { }
+    }
+    if (handleClientPacket(packet)) return;
+    if (lifecycle.get() == SessionLifecycle.SWITCHING) {
+      BackendConnection target = switchingTarget;
+      if (target != null && clientState.state() == ConnectionState.CONFIGURATION) {
+        byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
+        if (outbound != null) target.writeUncompressed(outbound);
+      } else if (configuration.modded().packetQueueEnabled() && target != null) {
+        try {
+          switchQueue.enqueue(SwitchPacketQueue.Destination.NEW_BACKEND, packet,
+              clientState.state() == ConnectionState.PLAY ? SwitchPacketQueue.ConnectionPhase.PLAY
+                  : SwitchPacketQueue.ConnectionPhase.CONFIGURATION);
+        } catch (SwitchPacketQueue.OverflowException overflow) {
+          throw new IOException(overflow.getMessage(), overflow);
         }
       }
-    } catch (IOException ignored) { }
+      return;
+    }
+    if (awaitingBackendJoinGame.holding()) {
+      // Dropped rather than queued, deliberately. What a client sends in this window is its
+      // position and look for a world it is about to be moved out of, and the new backend will
+      // place it itself; replaying any of it afterwards would fight that. The client resends
+      // both within a tick of arriving.
+      return;
+    }
+    BackendConnection target = switchingTarget != null ? switchingTarget : backend;
+    if (target != null) {
+      if (!forwardPluginMessage(packet, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY, target)) {
+        return;
+      }
+      byte[] outbound = towardBackend(clientState.state(), packet);
+      if (outbound != null) target.writeUncompressed(outbound);
+      flushTranslatorExtras(target);
+    }
   }
   private boolean handleClientPacket(byte[] packet) throws IOException {
     int id = PlayPackets.packetId(packet);
@@ -1613,10 +1722,37 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         current = backend;
         if (closed || current == null) continue;
       }
-      try {
-        byte[] packet = current.readUncompressed();
+      if (!relayFromBackend(current)) return;
+    }
+  }
+
+  /**
+   * Everything this backend has sent that is already buffered, for a session the selector watches.
+   *
+   * <p>Registered per backend, so the question the blocking reader answered by waiting on {@code
+   * lock} -- which backend is the live one -- is answered by which registration woke: a frame from a
+   * backend a switch has replaced is read and dropped, as it always was. False ends the session.
+   */
+  private boolean relayBufferedFromBackend(BackendConnection current) throws IOException {
+    if (closed) return false;
+    while (!closed && !current.sinkCongested() && current.nextFrameReady()) {
+      if (!relayFromBackend(current)) return false;
+    }
+    if (current.ended()) {
+      // The backend hung up. Not the session ending by itself: a lost backend may be fallen back
+      // from, which is what the blocking reader's own IOException path decides.
+      if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return false;
+      handleBackendLoss(current);
+    }
+    return !closed;
+  }
+
+  /** One packet from a backend, wherever it was read. False ends the session. */
+  private boolean relayFromBackend(BackendConnection current) {
+    try {
+      byte[] packet = current.readUncompressed();
         synchronized (lock) {
-          if (lifecycle.get() != SessionLifecycle.CONNECTED || current != backend) continue;
+          if (lifecycle.get() != SessionLifecycle.CONNECTED || current != backend) return true;
         }
         ConnectionState backendState = current.state();
         if (backendState == ConnectionState.CONFIGURATION) current.login().onBackendPacket(packet, configuration.maxFrameBytes());
@@ -1627,16 +1763,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           gg.tame.conduit.log.ConduitLog.warn("Translation failed: " + translation.getMessage());
           ProtocolTrace.note("FAIL " + translation.getMessage());
           close();
-          return;
+          return false;
         }
         if (translated == null) {
           flushTranslatorExtras(current);
           // Via can cancel the backend's Join Game and emit the client's as an extra instead.
           resumeAfterSwitchedJoinGame(current);
-          continue;
+          return true;
         }
-        if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) continue;
-        if (relayedTransfer(translated)) continue;
+        if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) return true;
+        if (relayedTransfer(translated)) return true;
         // Everything below this point compensates for gaps in Conduit's own translators: a brand
         // the client never gets told, a command tree that has to be merged, a Configuration phase
         // one side of the pair does not have, a Play stream that must wait for the other side to
@@ -1646,13 +1782,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // engine its output goes to the client as it stands.
         if (viaEngine()) {
           if (isPlayDisconnect(translated)) {
-            if (kickedWhilePlaying(current, translated)) continue;
-            return;
+            if (kickedWhilePlaying(current, translated)) return true;
+            return false;
           }
           writeClient(translated, true);
           flushTranslatorExtras(current);
           resumeAfterSwitchedJoinGame(current);
-          continue;
+          return true;
         }
         var brand = BrandRewriter.rewrite(protocol, brandState(backendState), translated, configuration.maxFrameBytes());
         byte[] outbound;
@@ -1676,11 +1812,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         synthesizeConfigurationFinishIfNeeded(current.state());
         if (deferPlayUntilReady(translated, outbound, current.state())) {
           flushDeferredPlay();
-          continue;
+          return true;
         }
         if (isPlayDisconnect(translated)) {
-          if (kickedWhilePlaying(current, outbound)) continue;
-          return;
+          if (kickedWhilePlaying(current, outbound)) return true;
+          return false;
         }
         writeClient(outbound, true);
         flushTranslatorExtras(current);
@@ -1692,13 +1828,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // Only a first server's configuration is read here -- a switch reads its target's itself --
         // so the player is still being connected to it.
         refusedInConfiguration(refused, current.server());
-        return;
+        return false;
       } catch (IOException exception) {
-        if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return;
+        if (closed || lifecycle.get() != SessionLifecycle.CONNECTED) return false;
         ProtocolTrace.note("backend I/O: " + exception.getMessage());
         handleBackendLoss(current);
       }
-    }
+      return !closed;
   }
   /**
    * The backend the player is on sent them a Play Disconnect: what used to be relayed as it was,
@@ -1987,7 +2123,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public boolean transferTo(String name) {
     BackendServer server = selector.registry().get(name).orElse(null);
     if (server == null) return false;
-    if (Thread.currentThread() == clientReader) {
+    // A switch opens a socket and logs in to it, which is far too long to hold a relay thread: the
+    // client reader when there is one, and a worker off the bounded pool when the session is
+    // watched, where it would be holding a thread the other players are relayed on.
+    if (Thread.currentThread() == clientReader || gg.tame.conduit.network.ConnectionSelector.onWorkerThread()) {
       gg.tame.conduit.network.SocketThreads.start(() -> {
         if (runSwitch(server).successful()) Messages.connected(this, server.name());
         else Messages.unavailable(this, server.name());
@@ -2334,6 +2473,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // session's backend, which may be as quiet as it likes: left in place, that deadline read four
       // silent seconds on a limbo server as a lost backend and sent the player to the fallback.
       next.setReadTimeoutMillis(0);
+      // Watched before it is installed, so that nothing it sends after the commit can arrive while
+      // no one is reading it. Its own registration, so the backend this replaces stops being read
+      // the moment it is closed, without either knowing about the other.
+      if (watched) pair(clientWatch, watchBackend(next));
       synchronized (lock) {
         backend = next;
         switchingTarget = null;
@@ -2664,5 +2807,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // After the socket, which ends any display write still stuck on a client that stopped reading.
     display.close();
     resourcePacks.close();
+    // A watched session has no thread of its own whose return means it is over, so a close from
+    // anywhere -- a plugin disconnecting the player, a graceful shutdown, a newer login displacing
+    // this one -- is the end of it, and what the connection owes back is owed from here. ended()
+    // calls close() in turn, which is why it may only run once.
+    if (watched) ended();
   }
 }
