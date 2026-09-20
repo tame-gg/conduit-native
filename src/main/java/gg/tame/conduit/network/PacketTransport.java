@@ -37,7 +37,9 @@ public final class PacketTransport {
   public void setReadTimeoutMillis(int millis) throws IOException {
     readTimeoutMillis = millis;
     if (millis == 0) readDeadline = 0;
-    if (socket != null) socket.setSoTimeout(millis);
+    // A socket on the selector is non-blocking and has no read to bound: a worker reads it only
+    // when a whole frame is already there, and never waits on it.
+    if (socket != null && attached == null) socket.setSoTimeout(millis);
   }
   /**
    * Every read from now until {@code setReadTimeoutMillis(0)} has to be over within {@code millis},
@@ -75,6 +77,12 @@ public final class PacketTransport {
    */
   public boolean hungUp() {
     if (socket == null) return false;
+    ConnectionSelector.Registration registration = attached;
+    if (registration != null) {
+      // No blocking read to ask with, and none needed: the buffer is fed from the channel, so an
+      // end of stream has already been seen by the fill that found it.
+      try { return registration.fill() < 0; } catch (IOException gone) { return true; }
+    }
     try {
       // Through the field the login deadline reads too: set on the socket alone, the 1 ms was
       // replaced by the whole read timeout before the read, and every login waited that long.
@@ -107,7 +115,55 @@ public final class PacketTransport {
     Cipher decrypt = AesCfb8.decryptor(sharedSecret);
     input = CipherStreams.decrypting(input, decrypt);
     output = CipherStreams.encrypting(output, encrypt);
+    // Kept because the buffer that replaces this stream on the selector has to decrypt for itself:
+    // the frame length is inside the encrypted stream, so ciphertext cannot be asked whether it
+    // holds a whole frame. The same cipher, carrying on from exactly where this stream left it.
+    this.decryptCipher = decrypt;
     state = EncryptionState.ENCRYPTED;
+  }
+  private Cipher decryptCipher;
+  private volatile ConnectionSelector.Registration attached;
+
+  /**
+   * Moves this connection onto the selector: from a thread parked in a blocking read to a socket
+   * watched with everyone else's, read by a worker only when it has something to say.
+   *
+   * <p>Null when there is no channel behind the socket -- a transport built over plain streams, as
+   * the tests build one -- and the caller then keeps whatever it was doing. Everything the stream
+   * had already taken off the socket moves into the buffer, so no byte is lost at the changeover,
+   * and the deadline goes away with the blocking read it used to bound.
+   */
+  public ConnectionSelector.Registration attachTo(ConnectionSelector selector, ConnectionSelector.Handler handler) throws IOException {
+    java.nio.channels.SocketChannel channel = socket == null ? null : socket.getChannel();
+    if (channel == null) return null;
+    readDeadline = 0;
+    ChannelReader reader = new ChannelReader(channel);
+    // Plaintext the old chain is holding: at most what the socket had when it was last asked, plus
+    // the one byte hungUp() may have pushed back.
+    int buffered = input.available();
+    if (buffered > 0) reader.seed(input.readNBytes(buffered));
+    if (decryptCipher != null) reader.decryptWith(decryptCipher);
+    ConnectionSelector.Registration registration = selector.register(channel, reader, handler);
+    synchronized (writeLock) {
+      // Whatever the old buffered stream still holds goes out before the new one takes over.
+      output.flush();
+      this.input = reader;
+      this.output = registration.output();
+    }
+    this.attached = registration;
+    return registration;
+  }
+
+  /** Whether a whole frame is buffered, for a caller that must not block; true off the selector. */
+  public boolean hasCompleteFrame(int maximumFrameBytes) {
+    ConnectionSelector.Registration registration = attached;
+    return registration == null || registration.hasCompleteFrame(maximumFrameBytes);
+  }
+
+  /** Takes whatever the socket has now, for a worker draining a connection; 0 off the selector. */
+  public int fill() throws IOException {
+    ConnectionSelector.Registration registration = attached;
+    return registration == null ? 0 : registration.fill();
   }
   public InputStream input() { return input; }
   /** The port the peer connected from, or 0 when there is no socket. */
@@ -156,6 +212,13 @@ public final class PacketTransport {
     state = EncryptionState.CLOSED;
     // Already closed, or already ending with its close to follow: a second close must not cut that short.
     if (socket == null || socket.isClosed() || socket.isOutputShutdown()) return;
+    ConnectionSelector.Registration registration = attached;
+    if (registration != null) {
+      // The disconnect the peer is owed is still queued: on the selector a write returns before the
+      // bytes leave, so shutting the output down now would take the reason with it.
+      registration.flushBeforeClose(LINGER_MILLIS);
+      registration.cancel();
+    }
     try {
       socket.shutdownOutput();
       LINGER.schedule(() -> { try { socket.close(); } catch (IOException ignored) { } }, LINGER_MILLIS, java.util.concurrent.TimeUnit.MILLISECONDS);
