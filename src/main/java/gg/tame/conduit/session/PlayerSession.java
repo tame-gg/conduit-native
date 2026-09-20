@@ -664,7 +664,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     var backendWatch = watchBackend(initial);
     clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
       @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
-      @Override public void onClosed(String reason) { ended(); }
+      @Override public void onClosed(String reason, boolean fault) {
+        // The only account of why this player was dropped. Thrown away, a relay that failed -- a
+        // peer that stopped reading, a translator that threw, a worker that took an error -- took
+        // the player off the proxy and left nothing in the log to say so; a session read on a
+        // thread of its own at least had its IOException named where the login was logged.
+        if (fault) gg.tame.conduit.log.ConduitLog.warn(origin() + ": connection closed: " + reason);
+        else gg.tame.conduit.log.ConduitLog.debug(origin() + ": connection closed: " + reason);
+        ended();
+      }
     });
     // Publish both transports before either callback can use them. A failed attachment propagates
     // to login cleanup: once a channel is non-blocking, falling back to blocking readers is unsafe.
@@ -687,10 +695,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (selector == null || !watchable(connection)) return null;
     return connection.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
       @Override public boolean onReadable() throws IOException { return relayBufferedFromBackend(connection); }
-      @Override public void onClosed(String reason) {
-        // Only the live backend going means the session is over. One the player has already been
-        // switched off is expected to end, and says nothing about the player.
-        if (connection == backend && !closed) ended();
+      @Override public void onClosed(String reason, boolean fault) {
+        // A backend the player has already been switched off is expected to end, and says nothing
+        // about the player -- but why it ended is still worth a line when the proxy gave up on it.
+        boolean live = connection == backend && !closed;
+        String said = origin() + ": backend '" + connection.server().name() + "' closed: " + reason;
+        if (fault) gg.tame.conduit.log.ConduitLog.warn(said);
+        else gg.tame.conduit.log.ConduitLog.debug(said);
+        // Only the live backend going means the session is over.
+        if (live) ended();
       }
     });
   }

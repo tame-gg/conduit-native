@@ -102,8 +102,14 @@ public final class ConnectionSelector implements AutoCloseable {
      * Returning false, or throwing, unregisters it; the handler is what closes it.
      */
     boolean onReadable() throws IOException;
-    /** The peer hung up, the channel failed, or the proxy is stopping. Called once. */
-    void onClosed(String reason);
+    /**
+     * The peer hung up, the channel failed, or the proxy is stopping. Called once.
+     *
+     * <p>{@code fault} tells the two apart: false is a connection ending the way connections do --
+     * the peer hung up, the session said it was over, the proxy is stopping -- and true is one the
+     * proxy gave up on, where {@code reason} is the only account of why a player was dropped.
+     */
+    void onClosed(String reason, boolean fault);
   }
 
   /** A registered connection: the one handle a session keeps to take itself off the selector again. */
@@ -163,7 +169,7 @@ public final class ConnectionSelector implements AutoCloseable {
     public void feeds(Registration sink) { this.sink = sink; }
 
     /** Takes the connection off the selector; the caller owns the channel from then on. */
-    public void cancel() { finish(this, null); }
+    public void cancel() { finish(this, null, false); }
   }
 
   /** Prepares an unencrypted connection; {@link Registration#start()} enables callbacks. */
@@ -192,7 +198,7 @@ public final class ConnectionSelector implements AutoCloseable {
     return registration;
   }
 
-  private void finish(Registration registration, String reason) {
+  private void finish(Registration registration, String reason, boolean fault) {
     if (!registration.done.compareAndSet(false, true)) return;
     // The session is told first and the key cancelled afterwards. Cancelling goes through the
     // selector's change queue, and waking a selector is a syscall -- on Windows a write to a socket
@@ -202,7 +208,7 @@ public final class ConnectionSelector implements AutoCloseable {
     // something a disconnect waits behind. In a finally because onClosed re-enters here by way of
     // the transport's own cancel(), which returns at the line above and must not leave the key.
     try {
-      if (reason != null) registration.handler.onClosed(reason);
+      if (reason != null) registration.handler.onClosed(reason, fault);
     } finally {
       registration.loop.remove(registration);
     }
@@ -232,7 +238,7 @@ public final class ConnectionSelector implements AutoCloseable {
         try {
           registration.key = registration.channel.register(selector, SelectionKey.OP_READ, registration);
         } catch (ClosedChannelException gone) {
-          finish(registration, "the connection closed before it was watched");
+          finish(registration, "the connection closed before it was watched", false);
           return;
         }
         // Once, straight away, whether or not the socket has anything new. A connection arrives here
@@ -308,7 +314,7 @@ public final class ConnectionSelector implements AutoCloseable {
         if (!(key.attachment() instanceof Registration registration) || registration.done.get()) continue;
         registration.writer.checkProgress();
         String broken = registration.writer.failure();
-        if (broken != null) { finish(registration, broken); continue; }
+        if (broken != null) { finish(registration, broken, true); continue; }
         checkPeerGone(key, registration);
       }
     }
@@ -331,9 +337,9 @@ public final class ConnectionSelector implements AutoCloseable {
       }
       if (registration.reader.available() >= PAUSED_READ_CEILING_BYTES) return;
       try {
-        if (registration.reader.fill() < 0) finish(registration, "the peer closed the connection");
+        if (registration.reader.fill() < 0) finish(registration, "the peer closed the connection", false);
       } catch (IOException gone) {
-        finish(registration, gone.getMessage() == null ? gone.getClass().getSimpleName() : gone.getMessage());
+        finish(registration, gone.getMessage() == null ? gone.getClass().getSimpleName() : gone.getMessage(), true);
       }
     }
 
@@ -354,12 +360,12 @@ public final class ConnectionSelector implements AutoCloseable {
           registration.writer.onWritable();
           if (registration.writer.drained()) key.interestOps(key.interestOps() & ~SelectionKey.OP_WRITE);
           String broken = registration.writer.failure();
-          if (broken != null) { finish(registration, broken); return; }
+          if (broken != null) { finish(registration, broken, true); return; }
         }
         if (!key.isReadable()) return;
         hand(registration);
       } catch (CancelledKeyException gone) {
-        finish(registration, "the connection closed");
+        finish(registration, "the connection closed", false);
       }
     }
 
@@ -374,7 +380,7 @@ public final class ConnectionSelector implements AutoCloseable {
       try {
         key.interestOps(key.interestOps() & ~SelectionKey.OP_READ);
       } catch (CancelledKeyException gone) {
-        finish(registration, "the connection closed");
+        finish(registration, "the connection closed", false);
         return;
       }
       if (!registration.busy.compareAndSet(false, true)) return;
@@ -382,27 +388,32 @@ public final class ConnectionSelector implements AutoCloseable {
         workers.execute(() -> work(registration));
       } catch (RejectedExecutionException stopping) {
         registration.busy.set(false);
-        finish(registration, "the proxy is stopping");
+        finish(registration, "the proxy is stopping", false);
       }
     }
 
     private void work(Registration registration) {
       String reason = null;
+      // A relay that returned false is a session ending on its own terms; a relay that threw is
+      // the proxy giving up on the connection, and the reason is the only account of why.
+      boolean fault = false;
       IN_WORKER.set(Boolean.TRUE);
       try {
         if (registration.done.get()) return;
         if (!registration.handler.onReadable()) reason = "the session ended";
       } catch (IOException gone) {
         reason = gone.getMessage() == null ? gone.getClass().getSimpleName() : gone.getMessage();
+        fault = true;
       } catch (RuntimeException unexpected) {
         ConduitLog.error("connection worker", unexpected);
         reason = "an error while relaying";
+        fault = true;
       } finally {
         IN_WORKER.remove();
         registration.busy.set(false);
       }
       if (reason != null) {
-        finish(registration, reason);
+        finish(registration, reason, fault);
         return;
       }
       // Back on watch, unless what this feeds is behind: then it waits until that peer has caught
