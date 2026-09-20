@@ -707,6 +707,35 @@ Steady play now coalesces TCP writes (`writeUnflushed` + flush when the opposite
 
 Event-loop utilization is **not applicable**: Conduit uses blocking sockets on virtual threads (platform threads on Windows, because of JDK-8334574; see `SocketThreads`), not a shared NIO selector. Mojang HTTPS runs on the connecting thread before Play.
 
+### How many players one instance holds
+
+A session reads each of its two sockets on a thread of its own. On Linux those are virtual threads and
+cost heap; on Windows they are platform threads, because of JDK-8334574, and cost an operating-system
+thread each. So the same session costs about forty-five kilobytes on one platform and two OS threads on
+the other, and that is the whole difference between the two rows below.
+
+`scripts/load-probe.ps1` measures it: N fake players hold real 1.8.9 sessions on the DIRECT path, each
+answering a keep-alive so both relay directions are known to be moving. Held twenty seconds, `-Xss512k`:
+
+| Players | OS threads (Linux) | Heap (Linux) | OS threads (Windows) | Heap (Windows) |
+|--:|--:|--:|--:|--:|
+| 100 | 20 | 48 MiB | 228 | 47 MiB |
+| 500 | 21 | 64 MiB | 1029 | 63 MiB |
+| 1000 | 19 | 92 MiB | 2027 | 85 MiB |
+
+Every connection stayed healthy in all six runs, Windows included: two thousand threads is expensive, not
+broken. Measured on a 6-core Ubuntu 24.04 machine (kernel 6.8, Temurin 25, peak RSS 440 MiB for the whole
+run) and a 12-core Windows 11 machine (Temurin 25).
+
+**Run more than about 500 players on Linux.** Windows is fine for development and for a small server, but
+its thread count grows with the player count and nothing in Conduit's configuration changes that -- it is
+the workaround for a JDK bug, not a tuning choice. A Windows instance past a thousand players is spending
+more on thread stacks and on scheduling them than on the proxying. The ceiling is not a hard limit and
+Conduit will not refuse the connections; it is where the cost stops being worth it.
+
+Raising the ceiling on Windows means reading connections on a selector instead of on a thread each, which
+is a change to the relay rather than a setting. Until that exists, Linux is the answer.
+
 Metrics (quiet; packet tracing remains `-Dconduit.trace=true`):
 
 `players`, `backends`, packets/sec, bytes/sec, authentications, backend connect ms, switch ms, decode/encode failures,
