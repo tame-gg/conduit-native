@@ -684,6 +684,12 @@ public final class LoginLifecycleTests {
           try { release.await(10, TimeUnit.SECONDS); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
         }
       };
+      // Both sessions above have been closed, but a session ends on whichever thread finds it over,
+      // so the count is only settled once their disconnects have arrived. Wait for them: a snapshot
+      // taken before they land makes the check below count one of them as the displaced login.
+      require(waitFor(() -> proxy.recorder.of(PlayerDisconnectEvent.class).size()
+              == proxy.recorder.of(PlayerSetupEvent.class).size(), 10_000),
+          "both earlier sessions ended, got " + proxy.recorder.names());
       int ended = proxy.recorder.of(PlayerDisconnectEvent.class).size();
       try (Client slow = Client.open(proxy.port(), "Slow")) {
         require(holding.await(10, TimeUnit.SECONDS), "the first login is held in PlayerLoginEvent");
