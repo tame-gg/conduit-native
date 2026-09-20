@@ -189,7 +189,14 @@ public final class ConnectionSelector implements AutoCloseable {
   public Registration register(SocketChannel channel, byte[] carriedPlaintext, javax.crypto.Cipher decrypt,
                                Handler handler) throws IOException {
     if (!running) throw new IOException("the proxy is stopping");
-    Loop loop = loops[Math.floorMod(next.getAndIncrement(), loops.length)];
+    Loop loop = null;
+    // Round robin, but never onto a loop that has stopped: a connection handed to one is watched by
+    // nobody, which is worse than the connection being refused here.
+    for (int tried = 0; tried < loops.length; tried++) {
+      Loop candidate = loops[Math.floorMod(next.getAndIncrement(), loops.length)];
+      if (!candidate.dead) { loop = candidate; break; }
+    }
+    if (loop == null) throw new IOException("every connection selector has stopped");
     ChannelReader reader = new ChannelReader(channel);
     reader.seed(carriedPlaintext);
     if (decrypt != null) reader.decryptWith(decrypt);
@@ -226,6 +233,8 @@ public final class ConnectionSelector implements AutoCloseable {
     private final Selector selector;
     private final Queue<Runnable> pending = new ArrayDeque<>();
     private volatile boolean alive = true;
+    /** Set when the loop ended on something it could not carry on through; see {@link #run()}. */
+    volatile boolean dead;
 
     Loop(int index) throws IOException {
       this.index = index;
@@ -294,6 +303,19 @@ public final class ConnectionSelector implements AutoCloseable {
         } catch (RuntimeException unexpected) {
           // One connection's accounting must not end the loop that serves all of them.
           ConduitLog.error("connection selector " + index, unexpected);
+        } catch (Throwable fatal) {
+          // An Error -- the heap gone, a stack overflown -- is not something to carry on through,
+          // and a loop that has taken one is not safely resumable: whatever it was in the middle of
+          // is half done. It is not something to die quietly of either, which is what this did.
+          // Every connection this loop watched now has no dispatch, no congestion sweep and no
+          // write deadline, and their sessions will never end by themselves, so it says so at ERROR
+          // and marks itself dead rather than leaving the proxy to look healthy while half of its
+          // players are being served by nobody.
+          alive = false;
+          dead = true;
+          ConduitLog.error("connection selector " + index + " stopped: the connections it watched are"
+              + " no longer being read, and the proxy should be restarted", fatal);
+          break;
         }
       }
       try { selector.close(); } catch (IOException ignored) { }
@@ -406,6 +428,13 @@ public final class ConnectionSelector implements AutoCloseable {
         fault = true;
       } catch (RuntimeException unexpected) {
         ConduitLog.error("connection worker", unexpected);
+        reason = "an error while relaying";
+        fault = true;
+      } catch (Throwable fatal) {
+        // As above: an Error here used to leave the pool to replace the thread and say nothing,
+        // and the connection it was relaying kept its read interest off for ever -- watched,
+        // counted as a player, and read by nobody. Named, and then ended like any other failure.
+        ConduitLog.error("connection worker", fatal);
         reason = "an error while relaying";
         fault = true;
       } finally {
