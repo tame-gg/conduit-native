@@ -137,6 +137,18 @@ try {
   # The test tree is left out: this is a jar of Conduit, not of its harness.
   Copy-Item (Join-Path $classes "*") $stage -Recurse -Force
   Remove-Item (Join-Path $stage "gg\tame\conduit\tests") -Recurse -Force -ErrorAction SilentlyContinue
+  # Things out/ and the unpacked jars leave behind that a release has no use for. The source lists
+  # and the class-path argument file are how test.ps1 talks to javac on a shell with an 8191-character
+  # limit, and they name this machine's paths; command-tree-776.bin is a test fixture out of
+  # src/test/resources; and META-INF/INDEX.LIST is one input jar's index of its own contents, which
+  # after a merge describes a jar that no longer exists and which the JVM would believe.
+  foreach ($leftover in @(
+      "classpath-args.txt",
+      "*-sources.txt",
+      "command-tree-776.bin",
+      "META-INF\INDEX.LIST")) {
+    Remove-Item (Join-Path $stage $leftover) -Force -ErrorAction SilentlyContinue
+  }
   # The jar may travel on its own, so it carries Conduit's license and the third-party notices, and
   # a first start writes them beside itself (ConfigBootstrap). Under META-INF/conduit/ rather than
   # META-INF/ directly: a bare META-INF/LICENSE is a name half of Maven Central also uses, and a
