@@ -58,8 +58,17 @@ final class ChannelReader extends InputStream {
   /** The cipher the login negotiated, from the moment the connection moves onto the selector. */
   void decryptWith(Cipher cipher) { this.decrypt = cipher; }
 
-  /** Whether the peer has closed its end and everything it sent has been read. */
-  boolean ended() { return ended && head == tail; }
+  /**
+   * Whether the peer has closed its end and nothing more can be relayed from what it sent.
+   *
+   * <p>Whole frames still in the buffer are the peer's last words, and a relay that stopped because
+   * its sink was congested comes back for them, so they keep the connection. A part of a frame does
+   * not: the rest of it was never sent and never will be. Counted as a reason to stay -- which
+   * {@code head == tail} did -- those few bytes left a connection that is readable for ever at end
+   * of stream being handed to a worker that could make no progress, over and over, and a session
+   * that never ended.
+   */
+  boolean ended(int maximumFrameBytes) { return ended && !hasCompleteFrame(maximumFrameBytes); }
 
   /**
    * Takes whatever the channel has right now. Returns the number of bytes added, 0 when the channel

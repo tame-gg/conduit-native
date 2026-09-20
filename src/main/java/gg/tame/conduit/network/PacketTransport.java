@@ -177,10 +177,10 @@ public final class PacketTransport {
     return registration != null && registration.sinkCongested();
   }
 
-  /** Whether the peer has hung up and everything it sent has been read. */
-  public boolean ended() {
+  /** Whether the peer has hung up and nothing more can be relayed from what it sent. */
+  public boolean ended(int maximumFrameBytes) {
     ConnectionSelector.Registration registration = attached;
-    return registration != null && registration.ended();
+    return registration != null && registration.ended(maximumFrameBytes);
   }
 
   /** Takes whatever the socket has now, for a worker draining a connection; 0 off the selector. */

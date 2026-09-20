@@ -1405,7 +1405,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     while (!closed && !client.sinkCongested() && client.nextFrameReady(configuration.maxFrameBytes())) {
       relayFromClient(client.read(configuration.maxFrameBytes()));
     }
-    return !closed && !client.ended();
+    return !closed && !client.ended(configuration.maxFrameBytes());
   }
 
   /** One packet from the client, wherever it was read. */

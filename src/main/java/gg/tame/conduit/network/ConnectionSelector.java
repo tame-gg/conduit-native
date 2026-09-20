@@ -135,8 +135,8 @@ public final class ConnectionSelector implements AutoCloseable {
     public int fill() throws IOException { return reader.fill(); }
     /** Fills until a whole frame is buffered; false when the socket has no more to give just now. */
     public boolean nextFrameReady(int maximumFrameBytes) throws IOException { return reader.nextFrameReady(maximumFrameBytes); }
-    /** Whether the peer has hung up and everything it sent has been read. */
-    public boolean ended() { return reader.ended(); }
+    /** Whether the peer has hung up and nothing more can be relayed from what it sent. */
+    public boolean ended(int maximumFrameBytes) { return reader.ended(maximumFrameBytes); }
     /**
      * Whether what this feeds is too far behind to be given more. A relay asks between packets and
      * stops when it says yes: read on regardless and a flooding server is buffered here in full for
@@ -189,8 +189,18 @@ public final class ConnectionSelector implements AutoCloseable {
 
   private void finish(Registration registration, String reason) {
     if (!registration.done.compareAndSet(false, true)) return;
-    registration.loop.remove(registration);
-    if (reason != null) registration.handler.onClosed(reason);
+    // The session is told first and the key cancelled afterwards. Cancelling goes through the
+    // selector's change queue, and waking a selector is a syscall -- on Windows a write to a socket
+    // pair -- which was sitting in the path between noticing a peer had gone and the session
+    // hearing of it. The registration is inert either way from the moment done is set, and the
+    // close that onClosed runs invalidates the key on its own; this only stops the cancel being
+    // something a disconnect waits behind. In a finally because onClosed re-enters here by way of
+    // the transport's own cancel(), which returns at the line above and must not leave the key.
+    try {
+      if (reason != null) registration.handler.onClosed(reason);
+    } finally {
+      registration.loop.remove(registration);
+    }
   }
 
   @Override public void close() {

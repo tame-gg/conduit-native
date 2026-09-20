@@ -185,10 +185,10 @@ public final class BackendConnection implements AutoCloseable {
     return registration != null && registration.sinkCongested();
   }
 
-  /** Whether the backend has hung up and everything it sent has been read. */
+  /** Whether the backend has hung up and nothing more can be relayed from what it sent. */
   public boolean ended() {
     gg.tame.conduit.network.ConnectionSelector.Registration registration = attached;
-    return registration != null && registration.ended();
+    return registration != null && registration.ended(maxFrameBytes);
   }
 
   /** Takes whatever the socket has now: bytes added, 0 for none, -1 once the backend has hung up. */
