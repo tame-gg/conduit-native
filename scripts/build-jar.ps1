@@ -68,6 +68,16 @@ try {
   }
   $runtime = @(Get-ChildItem (Join-Path $lib "via") -Filter *.jar |
     Where-Object { $_.Name -notlike "*-sources.jar" }) + @($velocityRuntime)
+  # Guava is the one library both halves want, so build.gradle.kts excludes it from velocityRuntime
+  # and the Via set is where it comes from -- at the newer version, which is the one both ask for.
+  # That arrangement is invisible from either side, so it is stated here: if lib/via ever stops
+  # carrying Guava, velocity-api and Velocity plugins lose it with no other warning.
+  $guava = @($runtime | Where-Object { $_.Name -like "guava-*.jar" })
+  if ($guava.Count -ne 1) {
+    throw ("expected exactly one Guava in lib/via and found $($guava.Count). velocityRuntime in " +
+      "build.gradle.kts excludes com.google.guava on the understanding that the Via set supplies it, " +
+      "so without it velocity-api and every Velocity plugin lose Guava. Run scripts/fetch-via.ps1.")
+  }
   # Two versions of one library would leave whichever was unpacked last shadowing the other.
   $seen = @{}
   foreach ($archive in $runtime) {
@@ -160,7 +170,6 @@ try {
     "net/kyori/adventure/text/minimessage/MiniMessage.class",
     "net/kyori/adventure/text/serializer/ansi/ANSIComponentSerializer.class",
     "com/mojang/brigadier/CommandDispatcher.class",
-    "com/google/common/collect/ImmutableList.class",
     "com/google/gson/Gson.class",
     "com/google/inject/Injector.class",
     "org/slf4j/Logger.class",
@@ -176,6 +185,13 @@ try {
   )
   $missing = @($required | Where-Object { $entries -notcontains $_ })
   if ($missing.Count -gt 0) { throw "the jar is missing what Velocity plugins need at run time: $($missing -join ', ')" }
+  # Guava again, on the finished jar rather than on the list of inputs: velocity-api's own signatures
+  # return Guava types, so a jar without it loads no Velocity plugin at all. It is checked separately
+  # from the list above because nothing in the Velocity half of the build brings it.
+  if ($entries -notcontains "com/google/common/collect/ImmutableList.class") {
+    throw ("the jar has no Guava. $($guava.Name) went in, so something dropped it on the way -- " +
+      "velocity-api returns Guava types and no Velocity plugin will load without it.")
+  }
   # Velocity's Brigadier, not Mojang's: only the fork has what velocity-api's own classes call.
   $brigadier = & (Join-Path $jdk "javap.exe") -cp $jar com.mojang.brigadier.builder.ArgumentBuilder
   if (-not ($brigadier -match "requiresWithContext")) { throw "the jar's Brigadier is not Velocity's fork" }
