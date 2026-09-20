@@ -56,8 +56,9 @@ each GPL component. See docs/LICENSING_VIA.md.
 GPL-3.0-or-later (text in LICENSE)
   viaversion-common 5.11.0       Copyright (C) 2016-2026 ViaVersion and contributors
                                  https://github.com/ViaVersion/ViaVersion/tree/5.11.0
-                                 (the jar also contains the MIT api classes, and it shades
-                                 Gson and SnakeYAML, both Apache-2.0, and ViaNBT, which is MIT)
+                                 (the jar also contains the MIT api classes, and it shades, under
+                                 com/viaversion/viaversion/libs/: Gson, SnakeYAML and fastutil,
+                                 all Apache-2.0, and ViaNBT and MCStructs, both MIT)
   viabackwards-common 5.11.0     Copyright (C) 2016-2026 ViaVersion and contributors
                                  https://github.com/ViaVersion/ViaBackwards/tree/5.11.0
   viarewind-common 4.1.3         Copyright (C) 2018-2026 ViaVersion and contributors
@@ -70,19 +71,29 @@ MIT (text in section 3)
                                  (the api/ directory of ViaVersion; scripts only)
   ViaNBT (shaded by Via)         Copyright (C) 2013-2017 Steveice10,
                                  Copyright (C) 2021-2024 ViaVersion and contributors
+  MCStructs (shaded by Via)      Copyright (c) 2022 Lenni0451,
+                                 https://github.com/Lenni0451/MCStructs
+                                 (also as mcstructs/text/charwidths.bin, a data file of its)
   com.seedfinding mc_core 1.210.0, mc_biome 1.171.1, mc_noise 1.171.1, mc_seed 1.171.2,
   mc_math 1.171.0 (ViaLegacy dependencies; Gradle only)
                                  Copyright (c) 2020-2021 KaptainWutax, Neil
                                  https://github.com/SeedFinding
-  checker-qual 3.41.0            Copyright 2004-present by the Checker Framework developers
+  checker-qual 3.41.0 (Gradle), 3.42.0 (velocity-runtime lock, and the one in the jar)
+                                 Copyright 2004-present by the Checker Framework developers
 
 Apache-2.0 (text in section 3)
   netty 4.1.118.Final            The Netty Project, https://github.com/netty/netty
-                                 (see NOTICE.txt there). Gradle bundles netty-all and its
-                                 modules; the scripts fetch six core modules.
+                                 Copyright 2014 The Netty Project. Its NOTICE, which Apache-2.0
+                                 section 4(d) requires to travel with it, is in section 4 below:
+                                 the module jars on Maven Central do not carry one, so it is kept
+                                 here rather than under META-INF/licenses/ in the jar. Gradle
+                                 bundles netty-all and its modules; the scripts fetch six core
+                                 modules, which shade JCTools (Apache-2.0, https://jctools.github.io)
+                                 under io/netty/util/internal/shaded/org/jctools/.
   guava 33.3.1-jre, failureaccess 1.0.2, listenablefuture 9999.0
                                  Copyright (C) The Guava Authors
-  error_prone_annotations 2.23.0 Copyright The Error Prone Authors
+  error_prone_annotations 2.23.0 (Gradle), 2.27.0 (velocity-runtime lock, and the one in the jar)
+                                 Copyright The Error Prone Authors
   jsr305 3.0.2                   JSR-305 annotations (com.google.code.findbugs)
   fastutil 8.5.15                Sebastiano Vigna, https://github.com/vigna/fastutil
   Gson, SnakeYAML                (shaded inside the ViaVersion jars)
@@ -94,7 +105,9 @@ scripts/fetch-velocity-compat.ps1 fetches the following into lib/, for the
 Velocity compatibility layer. scripts/build-jar.ps1 merges them, with the Via
 jars above, into conduit-<version>.jar, which keeps each jar's own license and
 notice files under META-INF/licenses/<jar>/ and carries this file and LICENSE
-in META-INF/. The versions follow velocity-api's own POM, except night-config,
+under META-INF/conduit/. A first start writes both of those beside the jar, so
+that a copy of Conduit that arrived as one file still comes with its terms; an
+existing file of either name is never overwritten. The versions follow velocity-api's own POM, except night-config,
 which the POM does not name, and Guava, which is the copy listed above.
   velocity-api 3.4.0             MIT, Copyright 2018 Velocity Contributors
   adventure-api, -key, -text-minimessage, -text-serializer-plain, -legacy, -gson,
@@ -363,3 +376,277 @@ Applies to each Apache-2.0-licensed component in sections 1 and 2.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+4. NOTICE files required by Apache-2.0 section 4(d)
+---------------------------------------------------
+Guice's and jakarta.inject's NOTICEs travel inside conduit-<version>.jar, under
+META-INF/licenses/<jar>/, because their own jars carry them. Netty's module jars
+do not, so its NOTICE is reproduced here in full. No other Apache-2.0 component
+listed above ships a NOTICE file.
+
+Netty (netty-buffer, -codec, -common, -handler, -resolver, -transport 4.1.118.Final)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+                            The Netty Project
+                            =================
+
+Please visit the Netty web site for more information:
+
+  * https://netty.io/
+
+Copyright 2014 The Netty Project
+
+The Netty Project licenses this file to you under the Apache License,
+version 2.0 (the "License"); you may not use this file except in compliance
+with the License. You may obtain a copy of the License at:
+
+  https://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+
+Also, please refer to each LICENSE.<component>.txt file, which is located in
+the 'license' directory of the distribution file, for the license terms of the
+components that this product depends on.
+
+-------------------------------------------------------------------------------
+This product contains the extensions to Java Collections Framework which has
+been derived from the works by JSR-166 EG, Doug Lea, and Jason T. Greene:
+
+  * LICENSE:
+    * license/LICENSE.jsr166y.txt (Public Domain)
+  * HOMEPAGE:
+    * http://gee.cs.oswego.edu/cgi-bin/viewcvs.cgi/jsr166/
+    * http://viewvc.jboss.org/cgi-bin/viewvc.cgi/jbosscache/experimental/jsr166/
+
+This product contains a modified version of Robert Harder's Public Domain
+Base64 Encoder and Decoder, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.base64.txt (Public Domain)
+  * HOMEPAGE:
+    * http://iharder.sourceforge.net/current/java/base64/
+
+This product contains a modified portion of 'Webbit', an event based
+WebSocket and HTTP server, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.webbit.txt (BSD License)
+  * HOMEPAGE:
+    * https://github.com/joewalnes/webbit
+
+This product contains a modified portion of 'SLF4J', a simple logging
+facade for Java, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.slf4j.txt (MIT License)
+  * HOMEPAGE:
+    * https://www.slf4j.org/
+
+This product contains a modified portion of 'Apache Harmony', an open source
+Java SE, which can be obtained at:
+
+  * NOTICE:
+    * license/NOTICE.harmony.txt
+  * LICENSE:
+    * license/LICENSE.harmony.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://archive.apache.org/dist/harmony/
+
+This product contains a modified portion of 'jbzip2', a Java bzip2 compression
+and decompression library written by Matthew J. Francis. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.jbzip2.txt (MIT License)
+  * HOMEPAGE:
+    * https://code.google.com/p/jbzip2/
+
+This product contains a modified portion of 'libdivsufsort', a C API library to construct
+the suffix array and the Burrows-Wheeler transformed string for any input string of
+a constant-size alphabet written by Yuta Mori. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.libdivsufsort.txt (MIT License)
+  * HOMEPAGE:
+    * https://github.com/y-256/libdivsufsort
+
+This product contains a modified portion of Nitsan Wakart's 'JCTools', Java Concurrency Tools for the JVM,
+ which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.jctools.txt (ASL2 License)
+  * HOMEPAGE:
+    * https://github.com/JCTools/JCTools
+
+This product optionally depends on 'JZlib', a re-implementation of zlib in
+pure Java, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.jzlib.txt (BSD style License)
+  * HOMEPAGE:
+    * http://www.jcraft.com/jzlib/
+
+This product optionally depends on 'Compress-LZF', a Java library for encoding and
+decoding data in LZF format, written by Tatu Saloranta. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.compress-lzf.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/ning/compress
+
+This product optionally depends on 'lz4', a LZ4 Java compression
+and decompression library written by Adrien Grand. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.lz4.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/jpountz/lz4-java
+
+This product optionally depends on 'lzma-java', a LZMA Java compression
+and decompression library, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.lzma-java.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/jponge/lzma-java
+
+This product optionally depends on 'zstd-jni', a zstd-jni Java compression
+and decompression library, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.zstd-jni.txt (BSD)
+  * HOMEPAGE:
+    * https://github.com/luben/zstd-jni
+
+This product contains a modified portion of 'jfastlz', a Java port of FastLZ compression
+and decompression library written by William Kinney. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.jfastlz.txt (MIT License)
+  * HOMEPAGE:
+    * https://code.google.com/p/jfastlz/
+
+This product contains a modified portion of and optionally depends on 'Protocol Buffers', Google's data
+interchange format, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.protobuf.txt (New BSD License)
+  * HOMEPAGE:
+    * https://github.com/google/protobuf
+
+This product optionally depends on 'Bouncy Castle Crypto APIs' to generate
+a temporary self-signed X.509 certificate when the JVM does not provide the
+equivalent functionality.  It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.bouncycastle.txt (MIT License)
+  * HOMEPAGE:
+    * https://www.bouncycastle.org/
+
+This product optionally depends on 'Snappy', a compression library produced
+by Google Inc, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.snappy.txt (New BSD License)
+  * HOMEPAGE:
+    * https://github.com/google/snappy
+
+This product optionally depends on 'JBoss Marshalling', an alternative Java
+serialization API, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.jboss-marshalling.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/jboss-remoting/jboss-marshalling
+
+This product optionally depends on 'Caliper', Google's micro-
+benchmarking framework, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.caliper.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/google/caliper
+
+This product optionally depends on 'Apache Commons Logging', a logging
+framework, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.commons-logging.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://commons.apache.org/logging/
+
+This product optionally depends on 'Apache Log4J', a logging framework, which
+can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.log4j.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://logging.apache.org/log4j/
+
+This product optionally depends on 'Aalto XML', an ultra-high performance
+non-blocking XML processor, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.aalto-xml.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://wiki.fasterxml.com/AaltoHome
+
+This product contains a modified version of 'HPACK', a Java implementation of
+the HTTP/2 HPACK algorithm written by Twitter. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.hpack.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/twitter/hpack
+    
+This product contains a modified version of 'HPACK', a Java implementation of
+the HTTP/2 HPACK algorithm written by Cory Benfield. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.hyper-hpack.txt (MIT License)
+  * HOMEPAGE:
+    * https://github.com/python-hyper/hpack/
+
+This product contains a modified version of 'HPACK', a Java implementation of
+the HTTP/2 HPACK algorithm written by Tatsuhiro Tsujikawa. It can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.nghttp2-hpack.txt (MIT License)
+  * HOMEPAGE:
+    * https://github.com/nghttp2/nghttp2/
+
+This product contains a modified portion of 'Apache Commons Lang', a Java library
+provides utilities for the java.lang API, which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.commons-lang.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://commons.apache.org/proper/commons-lang/
+
+
+This product contains the Maven wrapper scripts from 'Maven Wrapper', that provides an easy way to ensure a user has everything necessary to run the Maven build.
+
+  * LICENSE:
+    * license/LICENSE.mvn-wrapper.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/takari/maven-wrapper
+
+This product contains the dnsinfo.h header file, that provides a way to retrieve the system DNS configuration on MacOS.
+This private header is also used by Apple's open source
+ mDNSResponder (https://opensource.apple.com/tarballs/mDNSResponder/).
+
+ * LICENSE:
+    * license/LICENSE.dnsinfo.txt (Apple Public Source License 2.0)
+  * HOMEPAGE:
+    * https://www.opensource.apple.com/source/configd/configd-453.19/dnsinfo/dnsinfo.h
+
+This product optionally depends on 'Brotli4j', Brotli compression and
+decompression for Java., which can be obtained at:
+
+  * LICENSE:
+    * license/LICENSE.brotli4j.txt (Apache License 2.0)
+  * HOMEPAGE:
+    * https://github.com/hyperxpro/Brotli4j

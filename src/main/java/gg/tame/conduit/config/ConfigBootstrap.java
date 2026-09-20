@@ -59,6 +59,12 @@ public final class ConfigBootstrap {
       }
     }
 
+    // The terms the jar travels under, beside it. Someone who downloaded one file has otherwise
+    // never seen them, and GPLv3 section 4 is that a copy goes with the copy.
+    for (String name : java.util.List.of("LICENSE", "THIRD-PARTY-NOTICES")) {
+      writeLegalFile(directory.resolve(name), name);
+    }
+
     java.util.List<String> created = new java.util.ArrayList<>();
     // plugins/ only. The Via data folder is ConduitViaBootstrap's, made from the configured name,
     // and dumps/ is made by the command that writes one -- neither is knowable from here.
@@ -67,6 +73,27 @@ public final class ConfigBootstrap {
     Result result = new Result(createdConfig, created);
     report(configPath, result);
     return result;
+  }
+
+  /**
+   * One of the jar's own legal texts beside it, if it is not there already.
+   *
+   * <p>Never overwrites: an operator who edited or replaced the file meant to. Never fails a start
+   * either -- a read-only folder is a reason to say where the text is, not to refuse to run -- and
+   * does nothing at all when there is no jar to read it out of, as a run from the source tree has
+   * both files in the checkout.
+   */
+  private static void writeLegalFile(Path target, String resource) {
+    if (Files.exists(target)) return;
+    try (java.io.InputStream text = ConfigBootstrap.class.getResourceAsStream("/META-INF/conduit/" + resource)) {
+      if (text == null) return;
+      Files.copy(text, target);
+    } catch (java.nio.file.FileAlreadyExistsException raced) {
+      // Another Conduit starting in the same folder got there first, which is the wanted outcome.
+    } catch (IOException cannot) {
+      ConduitLog.warn("Could not write " + target + " (" + cannot.getMessage() + "). The text is in the"
+          + " jar, under META-INF/conduit/" + resource + ".");
+    }
   }
 
   private static boolean createDirectory(Path path) throws IOException {

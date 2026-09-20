@@ -137,8 +137,13 @@ try {
   # The test tree is left out: this is a jar of Conduit, not of its harness.
   Copy-Item (Join-Path $classes "*") $stage -Recurse -Force
   Remove-Item (Join-Path $stage "gg\tame\conduit\tests") -Recurse -Force -ErrorAction SilentlyContinue
-  # The jar may travel on its own, so it carries Conduit's license and the third-party notices.
-  Copy-Item (Join-Path $repo "LICENSE"), (Join-Path $repo "THIRD-PARTY-NOTICES") (Join-Path $stage "META-INF") -Force
+  # The jar may travel on its own, so it carries Conduit's license and the third-party notices, and
+  # a first start writes them beside itself (ConfigBootstrap). Under META-INF/conduit/ rather than
+  # META-INF/ directly: a bare META-INF/LICENSE is a name half of Maven Central also uses, and a
+  # development run with lib/ on the class path would find Guava's before Conduit's.
+  $legalDir = Join-Path $stage "META-INF\conduit"
+  New-Item -ItemType Directory -Force -Path $legalDir | Out-Null
+  Copy-Item (Join-Path $repo "LICENSE"), (Join-Path $repo "THIRD-PARTY-NOTICES") $legalDir -Force
 
   $manifest = Join-Path $stage "conduit-manifest.txt"
   @(
@@ -179,8 +184,8 @@ try {
     "com/electronwill/nightconfig/toml/TomlParser.class",
     "com/github/benmanes/caffeine/cache/Caffeine.class",
     "com/moandjiezana/toml/Toml.class",
-    "META-INF/LICENSE",
-    "META-INF/THIRD-PARTY-NOTICES",
+    "META-INF/conduit/LICENSE",
+    "META-INF/conduit/THIRD-PARTY-NOTICES",
     "META-INF/licenses/guice-6.0.0/NOTICE"
   )
   $missing = @($required | Where-Object { $entries -notcontains $_ })
