@@ -324,10 +324,12 @@ is created `rwx------`.
 * `/conduit reload` — live-safe reload; lists exact restart-required keys
 * `/conduit shutdown [reason]` — console only: the graceful shutdown, every player shown the reason
   (or the configured shutdown message). Ctrl+C, or a service manager's stop, runs the same shutdown.
+* `stop [reason]` / `end [reason]` — console only: the same shutdown, under the names hosting panels send.
+  A player's `/stop` is not Conduit's and goes to the backend.
 * `/conduit plugins` — proxy plugins only (does not shadow Paper `/plugins`)
 * `/conduit info` (default) and `/conduit help` — permission-filtered list
 
-No built-in command has a short alias; the `/<server>` shortcuts above are the only extra names Conduit
+No built-in command but the console's `stop`/`end` has an alias; the `/<server>` shortcuts above are the only extra names Conduit
 registers. Plugins may register aliases of their own. Command names are case-insensitive. A name may start
 with a slash, as WorldEdit's do: players type one more (`//wand` runs `/wand`, never `wand`).
 

@@ -59,7 +59,11 @@ public final class ShutdownTests {
       proxy.runtime().commandManager().dispatch(player, "conduit shutdown now");
       require(told.stream().anyMatch(line -> line.contains("Only the proxy's console")), "a player is refused, told " + told);
       require(!proxy.runtime().shuttingDown(), "and the proxy keeps running");
-      proxy.runtime().commandManager().dispatch(new gg.tame.conduit.command.ConsoleCommandSource(), "conduit shutdown Back after the upgrade");
+      // A panel's "stop" is the console's too; a player's /stop belongs to the backend, so it is not taken.
+      require(!proxy.runtime().commandManager().dispatch(player, "/stop"), "a player's /stop goes on to the backend");
+      require(!proxy.runtime().commandManager().shownTo(player).test("stop"), "and is not in their command tree");
+      require(!proxy.runtime().shuttingDown(), "and the proxy still keeps running");
+      proxy.runtime().commandManager().dispatch(new gg.tame.conduit.command.ConsoleCommandSource(), "stop Back after the upgrade");
     });
     require(reason.contains("Back after the upgrade"), "the console's reason is the kick screen, got " + reason);
   }

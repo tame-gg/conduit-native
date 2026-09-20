@@ -93,6 +93,12 @@ public final class CoreCommands {
         (source, arguments) -> conduit(source, runtime, registry, arguments),
         (source, arguments) -> completeConduit(source, registry, arguments),
         (source, arguments) -> !conduitSubcommands(source).isEmpty()));
+    // What a hosting panel types into the console to stop or restart a proxy: "stop", or the "end"
+    // BungeeCord answers to. The console's alone, and by requirement rather than by refusal, so a
+    // player's /stop is not there -- not in their command tree, and passed on to the backend that owns it.
+    manager.register(new RegisteredCommand("stop", List.of("end"), null,
+        (source, arguments) -> shutdown(source, runtime, arguments), (source, arguments) -> List.of(),
+        (source, arguments) -> source instanceof ConsoleCommandSource));
     for (String name : registry.names()) {
       String key = name.toLowerCase(Locale.ROOT);
       if (RESERVED.contains(key)) continue;
