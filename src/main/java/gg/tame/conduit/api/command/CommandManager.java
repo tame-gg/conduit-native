@@ -78,11 +78,17 @@ public interface CommandManager {
    * no such command for that source: a player's command goes on to their backend, and
    * {@link #execute} returns false. A requirement that throws answers false.
    */
-  record Command(String name, List<String> aliases, String permission, Handler handler, Completer completer, Requirement requirement) {
+  record Command(String name, List<String> aliases, String permission, Handler handler, Completer completer, Requirement requirement,
+                 List<CommandSyntax> syntax) {
     public Command {
       if (name == null || handler == null || completer == null) throw new IllegalArgumentException("name, handler and completer are required");
       aliases = List.copyOf(aliases == null ? List.of() : aliases);
       permission = permission == null ? "" : permission;
+      syntax = List.copyOf(syntax == null ? List.of() : syntax);
+    }
+    /** A command whose shape the client is not told; see {@link CommandSyntax}. */
+    public Command(String name, List<String> aliases, String permission, Handler handler, Completer completer, Requirement requirement) {
+      this(name, aliases, permission, handler, completer, requirement, List.of());
     }
     /** A command that is there for every source. */
     public Command(String name, List<String> aliases, String permission, Handler handler, Completer completer) {
@@ -97,13 +103,19 @@ public interface CommandManager {
       private Handler handler = (source, arguments) -> { };
       private Completer completer = (source, arguments) -> List.of();
       private Requirement requirement;
+      private final List<CommandSyntax> syntax = new ArrayList<>();
       private Builder(String name) { this.name = name; }
       public Builder alias(String alias) { aliases.add(alias); return this; }
       public Builder permission(String permission) { this.permission = permission; return this; }
       public Builder handler(Handler handler) { this.handler = handler; return this; }
       public Builder completer(Completer completer) { this.completer = completer; return this; }
       public Builder requires(Requirement requirement) { this.requirement = requirement; return this; }
-      public Command build() { return new Command(name, aliases, permission, handler, completer, requirement); }
+      /**
+       * What follows the command's name, for the tree a 1.13+ client parses against. Left unsaid,
+       * the client is given one greedy argument that accepts anything; see {@link CommandSyntax}.
+       */
+      public Builder syntax(List<CommandSyntax> nodes) { syntax.clear(); if (nodes != null) syntax.addAll(nodes); return this; }
+      public Command build() { return new Command(name, aliases, permission, handler, completer, requirement, syntax); }
     }
   }
 }

@@ -740,10 +740,14 @@ public final class CommandApiTests {
 
   /**
    * The command tree as the client's Brigadier sees it, built from the encoded packet: literals, and
-   * {@code brigadier:string} arguments in the word, quotable or greedy form their one property byte
-   * names. Conduit writes no other parser.
+   * arguments back in the Brigadier type their parser id and property bytes name. Reading the tree
+   * with Brigadier is the only check that matters -- it is the client's own parser, and a node
+   * written a byte wrong either fails here or shifts every node after it.
+   *
+   * <p>Shared with {@link VelocityCompatTests}, which sends a plugin's real Brigadier tree through
+   * the same path and needs the same reading of it back.
    */
-  private static com.mojang.brigadier.CommandDispatcher<Object> clientDispatcher(byte[] packet) throws Exception {
+  static com.mojang.brigadier.CommandDispatcher<Object> clientDispatcher(byte[] packet) throws Exception {
     var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(body(packet)));
     int count = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
     List<List<Integer>> children = new ArrayList<>();
@@ -764,15 +768,7 @@ public final class CommandApiTests {
       } else if (type == 1) {
         node = com.mojang.brigadier.builder.LiteralArgumentBuilder.<Object>literal(name).executes(context -> 1).build();
       } else {
-        int parser = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
-        require(parser == gg.tame.conduit.command.ParserIds.INDEXED.stringId(), "only brigadier:string is written, got " + parser);
-        var string = switch (gg.tame.conduit.protocol.MinecraftInput.varInt(input)) {
-          case 2 -> com.mojang.brigadier.arguments.StringArgumentType.greedyString();
-          case 1 -> com.mojang.brigadier.arguments.StringArgumentType.string();
-          default -> com.mojang.brigadier.arguments.StringArgumentType.word();
-        };
-        node = com.mojang.brigadier.builder.RequiredArgumentBuilder.<Object, String>argument(name, string)
-            .executes(context -> 1).build();
+        node = argumentNode(name, gg.tame.conduit.protocol.MinecraftInput.varInt(input), input);
       }
       if ((flags & 0x10) != 0) gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);
       built.add(node);
@@ -1470,6 +1466,50 @@ public final class CommandApiTests {
       if (literal.equals(nameOf(graph, index, parsers))) return names(graph, index, parsers);
     }
     throw new IllegalStateException("no literal " + literal + " in the graph");
+  }
+
+  /**
+   * One argument node's parser and properties, as the Brigadier type the client builds from them.
+   * The six Conduit writes; anything else means the writer has invented a parser no client has.
+   */
+  @SuppressWarnings({"unchecked", "rawtypes"})
+  private static com.mojang.brigadier.tree.CommandNode<Object> argumentNode(String name, int parser,
+      java.io.DataInputStream input) throws Exception {
+    com.mojang.brigadier.arguments.ArgumentType type = switch (parser) {
+      case 0 -> com.mojang.brigadier.arguments.BoolArgumentType.bool();
+      case 1 -> {
+        int flags = input.readUnsignedByte();
+        yield com.mojang.brigadier.arguments.FloatArgumentType.floatArg(
+            (flags & 0x01) != 0 ? input.readFloat() : -Float.MAX_VALUE,
+            (flags & 0x02) != 0 ? input.readFloat() : Float.MAX_VALUE);
+      }
+      case 2 -> {
+        int flags = input.readUnsignedByte();
+        yield com.mojang.brigadier.arguments.DoubleArgumentType.doubleArg(
+            (flags & 0x01) != 0 ? input.readDouble() : -Double.MAX_VALUE,
+            (flags & 0x02) != 0 ? input.readDouble() : Double.MAX_VALUE);
+      }
+      case 3 -> {
+        int flags = input.readUnsignedByte();
+        yield com.mojang.brigadier.arguments.IntegerArgumentType.integer(
+            (flags & 0x01) != 0 ? input.readInt() : Integer.MIN_VALUE,
+            (flags & 0x02) != 0 ? input.readInt() : Integer.MAX_VALUE);
+      }
+      case 4 -> {
+        int flags = input.readUnsignedByte();
+        yield com.mojang.brigadier.arguments.LongArgumentType.longArg(
+            (flags & 0x01) != 0 ? input.readLong() : Long.MIN_VALUE,
+            (flags & 0x02) != 0 ? input.readLong() : Long.MAX_VALUE);
+      }
+      case 5 -> switch (gg.tame.conduit.protocol.MinecraftInput.varInt(input)) {
+        case 2 -> com.mojang.brigadier.arguments.StringArgumentType.greedyString();
+        case 1 -> com.mojang.brigadier.arguments.StringArgumentType.string();
+        default -> com.mojang.brigadier.arguments.StringArgumentType.word();
+      };
+      default -> throw new AssertionError("Conduit wrote parser id " + parser + ", which is none of Brigadier's six");
+    };
+    return com.mojang.brigadier.builder.RequiredArgumentBuilder.<Object, Object>argument(name, (com.mojang.brigadier.arguments.ArgumentType<Object>) type)
+        .executes(context -> 1).build();
   }
 
   /** The children of /conduit drain, two levels down, which no other helper reaches. */

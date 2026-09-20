@@ -189,7 +189,15 @@ public final class VelocityCompatTests {
                   .executes(context -> {
                     context.getSource().sendMessage(Component.text("brig:" + IntegerArgumentType.getInteger(context, "n")));
                     return 1;
-                  })));
+                  }))
+              // A literal branch and a bounded number, so the tree Conduit declares has more in it
+              // than one argument: see brigadierCommandsDeclareTheirOwnTree.
+              .then(BrigadierCommand.literalArgumentBuilder("set")
+                  .then(BrigadierCommand.requiredArgumentBuilder("level", IntegerArgumentType.integer(1, 9))
+                      .executes(context -> {
+                        context.getSource().sendMessage(Component.text("level:" + IntegerArgumentType.getInteger(context, "level")));
+                        return 1;
+                      }))));
           commands.register(commands.metaBuilder(brigadier).plugin(this).build(), brigadier);
           // A plugin's own alias can be registered again, and the newer command wins; another plugin's cannot.
           commands.register(commands.metaBuilder("vre").plugin(this).build(), (SimpleCommand) invocation -> invocation.source().sendMessage(Component.text("vre first")));
@@ -608,8 +616,11 @@ public final class VelocityCompatTests {
           alice.awaitText("raw:vraw:a b");
           alice.chat("/vbrig 5");
           alice.awaitText("brig:5");
+          alice.chat("/vbrig set 4");
+          alice.awaitText("level:4");
           alice.chat("/vbrig x");
           alice.awaitText("position");
+          brigadierCommandsDeclareTheirOwnTree(proxy);
           alice.send(tabRequest("/vtest h"));
           alice.await(frame -> frame[0] == 0x3A && text(frame).contains("hello"), "tab completion from the plugin");
           alice.chat("/nside");
@@ -1064,6 +1075,60 @@ public final class VelocityCompatTests {
     try (ServerSocket probe = new ServerSocket(0)) { port = probe.getLocalPort(); }
     return new ConduitConfiguration(new InetSocketAddress("127.0.0.1", port), 1 << 16, ForwardingMode.NONE, Optional.empty(),
         backends, List.of(backends.get(0).name()), List.of(backends.get(0).name()), AuthenticationSettings.offline(), Optional.empty(), ops);
+  }
+
+  /**
+   * A BrigadierCommand's own tree reaches the client; anything else keeps the greedy argument.
+   *
+   * <p>Every plugin command used to be one greedy string. That stopped the client reddening lines it
+   * could not parse, but it threw away what a BrigadierCommand had already said: the client could
+   * not complete "set" without asking, and could not tell 4 from 99 in a bounded argument or a
+   * number from a word. A SimpleCommand or a RawCommand says nothing about its shape, so those
+   * still get the greedy string -- which is the point of checking both here.
+   *
+   * <p>Read back with Brigadier, the client's own parser, because a node written a byte wrong does
+   * not look wrong: it shifts every node after it and the client drops the connection.
+   */
+  private static void brigadierCommandsDeclareTheirOwnTree(MinecraftProxy proxy) throws Exception {
+    var commands = proxy.runtime().commands();
+    byte[] packet = gg.tame.conduit.command.CommandGraphs.mergeProxyCommands(
+        gg.tame.conduit.protocol.ProtocolDefinition.forVersion(765), emptyTree(), List.of("lobby"),
+        commands.names(), commands.displacedBuiltIns(), name -> true, commands::syntaxOf);
+    var client = CommandApiTests.clientDispatcher(packet);
+
+    for (String accepted : List.of("vbrig 5", "vbrig -12", "vbrig set 1", "vbrig set 9",
+        // A RawCommand declares nothing, so its greedy argument takes whatever is typed.
+        "vraw a b c", "vtest anything at all")) {
+      var parse = client.parse(accepted, new Object());
+      require(parse.getReader().getRemainingLength() == 0 && parse.getExceptions().isEmpty(),
+          "the client parses /" + accepted + " (" + parse.getReader().getRemainingLength() + " left, "
+              + parse.getExceptions().size() + " errors)");
+    }
+    // The real tree means real parsing: these are wrong, and the client is now able to say so.
+    // "vbrig set" is not among them: the literal is there and the line parses, it is merely
+    // incomplete, which is the server's answer to give and not something a client paints red.
+    for (String refused : List.of("vbrig notanumber", "vbrig set 99", "vbrig 5 extra")) {
+      var parse = client.parse(refused, new Object());
+      require(parse.getReader().getRemainingLength() > 0 || !parse.getExceptions().isEmpty(),
+          "/" + refused + " does not fit the declared tree");
+    }
+    require(commands.syntaxOf("vraw").isEmpty(), "a RawCommand declares no shape");
+    require(!commands.syntaxOf("vbrig").isEmpty(), "a BrigadierCommand does");
+  }
+
+  /** A Declare Commands packet with nothing but a root, for the merge to append the proxy's own to. */
+  private static byte[] emptyTree() throws Exception {
+    var bytes = new java.io.ByteArrayOutputStream();
+    try (var output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, gg.tame.conduit.protocol.ProtocolDefinition.forVersion(765)
+          .id(gg.tame.conduit.protocol.ConnectionState.PLAY, gg.tame.conduit.protocol.PacketDirection.SERVER_TO_CLIENT,
+              gg.tame.conduit.protocol.PacketKind.PLAY_DECLARE_COMMANDS));
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 1);
+      output.writeByte(0);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 0);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, 0);
+    }
+    return bytes.toByteArray();
   }
 
   /** Socket work in tests stays on platform threads, as Conduit's own does on Windows. */

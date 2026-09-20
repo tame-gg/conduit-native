@@ -6,11 +6,17 @@ import java.util.Locale;
 
 /** {@code requirement}, when there is one, decides whether the command is there at all for a source; see the API's Command. */
 public record RegisteredCommand(String name, List<String> aliases, String permission, CommandExecutor executor, TabCompleter completer,
-                                java.util.function.BiPredicate<CommandSource, List<String>> requirement) {
+                                java.util.function.BiPredicate<CommandSource, List<String>> requirement,
+                                List<gg.tame.conduit.api.command.CommandSyntax> syntax) {
+  public RegisteredCommand(String name, List<String> aliases, String permission, CommandExecutor executor, TabCompleter completer,
+                           java.util.function.BiPredicate<CommandSource, List<String>> requirement) {
+    this(name, aliases, permission, executor, completer, requirement, List.of());
+  }
   public RegisteredCommand(String name, List<String> aliases, String permission, CommandExecutor executor, TabCompleter completer) {
     this(name, aliases, permission, executor, completer, null);
   }
   public RegisteredCommand {
+    syntax = List.copyOf(syntax == null ? List.of() : syntax);
     name = name.toLowerCase(Locale.ROOT);
     aliases = aliases.stream().map(alias -> alias.toLowerCase(Locale.ROOT)).toList();
     if (name.isBlank()) throw new IllegalArgumentException("command name is required");

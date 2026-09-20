@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.command;
 
+import gg.tame.conduit.api.command.CommandSyntax;
 import gg.tame.conduit.protocol.ConnectionState;
 import gg.tame.conduit.protocol.PacketDirection;
 import gg.tame.conduit.protocol.PacketKind;
@@ -12,6 +13,12 @@ import java.util.List;
 
 public final class CommandGraphs {
   private CommandGraphs() {}
+  /**
+   * The most nodes one command may declare. Vanilla's whole tree is a few thousand across every
+   * command it has, so a single command past this is a tree built from data rather than written
+   * out, and the client pays for all of it on every join and every server switch.
+   */
+  static final int MAX_DECLARED_NODES = 512;
   /**
    * Appends the proxy commands to a backend command tree without decoding it.
    *
@@ -45,11 +52,27 @@ public final class CommandGraphs {
     return mergeProxyCommands(protocol, packet, serverNames, extraNames, displaced, name -> true);
   }
   /**
+   * As above, with {@code syntax} what each registered name declares follows it
+   * (CommandManager#syntaxOf) -- a Velocity BrigadierCommand's own node tree, say. A name that
+   * declares nothing keeps the one greedy argument every command used to get.
+   */
+  public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
+      List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown,
+      java.util.function.Function<String, List<CommandSyntax>> syntax) throws IOException {
+    return merge(protocol, packet, serverNames, extraNames, displaced, shown, syntax);
+  }
+  /**
    * As above, declaring only the commands {@code shown} accepts (CommandManager#shownTo): a top-level
    * name, or {@code "conduit <subcommand>"}. A player is not offered what they may not run.
    */
   public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
       List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown) throws IOException {
+    return merge(protocol, packet, serverNames, extraNames, displaced, shown, name -> List.of());
+  }
+
+  private static byte[] merge(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
+      List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown,
+      java.util.function.Function<String, List<CommandSyntax>> syntax) throws IOException {
     int id = PlayPackets.packetId(packet);
     int cursor = varIntLength(packet, 0);
     int count = readVarInt(packet, cursor);
@@ -76,8 +99,8 @@ public final class CommandGraphs {
     if ((flags & 0x08) != 0) header += varIntLength(packet, header);
     if (header > rootIndexStart) throw new IOException("command tree root node overruns the packet");
 
-    StringParser parser = stringParser(protocol);
-    FlatTree tree = flattenAll(proxyNodes(serverNames, extraNames, displaced, parser, shown));
+    ParserWriter parser = parserWriter(protocol);
+    FlatTree tree = flattenAll(proxyNodes(serverNames, extraNames, displaced, parser, shown, syntax));
     List<Flat> flat = tree.nodes();
     List<Integer> topLevel = tree.topLevel();
 
@@ -149,78 +172,86 @@ public final class CommandGraphs {
         rootOnly(protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DECLARE_COMMANDS)),
         serverNames, extraNames, displaced);
   }
-  /**
-   * A command node Conduit adds to the tree a client parses against.
-   *
-   * <p>One level of literals was all this used to be, and it is why {@code /conduit drain } and
-   * {@code /gkick } suggested nothing: {@code drain} was a childless leaf, and {@code gkick} had no
-   * argument node at all, so a 1.13+ client had nothing to complete and nothing to ask about.
-   */
-  public sealed interface ProxyNode {
-    String name();
-
-    List<ProxyNode> children();
-
-    /** A fixed word, such as a subcommand or a configured server name. */
-    record Literal(String name, List<ProxyNode> children) implements ProxyNode {
-      public Literal(String name) {
-        this(name, List.of());
-      }
-
-      /** Convenience for a literal whose children are all plain literals. */
-      static Literal of(String name, List<String> childNames) {
-        List<ProxyNode> children = new ArrayList<>(childNames.size());
-        for (String child : childNames) children.add(new Literal(child));
-        return new Literal(name, children);
-      }
-    }
-
-    /**
-     * A {@code brigadier:string} argument. {@code askServer} sets Brigadier's
-     * {@code minecraft:ask_server} suggestion type, which is what makes the client send a
-     * tab-complete request rather than guessing locally. It is the only way to offer names that
-     * change while a client is connected: the tree is sent on join, on a server switch, and when
-     * Conduit declares it again for a command or permission change, but never per keystroke.
-     */
-    record Argument(String name, boolean greedy, boolean askServer, List<ProxyNode> children) implements ProxyNode {
-      public Argument(String name, boolean greedy, boolean askServer) {
-        this(name, greedy, askServer, List.of());
-      }
-    }
+  /** A literal whose children are all plain literals. */
+  private static CommandSyntax.Literal literal(String name, List<String> childNames) {
+    List<CommandSyntax> children = new ArrayList<>(childNames.size());
+    for (String child : childNames) children.add(new CommandSyntax.Literal(child));
+    return new CommandSyntax.Literal(name, children);
   }
 
   /**
-   * How {@code brigadier:string} is named in an argument node, which is not the same shape in every
-   * release. Before 1.19 the parser is an identifier string; from 1.19 it is an index into the
-   * registry vanilla builds, and 26.2 removed {@code brigadier:float} from that registry, moving
-   * every later index down by one. Getting this wrong shifts every byte after the node, so a version
+   * Writes an argument node's parser, which is not the same shape in every release. Before 1.19 the
+   * parser is an identifier string; from 1.19 it is an index into the registry vanilla builds, and a
+   * release dropping {@code brigadier:float} from that registry would move every later index down by
+   * one -- see {@link ParserIds}. Getting this wrong shifts every byte after the node, so a version
    * Conduit has no answer for is given plain literals and no argument node at all.
+   *
+   * <p>Only Brigadier's own six parsers are written. They are the ones every client back to 1.13
+   * has, and the only ones a plugin can name without the game's own classes.
    */
-  private record StringParser(ParserIds parsers) {
-    void write(java.io.DataOutputStream output, boolean greedy) throws IOException {
-      if (parsers.indexed()) gg.tame.conduit.protocol.MinecraftOutput.varInt(output, parsers.stringId());
-      else gg.tame.conduit.protocol.MinecraftOutput.string(output, "brigadier:string");
-      // brigadier:string's properties are one varint: 0 single word, 1 quotable, 2 greedy.
-      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, greedy ? 2 : 0);
+  private record ParserWriter(ParserIds parsers) {
+    void write(java.io.DataOutputStream output, CommandSyntax.Parser parser) throws IOException {
+      switch (parser) {
+        case CommandSyntax.Parser.Bool ignored -> id(output, 0, "brigadier:bool");
+        case CommandSyntax.Parser.Phrase phrase -> {
+          id(output, 5, "brigadier:string");
+          // One varint: 0 single word, 1 quotable, 2 greedy -- the order Width declares them in.
+          gg.tame.conduit.protocol.MinecraftOutput.varInt(output, phrase.width().ordinal());
+        }
+        case CommandSyntax.Parser.Range range -> {
+          id(output, canonical(range.kind()), identifier(range.kind()));
+          // A flags byte saying which bounds follow, then each at the parser's own width.
+          output.writeByte((range.min() != null ? 0x01 : 0) | (range.max() != null ? 0x02 : 0));
+          for (Number bound : new Number[] {range.min(), range.max()}) {
+            if (bound == null) continue;
+            switch (range.kind()) {
+              case FLOAT -> output.writeFloat(bound.floatValue());
+              case DOUBLE -> output.writeDouble(bound.doubleValue());
+              case INTEGER -> output.writeInt(bound.intValue());
+              case LONG -> output.writeLong(bound.longValue());
+            }
+          }
+        }
+      }
+    }
+    private static int canonical(CommandSyntax.Parser.Range.Kind kind) {
+      return switch (kind) {
+        case FLOAT -> 1;
+        case DOUBLE -> 2;
+        case INTEGER -> 3;
+        case LONG -> 4;
+      };
+    }
+    private static String identifier(CommandSyntax.Parser.Range.Kind kind) {
+      return switch (kind) {
+        case FLOAT -> "brigadier:float";
+        case DOUBLE -> "brigadier:double";
+        case INTEGER -> "brigadier:integer";
+        case LONG -> "brigadier:long";
+      };
+    }
+    private void id(java.io.DataOutputStream output, int canonical, String identifier) throws IOException {
+      if (parsers.indexed()) gg.tame.conduit.protocol.MinecraftOutput.varInt(output, parsers.wireId(canonical));
+      else gg.tame.conduit.protocol.MinecraftOutput.string(output, identifier);
     }
   }
 
-  private static StringParser stringParser(ProtocolDefinition protocol) {
+  private static ParserWriter parserWriter(ProtocolDefinition protocol) {
     // No command tree means no argument node either: 1.8 and 1.12 clients never parse one, and ask
     // the server about every command anyway, which is the completion path they already had.
     if (protocol == null || !protocol.capabilities().commandTree()) return null;
-    return new StringParser(ParserIds.forProtocol(protocol.version().number()));
+    return new ParserWriter(ParserIds.forProtocol(protocol.version().number()));
   }
 
   /** A node flattened to its wire fields, with child positions in this same list. */
-  private record Flat(int flags, String name, boolean greedy, int[] children) {}
+  private record Flat(int flags, String name, CommandSyntax.Parser parser, int[] children) {}
 
   /**
    * Depth-first, each node taking the next free position. A parent is reserved before its children
    * are appended so its own position stays below theirs, which keeps the written order and the
    * indices in step.
    */
-  private static int flatten(List<Flat> out, java.util.IdentityHashMap<ProxyNode, Integer> shared, ProxyNode node) {
+  private static int flatten(List<Flat> out, java.util.IdentityHashMap<CommandSyntax, Integer> shared, CommandSyntax node) {
     // A command tree is a graph of indices, not a forest, so two parents may name the same child --
     // which is what vanilla does. Sharing matters: server names hang off /server, /plist, /send and
     // both /conduit drain branches, and a copy per parent made the packet grow with the square of
@@ -230,15 +261,14 @@ public final class CommandGraphs {
     int self = out.size();
     out.add(null);
     shared.put(node, self);
-    List<ProxyNode> kids = node.children();
+    List<CommandSyntax> kids = node.children();
     int[] children = new int[kids.size()];
     for (int index = 0; index < kids.size(); index++) children[index] = flatten(out, shared, kids.get(index));
-    boolean argument = node instanceof ProxyNode.Argument;
-    boolean askServer = node instanceof ProxyNode.Argument arg && arg.askServer();
-    boolean greedy = node instanceof ProxyNode.Argument arg && arg.greedy();
+    CommandSyntax.Parser parser = node instanceof CommandSyntax.Argument argument ? argument.parser() : null;
+    boolean askServer = node instanceof CommandSyntax.Argument argument && argument.askServer();
     // 0x01 literal / 0x02 argument, 0x04 executable, 0x10 has a suggestion type.
-    int flags = (argument ? 0x02 : 0x01) | 0x04 | (askServer ? 0x10 : 0x00);
-    out.set(self, new Flat(flags, node.name(), greedy, children));
+    int flags = (parser != null ? 0x02 : 0x01) | 0x04 | (askServer ? 0x10 : 0x00);
+    out.set(self, new Flat(flags, node.name(), parser, children));
     return self;
   }
 
@@ -251,11 +281,11 @@ public final class CommandGraphs {
    */
   private record FlatTree(List<Flat> nodes, List<Integer> topLevel) {}
 
-  private static FlatTree flattenAll(List<ProxyNode> roots) {
+  private static FlatTree flattenAll(List<CommandSyntax> roots) {
     List<Flat> flat = new ArrayList<>();
-    var shared = new java.util.IdentityHashMap<ProxyNode, Integer>();
+    var shared = new java.util.IdentityHashMap<CommandSyntax, Integer>();
     List<Integer> topLevel = new ArrayList<>(roots.size());
-    for (ProxyNode root : roots) topLevel.add(flatten(flat, shared, root));
+    for (CommandSyntax root : roots) topLevel.add(flatten(flat, shared, root));
     return new FlatTree(flat, topLevel);
   }
 
@@ -264,13 +294,13 @@ public final class CommandGraphs {
    * the tree already had, since these go on the end and none of the existing indices may move.
    */
   private static void writeFlat(java.io.DataOutputStream output, List<Flat> flat, int offset,
-      StringParser parser) throws IOException {
+      ParserWriter parser) throws IOException {
     for (Flat node : flat) {
       output.writeByte(node.flags());
       gg.tame.conduit.protocol.MinecraftOutput.varInt(output, node.children().length);
       for (int child : node.children()) gg.tame.conduit.protocol.MinecraftOutput.varInt(output, child + offset);
       gg.tame.conduit.protocol.MinecraftOutput.string(output, node.name());
-      if ((node.flags() & 0x02) != 0) parser.write(output, node.greedy());
+      if ((node.flags() & 0x02) != 0) parser.write(output, node.parser());
       if ((node.flags() & 0x10) != 0) gg.tame.conduit.protocol.MinecraftOutput.string(output, "minecraft:ask_server");
     }
   }
@@ -282,89 +312,128 @@ public final class CommandGraphs {
    * is connected, so the client completes them with no round trip. Player names cannot be, so they
    * are an {@code ask_server} argument and the client asks Conduit for them each time.
    */
-  private static List<ProxyNode> proxyNodes(List<String> serverNames, List<String> extraNames,
-      java.util.Set<String> displaced, StringParser parser, java.util.function.Predicate<String> shown) {
+  private static List<CommandSyntax> proxyNodes(List<String> serverNames, List<String> extraNames,
+      java.util.Set<String> displaced, ParserWriter parser, java.util.function.Predicate<String> shown,
+      java.util.function.Function<String, List<CommandSyntax>> syntax) {
     boolean arguments = parser != null;
-    List<ProxyNode> servers = new ArrayList<>();
-    for (String name : serverNames) servers.add(new ProxyNode.Literal(name));
+    List<CommandSyntax> servers = new ArrayList<>();
+    for (String name : serverNames) servers.add(new CommandSyntax.Literal(name));
 
     // /conduit: the subcommands that take an argument get one, so /conduit drain <TAB> finally lists
     // the servers instead of nothing. The rest stay leaves.
-    List<ProxyNode> conduitChildren = new ArrayList<>();
+    List<CommandSyntax> conduitChildren = new ArrayList<>();
     for (String subcommand : CoreCommands.CONDUIT_SUBCOMMANDS) {
       if (!shown.test("conduit " + subcommand)) continue;
       switch (subcommand) {
-        case "drain", "undrain" -> conduitChildren.add(new ProxyNode.Literal(subcommand, servers));
-        case "maintenance", "attack" -> conduitChildren.add(ProxyNode.Literal.of(subcommand, List.of("on", "off", "status")));
+        case "drain", "undrain" -> conduitChildren.add(new CommandSyntax.Literal(subcommand, servers));
+        case "maintenance", "attack" -> conduitChildren.add(literal(subcommand, List.of("on", "off", "status")));
         // invalidate's own argument is the IP a connection came from, so it stops here.
-        case "cache" -> conduitChildren.add(ProxyNode.Literal.of(subcommand, List.of("invalidate")));
-        default -> conduitChildren.add(new ProxyNode.Literal(subcommand));
+        case "cache" -> conduitChildren.add(literal(subcommand, List.of("invalidate")));
+        default -> conduitChildren.add(new CommandSyntax.Literal(subcommand));
       }
     }
 
     // /send <player|current|server> <server>: the first argument may be one of the literals the
     // completer offers or any online name, so a literal branch and an ask_server branch both hang
     // off it, each carrying the server names the second argument takes.
-    List<ProxyNode> sendFirst = new ArrayList<>();
-    sendFirst.add(new ProxyNode.Literal("current", servers));
-    for (String name : serverNames) sendFirst.add(new ProxyNode.Literal(name, servers));
-    if (arguments) sendFirst.add(new ProxyNode.Argument("player", false, true, servers));
+    List<CommandSyntax> sendFirst = new ArrayList<>();
+    sendFirst.add(new CommandSyntax.Literal("current", servers));
+    for (String name : serverNames) sendFirst.add(new CommandSyntax.Literal(name, servers));
+    if (arguments) sendFirst.add(new CommandSyntax.Argument("player", CommandSyntax.Parser.word(), true, servers));
 
-    List<ProxyNode> literals = new ArrayList<>();
-    literals.add(new ProxyNode.Literal("conduit", conduitChildren));
-    literals.add(new ProxyNode.Literal("glist"));
-    literals.add(new ProxyNode.Literal("plist", servers));
-    literals.add(new ProxyNode.Literal("find", player(arguments)));
-    literals.add(new ProxyNode.Literal("alert",
-        arguments ? List.of(new ProxyNode.Argument("message", true, false)) : List.of()));
-    literals.add(new ProxyNode.Literal("ping"));
-    literals.add(new ProxyNode.Literal("hub"));
-    literals.add(new ProxyNode.Literal("gkick", player(arguments)));
-    literals.add(new ProxyNode.Literal("server", servers));
-    literals.add(new ProxyNode.Literal("send", sendFirst));
-    // One node, shared by every command below whose shape Conduit does not know -- see rawArguments.
-    List<ProxyNode> rawArguments = arguments ? List.of(new ProxyNode.Argument("arguments", true, true)) : List.of();
+    List<CommandSyntax> literals = new ArrayList<>();
+    literals.add(new CommandSyntax.Literal("conduit", conduitChildren));
+    literals.add(new CommandSyntax.Literal("glist"));
+    literals.add(new CommandSyntax.Literal("plist", servers));
+    literals.add(new CommandSyntax.Literal("find", player(arguments)));
+    literals.add(new CommandSyntax.Literal("alert",
+        arguments ? List.of(new CommandSyntax.Argument("message", CommandSyntax.Parser.greedy(), false)) : List.of()));
+    literals.add(new CommandSyntax.Literal("ping"));
+    literals.add(new CommandSyntax.Literal("hub"));
+    literals.add(new CommandSyntax.Literal("gkick", player(arguments)));
+    literals.add(new CommandSyntax.Literal("server", servers));
+    literals.add(new CommandSyntax.Literal("send", sendFirst));
+    // One node, shared by every command below whose shape Conduit is not told -- see addLiteral.
+    List<CommandSyntax> rawArguments = arguments
+        ? List.of(new CommandSyntax.Argument("arguments", CommandSyntax.Parser.greedy(), true)) : List.of();
     // A built-in a plugin displaced is declared as that plugin's commands are: the built-in's own
     // children would have the client suggest arguments the plugin never takes.
-    literals.replaceAll(literal -> displaced.contains(literal.name())
-        ? new ProxyNode.Literal(literal.name(), rawArguments) : literal);
+    literals.replaceAll(node -> displaced.contains(node.name())
+        ? new CommandSyntax.Literal(node.name(), declared(syntax, node.name(), rawArguments, arguments)) : node);
     // Every name is marked emitted, shown or not, so a hidden built-in is not declared again below as
     // a bare literal from the registered names.
     java.util.LinkedHashSet<String> emitted = new java.util.LinkedHashSet<>();
-    for (ProxyNode literal : literals) emitted.add(literal.name());
-    literals.removeIf(literal -> !shown.test(literal.name()));
+    for (CommandSyntax node : literals) emitted.add(node.name());
+    literals.removeIf(node -> !shown.test(node.name()));
     // /<server> shortcuts first, then whatever else is registered -- plugin commands and their
     // aliases. A name the built-ins already own is theirs: a second literal for it would give the
     // root two children of the same name and the client would parse against the childless one.
     for (String name : serverNames) addLiteral(literals, emitted, name, shown, List.of());
-    for (String name : extraNames) addLiteral(literals, emitted, name, shown, rawArguments);
+    for (String name : extraNames) {
+      addLiteral(literals, emitted, name, shown, declared(syntax, name, rawArguments, arguments));
+    }
     return List.copyOf(literals);
   }
 
-  /** An ask_server player argument, or nothing where argument nodes cannot be written. */
-  private static List<ProxyNode> player(boolean arguments) {
-    return arguments ? List.of(new ProxyNode.Argument("player", false, true)) : List.of();
+  /**
+   * What goes under a registered command's literal: the shape it declared, or the one greedy
+   * argument a command that declared nothing gets.
+   *
+   * <p>A declared tree is capped. It goes on the wire in a packet a client must decode in full, and
+   * a plugin that builds its tree from a list -- every warp, every region -- can produce one large
+   * enough to disconnect everyone on the proxy. Past the cap the command falls back to the greedy
+   * argument, which is correct, if less helpful, at any size.
+   */
+  private static List<CommandSyntax> declared(java.util.function.Function<String, List<CommandSyntax>> syntax,
+      String name, List<CommandSyntax> rawArguments, boolean arguments) {
+    if (!arguments) return List.of();
+    List<CommandSyntax> nodes = syntax.apply(name);
+    if (nodes == null || nodes.isEmpty()) return rawArguments;
+    int size = size(nodes, 0);
+    if (size <= MAX_DECLARED_NODES) return nodes;
+    gg.tame.conduit.log.ConduitLog.warn("The command tree /" + name + " declares is " + size + " nodes, past the "
+        + MAX_DECLARED_NODES + " Conduit will send; clients are told it takes free text instead");
+    return rawArguments;
   }
 
   /**
-   * A command Conduit knows only by name: the literal, plus {@code children}.
+   * How many nodes a declared tree is, giving up once it is past the cap: counting the whole of a
+   * tree built to be enormous is the cost the cap exists to avoid.
+   */
+  private static int size(List<CommandSyntax> nodes, int sofar) {
+    int total = sofar;
+    for (CommandSyntax node : nodes) {
+      if (total > MAX_DECLARED_NODES) return total;
+      total = size(node.children(), total + 1);
+    }
+    return total;
+  }
+
+  /** An ask_server player argument, or nothing where argument nodes cannot be written. */
+  private static List<CommandSyntax> player(boolean arguments) {
+    return arguments ? List.of(new CommandSyntax.Argument("player", CommandSyntax.Parser.word(), true)) : List.of();
+  }
+
+  /**
+   * A registered command: the literal, plus {@code children} -- the shape it declared, or the one
+   * greedy {@code ask_server} string a command that declared none is given.
    *
-   * <p>For a plugin's command those children are one greedy {@code ask_server} string, which is what
-   * Velocity declares for a SimpleCommand or a RawCommand, and it is the whole of this bug. A bare
-   * literal is a command that takes nothing: a 1.13+ client parses {@code /lpv user Kyle info}
-   * against it, finds {@code lpv} matched and twelve characters left it has no node for, and paints
-   * the line red -- while Conduit, which parses the line itself, runs it perfectly. The greedy
-   * string soaks up the rest of the line, so the client sees a complete parse, and {@code ask_server}
-   * sends the completion request that a childless literal never triggered either.
+   * <p>That greedy string is what Velocity declares for a SimpleCommand or a RawCommand, and it is
+   * what a bare literal should always have been. A bare literal is a command that takes nothing: a
+   * 1.13+ client parses {@code /lpv user Kyle info} against it, finds {@code lpv} matched and twelve
+   * characters left it has no node for, and paints the line red -- while Conduit, which parses the
+   * line itself, runs it perfectly. The greedy string soaks up the rest of the line, so the client
+   * sees a complete parse, and {@code ask_server} sends the completion request that a childless
+   * literal never triggered either.
    *
    * <p>A server-name shortcut passes nothing: {@code /lobby} really does take no arguments.
    */
-  private static void addLiteral(List<ProxyNode> literals, java.util.Set<String> emitted, String name,
-      java.util.function.Predicate<String> shown, List<ProxyNode> children) {
+  private static void addLiteral(List<CommandSyntax> literals, java.util.Set<String> emitted, String name,
+      java.util.function.Predicate<String> shown, List<CommandSyntax> children) {
     if (name == null) return;
     String key = name.toLowerCase(java.util.Locale.ROOT);
     if (key.isBlank() || !emitted.add(key) || !shown.test(key)) return;
-    literals.add(new ProxyNode.Literal(key, children));
+    literals.add(new CommandSyntax.Literal(key, children));
   }
 
   /** A Declare Commands packet holding nothing but an empty root, for the merge to append to. */

@@ -34,10 +34,10 @@ import net.kyori.adventure.text.format.NamedTextColor;
  * which alias was typed. Bodies run on the adapter's threads, never the player's connection thread.
  *
  * <p>BrigadierCommand trees are parsed, permission-checked, executed and completed here with the
- * Brigadier library against the full command line. Clients are sent the command's literal name and
- * one greedy {@code ask_server} argument under it, as Velocity declares a SimpleCommand or a
- * RawCommand -- see {@code CommandGraphs#addLiteral}, which does it for every registered command
- * rather than only for these.
+ * Brigadier library against the full command line, and the tree itself is declared to clients --
+ * see {@link VelocityCommandSyntax}. A SimpleCommand or a RawCommand says nothing about its own
+ * shape, so it gets the literal and one greedy {@code ask_server} argument Velocity declares for
+ * those, which is what {@code CommandGraphs#addLiteral} gives every command that declares nothing.
  */
 final class VelocityCommandHost implements CommandManager {
   private static final long SUGGEST_WAIT_MS = 3_000;
@@ -99,6 +99,10 @@ final class VelocityCommandHost implements CommandManager {
               }
             })
             .requires((source, arguments) -> available(registration, alias, source, arguments))
+            // A BrigadierCommand has already said what it takes, so the client is told that rather
+            // than the greedy argument a SimpleCommand or a RawCommand can only be given.
+            .syntax(command instanceof BrigadierCommand brigadier
+                ? VelocityCommandSyntax.of(brigadier.getNode()) : List.of())
             .build());
         byAlias.put(alias, registration);
         done.add(alias);

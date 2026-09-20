@@ -92,7 +92,16 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
       }
     };
     register(plugin, new RegisteredCommand(command.name(), command.aliases(), command.permission(), executor, completer,
-        requirement == null ? null : (source, arguments) -> requirement.test(external(source), arguments)));
+        requirement == null ? null : (source, arguments) -> requirement.test(external(source), arguments), command.syntax()));
+  }
+  /**
+   * What the client is told follows {@code name}, or nothing where the command declares no shape --
+   * which is every command that does not know it, and gets one greedy argument instead. Keyed, so an
+   * alias gets the same shape as the name it is an alias of.
+   */
+  public synchronized List<gg.tame.conduit.api.command.CommandSyntax> syntaxOf(String name) {
+    RegisteredCommand command = name == null ? null : commands.get(normalize(name));
+    return command == null ? List.of() : command.syntax();
   }
   /** Removes a command by any of its names; returns it, or null when nothing matched. */
   public RegisteredCommand unregister(String name) {

@@ -75,6 +75,19 @@ public enum ParserIds {
 
   /** The id this release writes for {@code brigadier:string}. */
   public int stringId() {
-    return this == INDEXED_NO_FLOAT ? 4 : 5;
+    return wireId(5);
+  }
+
+  /**
+   * The id this release writes for a parser whose canonical id is {@code canonical} -- the inverse
+   * of {@link #canonical(int)}, for writing a tree rather than reading one.
+   *
+   * @throws IllegalArgumentException for {@code brigadier:float} under a numbering that has no such
+   *     parser, which has no id to write and must not be written as its neighbour's
+   */
+  public int wireId(int canonical) {
+    if (this != INDEXED_NO_FLOAT) return canonical;
+    if (canonical == 1) throw new IllegalArgumentException("this release has no brigadier:float to write");
+    return canonical >= 2 ? canonical - 1 : canonical;
   }
 }
