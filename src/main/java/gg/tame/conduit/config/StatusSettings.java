@@ -39,14 +39,30 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
   }
 
   /**
-   * Reads a configured MOTD into Text, using the formatting codes server owners already write.
+   * Reads a configured MOTD into Text, in either of the two forms server owners write.
    *
-   * <p>{@code &0}-{@code &9} and {@code &a}-{@code &f} pick a colour and, as in the game, clear every
-   * decoration; {@code &l} is bold, {@code &o} italic, {@code &n} underlined, {@code &m}
-   * strikethrough, {@code &k} obfuscated, {@code &r} back to plain. {@code \n} starts the second line.
-   * An {@code &} before anything else is kept as it is.
+   * <p>MiniMessage first, which is what Velocity's own {@code motd} takes: {@code <red>},
+   * {@code <bold>}, {@code <gradient:#a:#b>}, {@code <hover:show_text:'...'>} and the rest, through
+   * the Adventure that ships with the Velocity plugin runtime.
+   *
+   * <p>A string MiniMessage leaves exactly as it found it has no tags in it, and is read as the
+   * {@code &} codes Conduit has always taken instead: {@code &0}-{@code &9} and {@code &a}-{@code &f}
+   * pick a colour and, as in the game, clear every decoration; {@code &l} is bold, {@code &o}
+   * italic, {@code &n} underlined, {@code &m} strikethrough, {@code &k} obfuscated, {@code &r} back
+   * to plain. {@code \n} starts the second line. An {@code &} before anything else is kept as it is.
+   * A MOTD with neither comes back as the plain text it is, either way round.
    */
   public static Text parseMotd(String raw) {
+    // Comparing against the text MiniMessage produced, rather than guessing from the string whether
+    // it holds a tag: "Welcome <3" and "A > B" are not tags, and a reader that thought they were
+    // would quietly drop half a MOTD that has worked for years.
+    Text minimessage = gg.tame.conduit.text.MiniMessages.parse(raw);
+    if (minimessage != null && !minimessage.plain().equals(raw)) return minimessage;
+    return legacyMotd(raw);
+  }
+
+  /** The {@code &}-code reader, which is also what a MOTD with no formatting at all goes through. */
+  private static Text legacyMotd(String raw) {
     List<Text> segments = new ArrayList<>();
     StringBuilder run = new StringBuilder();
     TextColor color = null;

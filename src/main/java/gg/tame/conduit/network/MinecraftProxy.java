@@ -19,6 +19,7 @@ import gg.tame.conduit.command.CoreCommands;
 import gg.tame.conduit.command.Permissions;
 import gg.tame.conduit.config.AuthenticationMode;
 import gg.tame.conduit.config.ConduitConfiguration;
+import gg.tame.conduit.config.StatusSettings;
 import gg.tame.conduit.crypto.RsaKeys;
 import gg.tame.conduit.forwarding.Forwarders;
 import gg.tame.conduit.forwarding.PlayerInfoForwarder;
@@ -576,7 +577,9 @@ public final class MinecraftProxy implements AutoCloseable {
     String versionName = "Conduit " + protocol.version().displayName();
     int advertised = protocol.version().number();
     if (runtime.maintenance().isActive()) {
-      description = Text.of(runtime.maintenance().motd());
+      // The same reader status.motd goes through: it is a MOTD, shown in the same server list, and
+      // sent raw it was the one of the two that took neither MiniMessage nor an & code.
+      description = StatusSettings.parseMotd(runtime.maintenance().motd());
     }
     if (runtime.versionGate().isEnabled() && !runtime.versionGate().allows(clientProtocol)) {
       versionName = runtime.versionGate().pingVersionName(clientProtocol);

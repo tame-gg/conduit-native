@@ -110,9 +110,10 @@ mode = "none"
 #  WHAT PLAYERS SEE  --  the server list entry, and closing the doors
 # ============================================================================
 
-# The server list entry. motd takes &-codes (&0-&9 &a-&f colours, &l &o &n &m &k
-# decorations, &r plain) and \n for a second line. display-max-players is only the
-# number shown after the slash; it limits nothing.
+# The server list entry. motd takes MiniMessage, as Velocity's does -- <red>, <bold>,
+# <gradient:#5e4fa2:#f79459>, and the rest -- or the older &-codes (&0-&9 &a-&f colours,
+# &l &o &n &m &k decorations, &r plain) with \n for a second line. Plain text stays plain.
+# display-max-players is only the number shown after the slash; it limits nothing.
 [status]
 motd = "Conduit"
 display-max-players = 100

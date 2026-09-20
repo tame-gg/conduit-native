@@ -96,6 +96,7 @@ public final class NativeApiTests {
     aDisabledPluginCannotReschedule();
     aBlockingPluginTaskHoldsUpNoOtherPlugin();
     statusSettingsLoadFromConfig();
+    theMotdTakesMiniMessage();
     loginCanBeDeniedAndJoinEventsFireInOrder();
     onlineLoginFiresAuthenticated();
     initialServerCanBeChosenCancelledOrRedirected();
@@ -246,6 +247,35 @@ public final class NativeApiTests {
 
   private static long threads(String prefix) {
     return Thread.getAllStackTraces().keySet().stream().filter(thread -> thread.getName().startsWith(prefix)).count();
+  }
+
+  /**
+   * The MOTD is read as Velocity reads its own, which is MiniMessage -- {@code <red>Conduit</red>}
+   * used to reach the server list as those nineteen characters, tags and all.
+   *
+   * <p>The three forms have to coexist, because every existing conduit.toml is written in one of the
+   * other two: a MiniMessage MOTD is parsed, an {@code &}-code MOTD still is, and plain text with a
+   * stray {@code <} in it is neither and stays exactly as typed.
+   */
+  private static void theMotdTakesMiniMessage() {
+    require(gg.tame.conduit.text.MiniMessages.available(), "MiniMessage is on the test class path");
+
+    Text tagged = StatusSettings.parseMotd("<red>Conduit</red>");
+    require(tagged.plain().equals("Conduit"), "the tags are consumed, got \"" + tagged.plain() + "\"");
+    require(TextCodec.toJson(tagged, 765).contains("\"color\":\"red\""), "and become the colour, got " + TextCodec.toJson(tagged, 765));
+
+    Text gradient = StatusSettings.parseMotd("<bold><gradient:#5e4fa2:#f79459>Hi</gradient></bold>");
+    String json = TextCodec.toJson(gradient, 765);
+    require(gradient.plain().equals("Hi") && json.contains("#5e4fa2") && json.contains("#f79459") && json.contains("\"bold\":true"),
+        "a gradient becomes per-character colours, got " + json);
+
+    require(StatusSettings.parseMotd("&cHi").equals(Text.of("Hi").color(TextColor.RED)), "& codes still work");
+    require(StatusSettings.parseMotd("Conduit").equals(Text.of("Conduit")), "plain text stays plain");
+    // Not a tag, and a reader that guessed from the '<' alone would have swallowed it.
+    require(StatusSettings.parseMotd("Welcome <3").equals(Text.of("Welcome <3")), "an unclosed '<' is left alone");
+    // MiniMessage throws on this; a MOTD keeps its listing and loses only its colours.
+    require(StatusSettings.parseMotd("<gradient:notacolour>x</gradient>").plain().equals("<gradient:notacolour>x</gradient>"),
+        "a malformed tag falls back to the text as written");
   }
 
   private static void statusSettingsLoadFromConfig() throws Exception {
