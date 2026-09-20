@@ -2,7 +2,7 @@
 # the test class path and scripts/build-jar.ps1, which merges them into the release jar.
 #
 # Nothing here names a library, a version or a file name. The set comes from
-# config/velocity-runtime.lock, which `gradle lockVelocityRuntime` writes from the velocityRuntime
+# config/velocity-runtime.lock, which `./gradlew lockVelocityRuntime` writes from the velocityRuntime
 # configuration in build.gradle.kts -- so it is velocity-api's own POM, resolved transitively, and
 # not a hand-written list that goes stale the first time one of those POMs changes. Bumping a
 # version means editing build.gradle.kts and running that task.
@@ -32,7 +32,7 @@ $repositories = @(
 
 $lockFile = Join-Path $root "config/velocity-runtime.lock"
 if (-not (Test-Path $lockFile)) {
-  throw "$lockFile is missing. It is written by ``gradle lockVelocityRuntime`` and belongs in the checkout."
+  throw "$lockFile is missing. It is written by ``./gradlew lockVelocityRuntime`` and belongs in the checkout."
 }
 $wanted = [ordered]@{}
 foreach ($line in Get-Content $lockFile) {

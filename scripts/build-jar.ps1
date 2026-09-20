@@ -13,7 +13,7 @@
 # What goes in: Conduit's own classes and generated tables, the runtime
 # dependencies from lib/via -- the same set build.gradle.kts declares -- and the
 # Velocity plugin runtime named by config/velocity-runtime.lock, which
-# `gradle lockVelocityRuntime` resolves from velocity-api's own POM. The lock is
+# `./gradlew lockVelocityRuntime` resolves from velocity-api's own POM. The lock is
 # read here rather than lib/ globbed, so what a release carries is decided by the
 # build and not by whatever a developer's lib/ happens to hold. They are merged
 # rather than shipped beside the jar because `java -jar` reads no class path but
@@ -212,8 +212,11 @@ if ($SkipSource) {
   # from, in the same archive, so no written offer and no source server is needed.
   $sourceDir = Join-Path $outDir "source\conduit"
   New-Item -ItemType Directory -Force -Path $sourceDir | Out-Null
-  foreach ($item in @("src", "scripts", "tools", "config", "docs", "build.gradle.kts",
-                      "settings.gradle.kts", "README.md", "LICENSE", "THIRD-PARTY-NOTICES")) {
+  # The Gradle wrapper travels with the rest: it is one of the scripts used to control compilation,
+  # and config/velocity-runtime.lock cannot be regenerated without it.
+  foreach ($item in @("src", "scripts", "tools", "config", "docs", "gradle", "gradlew", "gradlew.bat",
+                      "build.gradle.kts", "settings.gradle.kts", "README.md", "LICENSE",
+                      "THIRD-PARTY-NOTICES")) {
     $from = Join-Path $repo $item
     if (Test-Path $from) { Copy-Item $from $sourceDir -Recurse -Force }
   }

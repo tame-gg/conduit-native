@@ -1,4 +1,4 @@
-# Written by `gradle lockVelocityRuntime` from the velocityRuntime configuration in
+# Written by `./gradlew lockVelocityRuntime` from the velocityRuntime configuration in
 # build.gradle.kts. Do not edit by hand. <repository path>\t<sha256>.
 aopalliance/aopalliance/1.0/aopalliance-1.0.jar	0addec670fedcd3f113c5c8091d783280d23f75e3acb841b61a9cdb079376a08
 com/electronwill/night-config/core/3.8.4/core-3.8.4.jar	2d9532aa851742a6e2f3cb472a6a5b3c0e7e8b9da287c7d20a2963466f4aebb4

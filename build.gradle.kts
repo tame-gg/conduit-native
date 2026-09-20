@@ -37,7 +37,7 @@ sourceSets.main { java.srcDir("src/compat-velocity/java") }
 // What a Velocity plugin links against at run time, and the one statement of that set. velocity-api's
 // POM brings most of it -- Adventure, Brigadier, Guice, Gson, SnakeYAML, Configurate, Caffeine,
 // toml4j -- and resolving it here gets the transitives with it, rather than a hand-written list of
-// file names that goes stale the first time one of those POMs changes. `gradle lockVelocityRuntime`
+// file names that goes stale the first time one of those POMs changes. `./gradlew lockVelocityRuntime`
 // writes the resolved files to config/velocity-runtime.lock, and that lock is what the release build
 // fetches and merges into the jar. Nothing reads a developer's lib/ to decide what a release needs.
 val velocityRuntime = configurations.create("velocityRuntime") {
@@ -75,7 +75,7 @@ val lockVelocityRuntime = tasks.register("lockVelocityRuntime") {
     }.sorted()
     lock.asFile.parentFile.mkdirs()
     lock.asFile.writeText(
-      ("# Written by `gradle lockVelocityRuntime` from the velocityRuntime configuration in\n"
+      ("# Written by `./gradlew lockVelocityRuntime` from the velocityRuntime configuration in\n"
         + "# build.gradle.kts. Do not edit by hand. <repository path>\\t<sha256>.\n"
         + lines.joinToString("\n", postfix = "\n")).replace("\n", System.lineSeparator())
     )
@@ -151,6 +151,7 @@ distributions {
       into("source/conduit") {
         from(rootDir) {
           include("src/**", "scripts/**", "tools/**", "config/**", "docs/**", "lib/README.md",
+            "gradle/wrapper/**", "gradlew", "gradlew.bat",
             "build.gradle.kts", "settings.gradle.kts", "README.md", "LICENSE", "THIRD-PARTY-NOTICES")
           exclude("**/__pycache__/**")
         }
