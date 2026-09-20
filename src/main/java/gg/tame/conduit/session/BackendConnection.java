@@ -160,17 +160,17 @@ public final class BackendConnection implements AutoCloseable {
     if (channel == null) return null;
     // While the channel is still blocking: registering makes it non-blocking, and a flush through
     // the socket's own output stream after that throws IllegalBlockingModeException.
-    synchronized (writeLock) { output.flush(); }
     java.io.InputStream current = input();
     int buffered = current.available();
     byte[] carried = buffered > 0 ? current.readNBytes(buffered) : new byte[0];
-    gg.tame.conduit.network.ConnectionSelector.Registration registration =
-        selector.register(channel, carried, handler);
     synchronized (writeLock) {
+      output.flush();
+      gg.tame.conduit.network.ConnectionSelector.Registration registration =
+          selector.register(channel, carried, handler);
       this.output = registration.output();
+      this.attached = registration;
+      return registration;
     }
-    this.attached = registration;
-    return registration;
   }
 
   /** Fills until a whole frame is buffered; false when the socket has no more to give just now. */

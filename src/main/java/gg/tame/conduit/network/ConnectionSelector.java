@@ -115,6 +115,7 @@ public final class ConnectionSelector implements AutoCloseable {
     final Loop loop;
     final AtomicBoolean busy = new AtomicBoolean();
     final AtomicBoolean done = new AtomicBoolean();
+    private final AtomicBoolean started = new AtomicBoolean();
     volatile SelectionKey key;
     /** The connection this one's reads are written to, whose congestion pauses those reads. */
     private volatile Registration sink;
@@ -128,6 +129,10 @@ public final class ConnectionSelector implements AutoCloseable {
     }
 
     public java.io.InputStream input() { return reader; }
+    /** Starts callbacks only after both transports and the session have installed this watch. */
+    public void start() {
+      if (!done.get() && started.compareAndSet(false, true)) loop.add(this);
+    }
     public java.io.OutputStream output() { return writer; }
     /** Whether a whole frame is buffered; a worker reads only when it is. */
     public boolean hasCompleteFrame(int maximumFrameBytes) { return reader.hasCompleteFrame(maximumFrameBytes); }
@@ -161,13 +166,14 @@ public final class ConnectionSelector implements AutoCloseable {
     public void cancel() { finish(this, null); }
   }
 
-  /** Watches a connection that was never encrypted. */
+  /** Prepares an unencrypted connection; {@link Registration#start()} enables callbacks. */
   public Registration register(SocketChannel channel, byte[] carriedPlaintext, Handler handler) throws IOException {
     return register(channel, carriedPlaintext, null, handler);
   }
 
   /**
-   * Watches a connection, from here on non-blocking.
+   * Prepares a connection, from here on non-blocking. Call {@link Registration#start()} only after
+   * the session and both transports are ready for callbacks.
    *
    * <p>{@code carriedPlaintext} is what the blocking stream being replaced had already taken off the
    * socket and not yet handed out; without it those bytes would be lost at the changeover. {@code
@@ -183,7 +189,6 @@ public final class ConnectionSelector implements AutoCloseable {
     if (decrypt != null) reader.decryptWith(decrypt);
     channel.configureBlocking(false);
     Registration registration = new Registration(channel, reader, handler, loop);
-    loop.add(registration);
     return registration;
   }
 
@@ -223,6 +228,7 @@ public final class ConnectionSelector implements AutoCloseable {
 
     void add(Registration registration) {
       submit(() -> {
+        if (registration.done.get()) return;
         try {
           registration.key = registration.channel.register(selector, SelectionKey.OP_READ, registration);
         } catch (ClosedChannelException gone) {

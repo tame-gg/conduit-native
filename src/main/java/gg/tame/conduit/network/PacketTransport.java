@@ -143,13 +143,12 @@ public final class PacketTransport {
     // Everything the old streams hold is dealt with while the channel is still blocking. Registering
     // first makes it non-blocking, and this flush -- through the socket's own output stream -- then
     // throws IllegalBlockingModeException, which only shows up when the buffer is not already empty.
-    synchronized (writeLock) { output.flush(); }
-    // Plaintext the old chain is holding: at most what the socket had when it was last asked, plus
-    // the one byte hungUp() may have pushed back.
-    int buffered = input.available();
-    byte[] carried = buffered > 0 ? input.readNBytes(buffered) : new byte[0];
-    ConnectionSelector.Registration registration = selector.register(channel, carried, decryptCipher, handler);
     synchronized (writeLock) {
+      output.flush();
+      // Hold writes across the mode change and stream replacement as well as the final flush.
+      int buffered = input.available();
+      byte[] carried = buffered > 0 ? input.readNBytes(buffered) : new byte[0];
+      ConnectionSelector.Registration registration = selector.register(channel, carried, decryptCipher, handler);
       this.input = registration.input();
       // The encrypting layer is put back on top of the new stream. Replacing the whole chain sent
       // an encrypted client everything after its login in plaintext, and it sat there waiting for a
@@ -157,9 +156,9 @@ public final class PacketTransport {
       // frame length is inside the encrypted stream.
       this.output = encryptCipher == null ? registration.output()
           : CipherStreams.encrypting(registration.output(), encryptCipher);
+      this.attached = registration;
+      return registration;
     }
-    this.attached = registration;
-    return registration;
   }
 
   /** Whether there is a channel behind the socket, which a connection has to have to be watched. */

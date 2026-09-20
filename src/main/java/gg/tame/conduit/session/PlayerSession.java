@@ -615,7 +615,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     firstConnected = runtime.registered(initial.server().name()).orElse(null);
     if (configurationEntered == null) connectedToFirst();
     this.joinedAtNanos = joined;
-    if (watch(initial)) return;
+    try {
+      if (watch(initial)) return;
+    } catch (IOException | RuntimeException failed) {
+      // PostLogin has already fired. A kick racing attachment still ends a completed login,
+      // just as returning from the blocking relay does, and releases its accounting once.
+      ended();
+      throw failed;
+    }
     Thread backendReader = gg.tame.conduit.network.SocketThreads.start(this::readBackend);
     try { readClient(); }
     finally {
@@ -651,28 +658,24 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * tests build one -- and the caller then reads them on two threads as it always did. Both or
    * neither: half a relay watched and half on a thread is a shape nothing else here expects.
    */
-  private boolean watch(BackendConnection initial) {
+  private boolean watch(BackendConnection initial) throws IOException {
     var selector = runtime.connectionSelector();
     if (selector == null || !client.selectable() || !initial.selectable()) return false;
-    try {
-      var backendWatch = watchBackend(initial);
-      clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
-        @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
-        @Override public void onClosed(String reason) { ended(); }
-      });
-      // Each direction knows where its packets end up, so that a peer falling behind stops the
-      // other being read rather than being buffered here. A blocking write used to do this by
-      // itself, by holding the thread that was reading the other socket.
-      pair(clientWatch, backendWatch);
-      watched = true;
-      return true;
-    } catch (IOException failed) {
-      // Nothing is half-done that matters: a backend already registered is unregistered by the
-      // close that ending the session runs, and the session has not been handed out yet.
-      gg.tame.conduit.log.ConduitLog.warn("Could not watch " + username() + "'s connection, so it keeps"
-          + " a thread per socket: " + (failed.getMessage() == null ? failed.getClass().getSimpleName() : failed.getMessage()));
-      return false;
+    var backendWatch = watchBackend(initial);
+    clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
+      @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
+      @Override public void onClosed(String reason) { ended(); }
+    });
+    // Publish both transports before either callback can use them. A failed attachment propagates
+    // to login cleanup: once a channel is non-blocking, falling back to blocking readers is unsafe.
+    pair(clientWatch, backendWatch);
+    watched = true;
+    if (closed) ended();
+    else {
+      clientWatch.start();
+      backendWatch.start();
     }
+    return true;
   }
 
   /**
@@ -2473,15 +2476,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // session's backend, which may be as quiet as it likes: left in place, that deadline read four
       // silent seconds on a limbo server as a lost backend and sent the player to the fallback.
       next.setReadTimeoutMillis(0);
-      // Watched before it is installed, so that nothing it sends after the commit can arrive while
-      // no one is reading it. Its own registration, so the backend this replaces stops being read
-      // the moment it is closed, without either knowing about the other.
-      if (watched) pair(clientWatch, watchBackend(next));
+      // Prepare the watch first, but dispatch only after publication: reading earlier drops the
+      // new backend's first packets as belonging to a backend that is not current yet.
+      var nextWatch = watched ? watchBackend(next) : null;
+      if (watched) pair(clientWatch, nextWatch);
       synchronized (lock) {
+        if (closed) throw new IOException("session closed");
         backend = next;
         switchingTarget = null;
         next = null;
         lifecycle.set(SessionLifecycle.CONNECTED);
+        if (nextWatch != null) nextWatch.start();
         lock.notifyAll();
       }
       // An FML1 client does not run its handshake twice. Forge's HandshakeReset puts it back to
