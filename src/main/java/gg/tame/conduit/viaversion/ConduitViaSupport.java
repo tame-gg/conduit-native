@@ -33,6 +33,44 @@ public final class ConduitViaSupport {
   }
 
   /**
+   * The protocol number ViaVersion gives a release name, for a version Conduit has no catalog
+   * entry of its own for. Via ships a new Minecraft release long before a Conduit release can, and
+   * an operator who writes that release's name into conduit.toml means the version their players
+   * are on, not a typo to refuse a start over.
+   *
+   * <p>Via's table is static, so this answers before the platform has been started -- which is
+   * where it is needed, since the configuration is read first. Without Via on the class path at
+   * all there is no answer and the caller reports the name as unknown.
+   */
+  public static java.util.OptionalInt protocolByName(String name) {
+    if (name == null || name.isBlank()) return java.util.OptionalInt.empty();
+    String token = name.strip();
+    try {
+      for (ProtocolVersion version : ProtocolVersion.getProtocols()) {
+        if (!version.isKnown()) continue;
+        if (token.equalsIgnoreCase(version.getName())) return java.util.OptionalInt.of(version.getVersion());
+        for (String included : version.getIncludedVersions()) {
+          if (token.equalsIgnoreCase(included)) return java.util.OptionalInt.of(version.getVersion());
+        }
+      }
+    } catch (Throwable viaMissing) {
+      return java.util.OptionalInt.empty();
+    }
+    return java.util.OptionalInt.empty();
+  }
+
+  /** Via's name for a protocol number, whether or not the platform has started. */
+  public static java.util.Optional<String> knownName(int protocolNumber) {
+    try {
+      ProtocolVersion version = ProtocolVersion.getProtocol(protocolNumber);
+      if (version == null || !version.isKnown()) return java.util.Optional.empty();
+      return java.util.Optional.ofNullable(version.getName());
+    } catch (Throwable viaMissing) {
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
    * The highest Minecraft protocol Via knows how to carry, which is what a bundled Via that has
    * updated itself makes newly reachable. Empty when translation is off or Via is not up yet.
    *

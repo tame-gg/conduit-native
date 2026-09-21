@@ -433,11 +433,19 @@ public final class ConfigurationLoader {
       if (version.displayName().equalsIgnoreCase(token)) return version.number();
       if (("minecraft_" + version.displayName().replace('.', '_')).equalsIgnoreCase(normalized)) return version.number();
     }
+    // A release Via carries but Conduit has no catalog entry for -- the newest one, usually, since
+    // Via ships it first. Refusing to start over a version the proxy can actually carry made an
+    // operator edit out the version their players are on.
+    var carried = gg.tame.conduit.viaversion.ConduitViaSupport.protocolByName(token);
+    if (carried.isPresent()) return carried.getAsInt();
     throw new IllegalArgumentException("unknown Minecraft version: " + raw);
   }
   private static int protocol(String key, String raw) {
     try { return resolveProtocol(raw); }
     catch (IllegalArgumentException unknown) {
+      // A release neither table has, which is usually one newer than both. The wording is the one
+      // ConfigValidationTests pins, and it already names the way through: a protocol number is
+      // taken as written, so a version only a newer ViaVersion carries can still be gated on.
       throw new IllegalArgumentException(key + " must name Minecraft releases such as 1.20.4, or protocol numbers (" + unknown.getMessage() + ")");
     }
   }

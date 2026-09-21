@@ -26,6 +26,7 @@ public final class PingVersionNameTests {
     theRangeEndsAreTheOnesThatCanActuallyJoin();
     aSpanOfVersionsReadsAsASpan();
     aGateThatIsOffAdvertisesNothingItDoesNotEnforce();
+    aVersionOnlyViaKnowsIsStillAVersion();
     System.out.println("PingVersionNameTests OK");
   }
 
@@ -92,6 +93,44 @@ public final class PingVersionNameTests {
     require(off.allows(47), "an old client still joins with the gate off");
     require(SupportedVersions.versionName(off, 47).equals("Conduit " + SupportedVersions.range()),
         "so the range is what is advertised, got " + SupportedVersions.versionName(off, 47));
+  }
+
+  /**
+   * A release ViaVersion carries but this build has no catalog entry for is a version an operator
+   * may name. It used to refuse the start -- "unknown Minecraft version: 26.3" -- which turned a
+   * proxy that could carry those players into one that would not boot for them.
+   */
+  private static void aVersionOnlyViaKnowsIsStillAVersion() throws Exception {
+    java.nio.file.Path file = TempFiles.dir("version-names").resolve("conduit.toml");
+    // 1.9 is in Via's table and not in Conduit's catalog of named releases.
+    java.nio.file.Files.writeString(file, gate("1.9"));
+    var configuration = gg.tame.conduit.config.ConfigurationLoader.load(file);
+    require(configuration.versions().allowProtocols().equals(Set.of(107)),
+        "the protocol Via gives that name, got " + configuration.versions().allowProtocols());
+
+    // A name neither table has still stops the start, and says how to name it anyway.
+    java.nio.file.Files.writeString(file, gate("1.99.9"));
+    try {
+      gg.tame.conduit.config.ConfigurationLoader.load(file);
+      throw new AssertionError("a version nothing knows must be refused");
+    } catch (IllegalArgumentException refused) {
+      require(refused.getMessage().contains("protocol numbers"),
+          "pointing at protocol numbers, got " + refused.getMessage());
+    }
+
+    // Which is the way through: a number is taken as written, whatever the tables hold.
+    java.nio.file.Files.writeString(file, gate("777"));
+    require(gg.tame.conduit.config.ConfigurationLoader.load(file).versions().allowProtocols().equals(Set.of(777)),
+        "a protocol number needs no table");
+  }
+
+  /** A whole configuration whose gate allows one version, written as an operator would write it. */
+  private static String gate(String version) {
+    return "[listener]\nhost = \"127.0.0.1\"\nport = 25565\nmax-frame-bytes = 2097152\n"
+        + "[forwarding]\nmode = \"none\"\n"
+        + "[servers.lobby]\nhost = \"127.0.0.1\"\nport = 25566\n"
+        + "[routing]\ninitial = [\"lobby\"]\nfallback = [\"lobby\"]\n"
+        + "[versions]\nenabled = true\nallow = [\"" + version + "\"]\n";
   }
 
   private static VersionGateSettings gated(Set<Integer> allowed) {

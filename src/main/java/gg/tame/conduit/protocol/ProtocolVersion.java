@@ -162,7 +162,10 @@ public record ProtocolVersion(int number, String displayName, ProtocolEra era, P
 
   public static String display(int number) {
     for (ProtocolVersion version : CATALOG) if (version.number() == number) return version.displayName();
-    return "protocol " + number;
+    // A release newer than this catalog, which ViaVersion may well have a name for. "protocol 777"
+    // in a kick message or a server list entry tells a player nothing they can act on.
+    var carried = gg.tame.conduit.viaversion.ConduitViaSupport.knownName(number);
+    return carried.orElse("protocol " + number);
   }
 
   public static Map<Integer, ProtocolVersion> byNumber() {
