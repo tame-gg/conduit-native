@@ -616,7 +616,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (configurationEntered == null) connectedToFirst();
     this.joinedAtNanos = joined;
     try {
-      if (watch(initial)) return;
+      if (watch()) return;
     } catch (IOException | RuntimeException failed) {
       // PostLogin has already fired. A kick racing attachment still ends a completed login,
       // just as returning from the blocking relay does, and releases its accounting once.
@@ -658,31 +658,46 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * tests build one -- and the caller then reads them on two threads as it always did. Both or
    * neither: half a relay watched and half on a thread is a shape nothing else here expects.
    */
-  private boolean watch(BackendConnection initial) throws IOException {
+  private boolean watch() throws IOException {
     var selector = runtime.connectionSelector();
-    if (selector == null || !client.selectable() || !initial.selectable()) return false;
-    var backendWatch = watchBackend(initial);
-    clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
-      @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
-      @Override public void onClosed(String reason, boolean fault) {
-        // The only account of why this player was dropped. Thrown away, a relay that failed -- a
-        // peer that stopped reading, a translator that threw, a worker that took an error -- took
-        // the player off the proxy and left nothing in the log to say so; a session read on a
-        // thread of its own at least had its IOException named where the login was logged.
-        if (fault) gg.tame.conduit.log.ConduitLog.warn(origin() + ": connection closed: " + reason);
-        else gg.tame.conduit.log.ConduitLog.debug(origin() + ": connection closed: " + reason);
-        ended();
+    if (selector == null || !client.selectable()) return false;
+    boolean endNow;
+    // Under the lock the switch commits in, and watching whatever backend is current rather than
+    // the one the login opened. Login fires PlayerPostLoginEvent and PlayerServerConnectedEvent
+    // before reaching here, so a plugin that routes the player from either listener -- a lobby
+    // router -- has already switched them by now, and the backend this used to be handed had been
+    // closed and discarded by that switch. Attaching to it threw, and the player was disconnected
+    // instead of moved. The same lock also settles who watches the new backend: a switch reads
+    // {@code watched} while deciding, so both that read and this write have to be one decision.
+    synchronized (lock) {
+      BackendConnection live = backend;
+      if (live == null || !live.selectable()) return false;
+      var backendWatch = watchBackend(live);
+      clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
+        @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
+        @Override public void onClosed(String reason, boolean fault) {
+          // The only account of why this player was dropped. Thrown away, a relay that failed -- a
+          // peer that stopped reading, a translator that threw, a worker that took an error -- took
+          // the player off the proxy and left nothing in the log to say so; a session read on a
+          // thread of its own at least had its IOException named where the login was logged.
+          if (fault) gg.tame.conduit.log.ConduitLog.warn(origin() + ": connection closed: " + reason);
+          else gg.tame.conduit.log.ConduitLog.debug(origin() + ": connection closed: " + reason);
+          ended();
+        }
+      });
+      // Publish both transports before either callback can use them. A failed attachment propagates
+      // to login cleanup: once a channel is non-blocking, falling back to blocking readers is unsafe.
+      pair(clientWatch, backendWatch);
+      watched = true;
+      endNow = closed;
+      if (!endNow) {
+        clientWatch.start();
+        backendWatch.start();
       }
-    });
-    // Publish both transports before either callback can use them. A failed attachment propagates
-    // to login cleanup: once a channel is non-blocking, falling back to blocking readers is unsafe.
-    pair(clientWatch, backendWatch);
-    watched = true;
-    if (closed) ended();
-    else {
-      clientWatch.start();
-      backendWatch.start();
     }
+    // Outside the lock: ending closes both connections, and the client's close waits out the linger
+    // that gives a kicked player their reason, which is not something to hold the switch lock for.
+    if (endNow) ended();
     return true;
   }
 
@@ -2508,10 +2523,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       next.setReadTimeoutMillis(0);
       // Prepare the watch first, but dispatch only after publication: reading earlier drops the
       // new backend's first packets as belonging to a backend that is not current yet.
-      var nextWatch = watched ? watchBackend(next) : null;
-      if (watched) pair(clientWatch, nextWatch);
+      //
+      // Under the lock, all of it. Whether this backend is watched is decided by reading {@code
+      // watched}, which the login sets when it starts watching, and a switch that read it outside
+      // the lock could be told "not watched" by a login that was watching a moment later: the login
+      // then watched the backend this switch is replacing, this switch watched nothing, and the
+      // player sat on a backend nobody was reading. One lock, one decision.
       synchronized (lock) {
         if (closed) throw new IOException("session closed");
+        var nextWatch = watched ? watchBackend(next) : null;
+        if (nextWatch != null) pair(clientWatch, nextWatch);
         backend = next;
         switchingTarget = null;
         next = null;
