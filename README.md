@@ -114,7 +114,9 @@ See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`. **Minecraft 26.3 is not su
 
 Conduit's current roadmap targets the **modern Java protocol era**: Minecraft **1.13 through 26.2**.
 
-**Minecraft 1.12.2 and older are OUT OF SCOPE** for this program (catalog may list them as `LEGACY_UNSUPPORTED`). They will be a separate legacy project later.
+**Minecraft 1.12.2 and older are out of scope for this program**, which is not the same as being refused: 1.7.6, 1.8.x and 1.12.2 each have a declared codec, so a client on one logs in and is carried across by ViaRewind or ViaVersion. What they do not get is the modern program's work -- no native translators, no end-to-end verification. Treat them as untested.
+
+**The oldest client Conduit admits is 1.7.6** (protocol 5). A 1.7.5 or older client is turned away at the handshake with "Unsupported Minecraft version", whatever ViaVersion reports as its own floor at start: the login path needs a codec of Conduit's own, and there is none below protocol 5. A proper legacy project comes later.
 
 Three distinct concepts:
 
@@ -140,7 +142,7 @@ Do **not** read the catalog as "everything is supported."
 
 Modern named releases are mapped from public protocol data (Minecraft Wiki / PrismarineJS), including aliases that share a protocol number (e.g. 1.20 + 1.20.1 → 763, 1.16.4 + 1.16.5 → 754).
 
-Legacy catalog markers (no modern-program work): 1.7.10 (5), 1.8.9 (47), 1.12.2 (340).
+Pre-1.13 codecs, declared rather than verified: 1.7.6-1.7.10 (5), 1.8.x (47), 1.12.2 (340). Each covers the packets Conduit reads on its own behalf -- handshake, login, disconnect -- from published ids, with the cross-version work left to ViaRewind and ViaVersion. Enough to join and be routed; not exercised by the modern program's testing.
 
 Unknown handshake versions disconnect. They are never decoded as 1.20.4.
 
