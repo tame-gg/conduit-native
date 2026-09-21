@@ -5,7 +5,7 @@ Velocity or Velocity-CTD fork, and it has no dependency on either implementation
 
 `tame-gg/conduit` is intentionally separate and untouched.
 
-Current version: **0.9.4**. Native plugin API version: **1**.
+Current version: **0.9.5**. Native plugin API version: **1**.
 
 ## License
 
@@ -890,15 +890,15 @@ public final class ExamplePlugin extends ConduitPlugin {
 }
 ```
 
-To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.4.jar` (the version is
+To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.5.jar` (the version is
 `Conduit.VERSION`) and its `-sources.jar`: the `gg.tame.conduit.api` classes and nothing else. Then:
 
 ```powershell
-javac --release 21 -cp build/conduit-api-0.9.4.jar -d classes src/com/example/ExamplePlugin.java
+javac --release 21 -cp build/conduit-api-0.9.5.jar -d classes src/com/example/ExamplePlugin.java
 jar --create --file plugins/example.jar conduit-plugin.yml -C classes .
 ```
 
-With Gradle: `compileOnly(files("path/to/conduit-api-0.9.4.jar"))`. The proxy provides the API at run time,
+With Gradle: `compileOnly(files("path/to/conduit-api-0.9.5.jar"))`. The proxy provides the API at run time,
 so do not ship it inside the plugin. Use `gg.tame.conduit.api` only: the rest of Conduit (`session`,
 `network`, `protocol` and so on) is internal and changes without notice. `ApiBoundaryTests` checks that the
 API compiles on its own and that this example loads.
