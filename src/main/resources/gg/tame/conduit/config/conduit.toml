@@ -136,6 +136,15 @@ display-max-players = 100
 # backend's icon off as this proxy's.
 # favicon-policy = "plugins"
 
+# How many players the server list names when the player count is hovered. 0 lists
+# nobody, which is what to set when who is online is not public. Names come from the
+# whole network, not one backend.
+# player-sample = 12
+
+# Whether each name in that list is followed by the server the player is on, as
+# "Steve (lobby)". Off by default, so the list reads as it does on a single server.
+# player-sample-server = false
+
 # Turned on and off with /conduit maintenance. While it is on, players see motd in
 # the server list and kick-message if they try to join.
 [maintenance]
@@ -307,12 +316,23 @@ log-mod-handshakes = false
 #
 # For a machine with no route out, put the five Via jars in lib/via yourself --
 # Conduit uses those whether it fetched them or you did. (restart)
+# How backend plugins reach the proxy. The BungeeCord plugin channel is what a hub
+# plugin's /hub, and a queue plugin running on a backend, is built on: without it
+# they fail silently, because the message is delivered and never acted on. Turn it
+# off only where no backend is trusted to move, kick or message players.
+[messaging]
+bungeecord-channel = true
+
 [updates]
 via = true
 # Say that a newer version exists without downloading it.
 check-only = false
 # How long the check may take, in milliseconds.
 timeout-ms = 5000
+# How long a check is good for, in hours. The check is the one thing between starting
+# Conduit and Conduit listening that waits on another server, so it is remembered and
+# not repeated on every restart. 0 checks on every start.
+via-check-interval-hours = 12
 
 
 # Written by Conduit, so a newer version knows which settings this file predates.

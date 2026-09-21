@@ -2,6 +2,7 @@
 package gg.tame.conduit.boot;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
@@ -94,8 +95,17 @@ public final class Bootstrap {
       say("INFO", "Installed ViaVersion: " + installed.detail());
     }
     if (!config.viaUpdates()) return;
+    // Nothing else between starting Conduit and Conduit listening waits on somebody else's server.
+    // A check that finds a release downloads some ten megabytes before the proxy binds, and one that
+    // cannot reach the repository waits out timeout-ms -- both on every restart, for an answer that
+    // changes every few weeks. A check is therefore remembered, and one made within the interval is
+    // not made again.
+    if (checkedRecently(viaDirectory, config.checkIntervalHours())) return;
     Map<String, String> have = effectiveVersions(viaDirectory);
     ViaUpdater.Outcome outcome = ViaUpdater.update(viaDirectory, have, config.checkOnly(), config.timeoutMs());
+    // A check that reached the repository is remembered; one that failed is not, so an unreachable
+    // network is retried on the next start rather than held off for the interval.
+    if (outcome.kind() != ViaUpdater.Outcome.Kind.FAILED) rememberCheck(viaDirectory);
     switch (outcome.kind()) {
       // superseded/ is only mentioned when something was actually put there. On a first update the
       // set being replaced is the one inside the jar, so there is nothing on disk to move, and
@@ -110,6 +120,40 @@ public final class Bootstrap {
       case FAILED -> say("WARN", "ViaVersion update check failed (" + outcome.detail()
           + "). Carrying on with the ViaVersion already in use.");
       case UP_TO_DATE -> { /* The ordinary case, and not worth a line every start. */ }
+    }
+  }
+
+  /** Where the time of the last check that reached repo.viaversion.com is kept. */
+  private static Path checkMarker(Path viaDirectory) { return viaDirectory.resolve(".last-update-check"); }
+
+  /**
+   * Whether a check was made recently enough to stand in for this one. An interval of 0 means every
+   * start checks, which is how Conduit behaved before the marker existed. A marker that cannot be
+   * read, or holds something that is not a time, is treated as no marker at all: the cost of an
+   * extra check is one round trip, and the cost of trusting a bad one is never updating again.
+   */
+  private static boolean checkedRecently(Path viaDirectory, int intervalHours) {
+    if (intervalHours <= 0) return false;
+    try {
+      Path marker = checkMarker(viaDirectory);
+      if (!Files.isRegularFile(marker)) return false;
+      long checkedAt = Long.parseLong(Files.readString(marker, StandardCharsets.UTF_8).strip());
+      long age = System.currentTimeMillis() - checkedAt;
+      // A marker from the future is a clock that moved, not a check that has not happened yet.
+      return age >= 0 && age < intervalHours * 3_600_000L;
+    } catch (IOException | RuntimeException unreadable) {
+      return false;
+    }
+  }
+
+  /** Records that the repository answered, so the next start within the interval need not ask. */
+  private static void rememberCheck(Path viaDirectory) {
+    try {
+      Files.writeString(checkMarker(viaDirectory), Long.toString(System.currentTimeMillis()),
+          StandardCharsets.UTF_8);
+    } catch (IOException | RuntimeException unwritable) {
+      // A marker that cannot be written costs a check next start, which is what used to happen
+      // every start. Not worth a line in the log, and certainly not worth failing a start over.
     }
   }
 

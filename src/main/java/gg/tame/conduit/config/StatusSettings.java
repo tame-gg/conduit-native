@@ -19,7 +19,7 @@ import java.util.Optional;
  * number printed after the slash: Conduit has no join cap, and this is not one.
  */
 public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon,
-                             FaviconPolicy faviconPolicy) {
+                             FaviconPolicy faviconPolicy, int playerSample, boolean playerSampleServer) {
   /**
    * Who decides the icon a client is sent.
    *
@@ -51,8 +51,24 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
     this(motd, displayMaxPlayers, favicon, FaviconPolicy.PLUGINS);
   }
 
+  /** The player sample as it was before it could be configured: twelve names, without their server. */
+  public StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon, FaviconPolicy faviconPolicy) {
+    this(motd, displayMaxPlayers, favicon, faviconPolicy, DEFAULT_PLAYER_SAMPLE, false);
+  }
+
   public static final String DEFAULT_MOTD = "Conduit";
   public static final int DEFAULT_DISPLAY_MAX_PLAYERS = 100;
+  /**
+   * How many names the server list shows when the player count is hovered. Twelve is what Conduit
+   * has always sent and about what a client renders before the tooltip runs off the screen.
+   */
+  public static final int DEFAULT_PLAYER_SAMPLE = 12;
+  /**
+   * The most that may be asked for. The whole status answer has to fit in 32767 characters, and a
+   * name and a UUID cost about sixty of them, so a sample far past this is a status a client cannot
+   * parse -- which it shows as a server that is down.
+   */
+  public static final int MAX_PLAYER_SAMPLE = 200;
   /**
    * A client reads the whole status answer as one string of at most 32767 characters, and one that
    * is longer fails to parse and shows the server as unreachable. The favicon is by far the largest
@@ -65,10 +81,17 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
     if (favicon == null) favicon = Optional.empty();
     if (faviconPolicy == null) faviconPolicy = FaviconPolicy.PLUGINS;
     if (displayMaxPlayers < 0) throw new IllegalArgumentException("status.display-max-players must be >= 0");
+    if (playerSample < 0 || playerSample > MAX_PLAYER_SAMPLE) {
+      throw new IllegalArgumentException("status.player-sample must be 0.." + MAX_PLAYER_SAMPLE);
+    }
   }
 
+  /** Whether the server list lists any names at all when the player count is hovered. */
+  public boolean playerSampleEnabled() { return playerSample > 0; }
+
   public static StatusSettings defaults() {
-    return new StatusSettings(Text.of(DEFAULT_MOTD), DEFAULT_DISPLAY_MAX_PLAYERS, Optional.empty());
+    return new StatusSettings(Text.of(DEFAULT_MOTD), DEFAULT_DISPLAY_MAX_PLAYERS, Optional.empty(),
+        FaviconPolicy.PLUGINS, DEFAULT_PLAYER_SAMPLE, false);
   }
 
   /**

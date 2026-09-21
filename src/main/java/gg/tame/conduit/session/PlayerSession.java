@@ -558,9 +558,20 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
           } catch (IOException ignored) { }
         }
       }
+      // A backend asking the proxy for something, rather than a backend talking to the client. It is
+      // addressed here, so it is answered here and never passed on: a client has no business being
+      // handed the network's player list, and a plugin on the other side would not understand it
+      // either. Plugins still see it first, so one may cancel or inspect it as it always could.
       var event = new gg.tame.conduit.api.event.messaging.PluginMessageEvent(this, decoded.channel(), decoded.data(), direction);
       runtime.events().fire(event);
-      return !event.cancelled();
+      if (event.cancelled()) return false;
+      if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY
+          && configuration.ops().messaging().bungeeCordChannel()
+          && gg.tame.conduit.messaging.BungeeCordMessages.isChannel(decoded.channel())) {
+        runtime.bungeeCord().handle(this, decoded.channel(), decoded.data());
+        return false;
+      }
+      return true;
     } catch (IOException ignored) {
       return true;
     }

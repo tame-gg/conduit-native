@@ -350,6 +350,9 @@ public final class Phase6Tests {
     core.dispatch(player, "/server missing");
     require(player.messages.stream().anyMatch(line -> line.contains("Unknown server: missing")), "unknown");
     core.dispatch(player, "/conduit");
+    require(player.messages.stream().anyMatch(line -> line.startsWith("Usage: /conduit <")), "bare /conduit names its subcommands");
+    require(player.messages.stream().noneMatch(line -> line.equals("Current server: lobby")), "bare /conduit is not info");
+    core.dispatch(player, "/conduit info");
     require(player.messages.stream().anyMatch(line -> line.startsWith("Conduit ")), "conduit version");
     require(player.messages.stream().anyMatch(line -> line.equals("Current server: lobby")), "conduit current server");
     require(core.tabComplete(player, "/server s").equals(List.of("survival")), "server tab filter");

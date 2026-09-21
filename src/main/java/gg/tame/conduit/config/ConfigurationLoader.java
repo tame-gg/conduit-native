@@ -256,7 +256,7 @@ public final class ConfigurationLoader {
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
     return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory),
-        metrics(values), updates(values));
+        metrics(values), updates(values), messaging(values));
   }
 
   private static MetricsSettings metrics(Map<String, String> values) {
@@ -267,11 +267,17 @@ public final class ConfigurationLoader {
     return new MetricsSettings(Optional.of(address));
   }
 
+  private static MessagingSettings messaging(Map<String, String> values) {
+    return new MessagingSettings(optionalBoolean(values, "messaging.bungeecord-channel",
+        MessagingSettings.DEFAULT_BUNGEECORD_CHANNEL));
+  }
+
   private static UpdateSettings updates(Map<String, String> values) {
     return new UpdateSettings(
         optionalBoolean(values, "updates.via", UpdateSettings.DEFAULT_VIA),
         optionalBoolean(values, "updates.check-only", false),
-        optionalInteger(values, "updates.timeout-ms", UpdateSettings.DEFAULT_TIMEOUT_MS));
+        optionalInteger(values, "updates.timeout-ms", UpdateSettings.DEFAULT_TIMEOUT_MS),
+        optionalInteger(values, "updates.via-check-interval-hours", UpdateSettings.DEFAULT_CHECK_INTERVAL_HOURS));
   }
 
   /**
@@ -308,7 +314,9 @@ public final class ConfigurationLoader {
         optionalInteger(values, "status.display-max-players", StatusSettings.DEFAULT_DISPLAY_MAX_PLAYERS),
         Optional.ofNullable(values.get("status.favicon")).filter(file -> !file.isBlank())
             .flatMap(file -> StatusSettings.favicon(configDirectory.resolve(file).normalize())),
-        StatusSettings.FaviconPolicy.parse(optionalString(values, "status.favicon-policy", "plugins")));
+        StatusSettings.FaviconPolicy.parse(optionalString(values, "status.favicon-policy", "plugins")),
+        optionalInteger(values, "status.player-sample", StatusSettings.DEFAULT_PLAYER_SAMPLE),
+        optionalBoolean(values, "status.player-sample-server", false));
   }
 
   private static TranslationSettings translation(Map<String, String> values) {

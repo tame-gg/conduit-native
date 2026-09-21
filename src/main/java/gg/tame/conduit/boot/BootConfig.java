@@ -19,14 +19,23 @@ import java.util.List;
  * <p>Mirrors {@code gg.tame.conduit.config.UpdateSettings}; {@code BootConfigTest} checks the two agree
  * on the same file.
  */
-public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs) {
+public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs, int checkIntervalHours) {
   /** Matches UpdateSettings.DEFAULT_VIA. */
   private static final boolean DEFAULT_VIA = true;
   /** Matches UpdateSettings.DEFAULT_TIMEOUT_MS. */
   private static final int DEFAULT_TIMEOUT_MS = 5000;
+  /**
+   * How long a check is good for. The update check is the one thing between starting Conduit and
+   * Conduit listening that waits on somebody else's server: an up-to-date check costs about 75 ms,
+   * one that finds a release downloads some ten megabytes before the proxy binds, and one that
+   * cannot reach the repository waits out timeout-ms. Restarting a proxy five times while editing a
+   * config paid that five times over for an answer that had not changed. Twelve hours is often
+   * enough for a project that releases every few weeks, and 0 means every start, as it used to be.
+   */
+  private static final int DEFAULT_CHECK_INTERVAL_HOURS = 12;
 
   public static BootConfig defaults() {
-    return new BootConfig(DEFAULT_VIA, false, DEFAULT_TIMEOUT_MS);
+    return new BootConfig(DEFAULT_VIA, false, DEFAULT_TIMEOUT_MS, DEFAULT_CHECK_INTERVAL_HOURS);
   }
 
   /**
@@ -50,6 +59,7 @@ public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs) {
     boolean via = DEFAULT_VIA;
     boolean checkOnly = false;
     int timeoutMs = DEFAULT_TIMEOUT_MS;
+    int checkIntervalHours = DEFAULT_CHECK_INTERVAL_HOURS;
     String section = "";
     for (String raw : lines) {
       String line = withoutComment(raw).strip();
@@ -66,6 +76,14 @@ public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs) {
       switch (key) {
         case "via" -> via = Boolean.parseBoolean(value);
         case "check-only" -> checkOnly = Boolean.parseBoolean(value);
+        case "via-check-interval-hours" -> {
+          try {
+            int parsed = Integer.parseInt(value.strip());
+            if (parsed >= 0 && parsed <= 8760) checkIntervalHours = parsed;
+          } catch (NumberFormatException notANumber) {
+            // Left at the default; reported properly by the real loader.
+          }
+        }
         case "timeout-ms" -> {
           try {
             int parsed = Integer.parseInt(value);
@@ -79,7 +97,7 @@ public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs) {
         default -> { /* Not the bootstrap's to know about. */ }
       }
     }
-    return withOverride(new BootConfig(via, checkOnly, timeoutMs));
+    return withOverride(new BootConfig(via, checkOnly, timeoutMs, checkIntervalHours));
   }
 
   /**
@@ -91,7 +109,7 @@ public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs) {
   private static BootConfig withOverride(BootConfig config) {
     String override = System.getProperty("conduit.via.update");
     if (override == null || override.isBlank()) return config;
-    return new BootConfig(Boolean.parseBoolean(override), config.checkOnly(), config.timeoutMs());
+    return new BootConfig(Boolean.parseBoolean(override), config.checkOnly(), config.timeoutMs(), config.checkIntervalHours());
   }
 
   /** The line up to a {@code #} outside a quoted string, as the real loader does it. */

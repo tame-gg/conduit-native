@@ -37,6 +37,10 @@ public final class Permissions {
   public static final String DIAGNOSTICS = "conduit.command.diagnostics";
   public static final String ATTACK = "conduit.command.attack";
   public static final String CACHE = "conduit.command.cache";
+  public static final String GBAN = "conduit.command.gban";
+  public static final String GWHITELIST = "conduit.command.gwhitelist";
+  /** Held by the people who must still get in when the whitelist is on, such as the staff turning it on. */
+  public static final String WHITELIST_BYPASS = "conduit.whitelist.bypass";
 
   /**
    * Whether {@code source} holds {@code node}. {@link #CONDUIT_ADMIN} stands for every Conduit node,

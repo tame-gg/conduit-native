@@ -5,7 +5,7 @@ Velocity or Velocity-CTD fork, and it has no dependency on either implementation
 
 `tame-gg/conduit` is intentionally separate and untouched.
 
-Current version: **0.9.3**. Native plugin API version: **1**.
+Current version: **0.9.4**. Native plugin API version: **1**.
 
 ## License
 
@@ -93,6 +93,13 @@ this build pins are in `src/main/resources/gg/tame/conduit/via-bundled.propertie
 `updates.check-only = true` reports a newer version without downloading it. `-Dconduit.via.update=false`
 turns the check off for one start, and `-Dconduit.via.repository=<url>` points it at an internal mirror
 of the same layout. `--check-config` never touches the network.
+
+The check is the one thing between starting Conduit and Conduit listening that waits on somebody else's
+server, so it is remembered: `updates.via-check-interval-hours` (default 12) is how long an answer
+stands for, and a start within that window does not ask again. A check that could not reach the
+repository is not remembered, so an unreachable network is retried on the next start rather than held
+off for the interval. Set it to 0 to check on every start. The time of the last successful check is
+kept in `lib/via/.last-update-check`, and deleting that file forces the next start to check.
 
 Note that an updated Via can know Minecraft versions Conduit has no packet table for. A client on one
 of those is still refused -- Conduit reads a client's own packets before any translator is chosen -- but
@@ -319,7 +326,10 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/send <server> <server>` — move everyone on a backend (bounded concurrency; a player who fails to move stays put)
 * `/send current <server>` — move yourself
 * `/glist`, `/plist <server>`, `/find <player>`, `/alert <message>`, `/ping`, `/hub`, `/gkick <player> [reason]`
-* `/conduit` — branded version line plus current server and counts
+* `/gban <player|address> [duration] [reason]` — ban from the whole network; no duration means permanent
+* `/gunban <player|address>` — lift it
+* `/gwhitelist <on|off|add|remove|list|clear|status>` — close the network to all but a list
+* `/conduit` — the subcommands you may run; `/conduit info` is the branded version line plus current server and counts
 * `/conduit servers` — name + Online/Offline status (more detail than `/server`, still compact)
 * `/conduit health` — cached backend health with hysteresis counters
 * `/conduit maintenance <on|off|status>` — native maintenance mode
@@ -358,6 +368,78 @@ With no permissions plugin, Conduit's default provider grants a player **no node
 not another plugin's: the administrative commands are the console's until a plugin such as LuckPerms hands
 them out. That is what a Velocity plugin already expects of a check nobody answered.
 
+## Backend plugins: the BungeeCord channel
+
+A plugin running on a Paper or Spigot backend has no API to reach its proxy with. What it has is a
+plugin message on the channel `BungeeCord`, renamed `bungeecord:main` when 1.13 made channel names
+namespaced. A hub plugin's `/hub`, and a queue plugin that runs on a backend rather than on the
+proxy, is that message and nothing else. Conduit answers it, under both names, so those plugins work
+unchanged.
+
+```toml
+[messaging]
+bungeecord-channel = true
+```
+
+Supported: `Connect`, `ConnectOther`, `IP`, `IPOther`, `PlayerCount`, `PlayerList`, `GetServers`,
+`GetServer`, `UUID`, `UUIDOther`, `ServerIP`, `Message`, `MessageRaw`, `KickPlayer`, `Forward` and
+`ForwardToPlayer`.
+
+`Connect` goes through the same path `/server` takes, so backend health, the switch's own rules and
+every event a plugin listens for all still apply: a plugin message is not a way around what a
+command has to obey. A message on this channel is consumed and never passed on to the client, since
+it is addressed to the proxy and a client has no business being handed the network's player list;
+plugins still see it first through `PluginMessageEvent` and may cancel it. It is answered only for a
+message that arrived **from a backend**, never from a client, so a modded client cannot forge a
+`KickPlayer` for somebody else.
+
+`Forward` and `ForwardToPlayer` carry a plugin's own payload between backends, passed through
+untouched and never interpreted. One limit is worth knowing, and it belongs to the protocol rather
+than to Conduit: a message reaches a server through a player already on it, because that is the only
+connection a proxy holds to a backend. **A server with nobody on it cannot be reached**, whether the
+target is named, `ALL` or `ONLINE`. BungeeCord and Velocity have the same limit.
+
+It is on by default: a plugin that expects this channel and does not get it fails *silently*, since
+the message is delivered and simply never acted on, and that is a far worse default than answering.
+Turn it off for a network where no backend is trusted to move, kick and message players.
+
+Proxy-side plugins are a different question: a queue or hub plugin built as a **Velocity** jar goes
+through the compatibility adapter instead, and what it can do is in `docs/VELOCITY_COMPATIBILITY.md`.
+
+## Bans and the whitelist
+
+Both are operational state rather than configuration: they live in `bans.txt` and `whitelist.txt`
+beside `conduit.toml`, are written the moment a command changes them, and are in force on the next
+login attempt. Nothing here is read from `conduit.toml` and nothing needs `/conduit reload`.
+
+```
+/gban Steve griefing               a permanent ban, with a reason
+/gban Steve 7d griefing            the same for a week; 30m, 2h, 7d, 4w and perm are understood
+/gban 198.51.100.7 open proxy      an address instead of a name
+/gunban Steve
+/gwhitelist on
+/gwhitelist add Steve
+```
+
+A ban is matched on three things, so it holds: the name (case-insensitively), the account, and the
+address. Banning someone who is online bans their account alongside their name, so changing it does
+not get them back in, and kicks them with the message the ban will show them from now on. Banning an
+address kicks everyone connected from it. A temporary ban simply stops matching when its time is up
+and is dropped from the file the next time it is written; the kick screen tells the player how long
+is left, or that it is permanent. An offline player's account cannot be banned, only their name:
+Conduit does not look names up at Mojang, and a guessed UUID is worse than none.
+
+The whitelist is checked after bans and before maintenance, so a player has to pass all three.
+`conduit.whitelist.bypass` gets in without being on the list, which is how the staff who turned it
+on do not lock themselves out. Taking someone off while it is on also kicks them. It is deliberately
+not the maintenance allowlist: maintenance is a passing state with its own server-list message, and
+the whitelist is a standing policy edited in place.
+
+Both files are plain text, one record per line, and may be edited by hand while the proxy is
+stopped. A line that cannot be read is skipped with a warning rather than taking the start down, and
+a `whitelist.txt` that cannot be read at all leaves the whitelist **off** — an unreadable file
+must not be the reason a whole network is shut out.
+
 ## Server list
 
 ```toml
@@ -365,6 +447,8 @@ them out. That is what a Velocity plugin already expects of a check nobody answe
 motd = "&bConduit&r network\n&7Two lines, if you like"
 display-max-players = 100
 favicon = "server-icon.png"
+player-sample = 12
+player-sample-server = false
 ```
 
 `motd` takes `&` codes: `&0`-`&9` and `&a`-`&f` colours (which, as in the game, clear every decoration),
@@ -373,7 +457,10 @@ second line. It is
 the plain `"Conduit"` when unset. `display-max-players` (default 100) is only the number shown after the
 slash: Conduit has no join cap. `favicon` is a 64x64 PNG, relative to the config file; one that cannot be
 read, is the wrong size, or is over about 20 KB is logged at load and the list shows no icon. The answer
-always carries the real online count and up to 12 online players' names. Maintenance's MOTD and the
+always carries the real online count and, when the player count is hovered, the names of up to
+`player-sample` players (default 12) from across the network -- 0 names nobody, for a network where who
+is online is not public. `player-sample-server = true` follows each name with the server that player is
+on, as `Steve (lobby)`. Maintenance's MOTD and the
 version gate's name and message replace these while they apply, and a plugin can change any of it in
 `ServerListPingEvent`. Applied live by `/conduit reload`.
 
@@ -563,7 +650,9 @@ Velocity layer). The default grants a player no node; the console holds every no
 * `/conduit reload`, `maintenance`, `drain` and `undrain`, `doctor`, `diagnostics`, `attack`, `cache`, `dump`,
   `heap`: `conduit.command.reload` / `maintenance` / `drain` / `doctor` / `diagnostics` / `attack` / `cache` /
   `dump` / `heap`
+* `/gban` and `/gunban`: `conduit.command.gban`; `/gwhitelist`: `conduit.command.gwhitelist`
 * `conduit.maintenance.bypass`, `conduit.drain.bypass`: past maintenance, onto a draining server
+* `conduit.whitelist.bypass`: in while the whitelist is on, without being on it
 * `conduit.admin`: stands for every `conduit.` node above, except one the permissions plugin denies
   outright — a player given `conduit.admin` and an explicit `false` on one node is refused that one
 
@@ -801,15 +890,15 @@ public final class ExamplePlugin extends ConduitPlugin {
 }
 ```
 
-To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.3.jar` (the version is
+To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.4.jar` (the version is
 `Conduit.VERSION`) and its `-sources.jar`: the `gg.tame.conduit.api` classes and nothing else. Then:
 
 ```powershell
-javac --release 21 -cp build/conduit-api-0.9.3.jar -d classes src/com/example/ExamplePlugin.java
+javac --release 21 -cp build/conduit-api-0.9.4.jar -d classes src/com/example/ExamplePlugin.java
 jar --create --file plugins/example.jar conduit-plugin.yml -C classes .
 ```
 
-With Gradle: `compileOnly(files("path/to/conduit-api-0.9.3.jar"))`. The proxy provides the API at run time,
+With Gradle: `compileOnly(files("path/to/conduit-api-0.9.4.jar"))`. The proxy provides the API at run time,
 so do not ship it inside the plugin. Use `gg.tame.conduit.api` only: the rest of Conduit (`session`,
 `network`, `protocol` and so on) is internal and changes without notice. `ApiBoundaryTests` checks that the
 API compiles on its own and that this example loads.

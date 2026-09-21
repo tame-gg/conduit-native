@@ -49,6 +49,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final BackendHealthService health;
   private final BackendSelector selector;
   private final MaintenanceService maintenance;
+  private final gg.tame.conduit.ops.BanList bans;
+  private final gg.tame.conduit.ops.Whitelist whitelist;
+  private final gg.tame.conduit.messaging.BungeeCordMessages bungeeCord =
+      new gg.tame.conduit.messaging.BungeeCordMessages(this);
   private final VersionGate versionGate;
   private final GracefulShutdown gracefulShutdown;
   private final SecurityService security;
@@ -84,6 +88,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.health = new BackendHealthService(new ServerRegistry(configuration), configuration.health());
     this.selector = new BackendSelector(configuration, health);
     this.maintenance = new MaintenanceService(this.configDirectory, configuration.maintenance());
+    // Both are operational state rather than configuration: they are read from their own files and
+    // written the moment a command changes them, so nothing here is touched by a reload.
+    this.bans = new gg.tame.conduit.ops.BanList(this.configDirectory);
+    this.whitelist = new gg.tame.conduit.ops.Whitelist(this.configDirectory);
     this.versionGate = new VersionGate(configuration.versions());
     this.gracefulShutdown = new GracefulShutdown(configuration.shutdown());
     this.security = new SecurityService(configuration.security());
@@ -108,6 +116,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   public ConduitConfiguration configuration() { return configuration; }
   public BackendHealthService health() { return health; }
   public MaintenanceService maintenance() { return maintenance; }
+  public gg.tame.conduit.ops.BanList bans() { return bans; }
+  public gg.tame.conduit.ops.Whitelist whitelist() { return whitelist; }
+  /** The channel backend plugins reach the proxy on; see BungeeCordMessages. */
+  public gg.tame.conduit.messaging.BungeeCordMessages bungeeCord() { return bungeeCord; }
   public VersionGate versionGate() { return versionGate; }
   public GracefulShutdown gracefulShutdown() { return gracefulShutdown; }
   public SecurityService security() { return security; }

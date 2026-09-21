@@ -5,6 +5,8 @@ import gg.tame.conduit.Conduit;
 import gg.tame.conduit.api.server.ServerAvailability;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.metrics.ConduitMetrics;
+import gg.tame.conduit.ops.BanList;
+import gg.tame.conduit.ops.Whitelist;
 import gg.tame.conduit.plugin.PluginCatalog;
 import gg.tame.conduit.routing.ServerMatch;
 import gg.tame.conduit.routing.ServerRegistry;
@@ -51,7 +53,8 @@ public final class CoreCommands {
       java.util.Map.entry("attack", Permissions.ATTACK), java.util.Map.entry("cache", Permissions.CACHE));
   private static final java.util.Map<String, String> ALIASES = java.util.Map.of("version", "info", "attackmode", "attack");
   private static final Set<String> RESERVED = Set.of(
-      "server", "send", "glist", "plist", "find", "alert", "ping", "hub", "gkick", "conduit");
+      "server", "send", "glist", "plist", "find", "alert", "ping", "hub", "gkick", "conduit",
+      "gban", "gunban", "gpardon", "gwhitelist", "gwl");
   private CoreCommands() {}
 
   public static void register(CommandManager manager, ServerRegistry registry, PlayerManager players) {
@@ -87,6 +90,15 @@ public final class CoreCommands {
     manager.register(new RegisteredCommand("gkick", List.of(), Permissions.GKICK,
         (source, arguments) -> gkick(source, players, arguments),
         (source, arguments) -> completePlayers(players, arguments)));
+    manager.register(new RegisteredCommand("gban", List.of(), Permissions.GBAN,
+        (source, arguments) -> gban(source, runtime, players, arguments),
+        (source, arguments) -> completeGban(players, arguments)));
+    manager.register(new RegisteredCommand("gunban", List.of("gpardon"), Permissions.GBAN,
+        (source, arguments) -> gunban(source, runtime, arguments),
+        (source, arguments) -> completeBanned(runtime, arguments)));
+    manager.register(new RegisteredCommand("gwhitelist", List.of("gwl"), Permissions.GWHITELIST,
+        (source, arguments) -> gwhitelist(source, runtime, players, arguments),
+        (source, arguments) -> completeWhitelist(runtime, players, arguments)));
     // No node of its own: each subcommand checks its own. For a player who may run none of them,
     // /conduit is not there at all, and their line goes on to the backend.
     manager.register(new RegisteredCommand("conduit", List.of(), null,
@@ -274,8 +286,191 @@ public final class CoreCommands {
     Messages.failure(source, "Unable to kick " + target.username() + ".");
   }
 
+  /**
+   * {@code /gban <player|address> [duration] [reason]}. No duration means permanent, which is what
+   * an operator typing a name and a reason means. A player who is online is kicked with the same
+   * message the ban will show them from now on, and their account is banned alongside their name so
+   * that changing it does not get them back in.
+   */
+  private static void gban(CommandSource source, ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    if (arguments.isEmpty()) {
+      Messages.info(source, "Usage: /gban <player|address> [duration] [reason]");
+      Messages.info(source, "Duration is 30m, 2h, 7d, 4w or perm; leaving it out is permanent.");
+      return;
+    }
+    String target = arguments.getFirst();
+    List<String> rest = arguments.subList(1, arguments.size());
+    // The second word is a length only if it reads as one; otherwise it is the start of the reason.
+    long expiresAt = BanList.PERMANENT;
+    if (!rest.isEmpty()) {
+      Optional<Long> parsed = BanList.parseExpiry(rest.getFirst());
+      if (parsed.isPresent()) { expiresAt = parsed.get(); rest = rest.subList(1, rest.size()); }
+    }
+    String reason = rest.isEmpty() ? "Banned from this network." : String.join(" ", rest);
+    String actor = source.username();
+    BanList bans = runtime.bans();
+
+    if (BanList.looksLikeAddress(target)) {
+      BanList.Entry entry = bans.ban(BanList.Kind.ADDRESS, target, reason, actor, expiresAt);
+      int kicked = kickMatching(players, player -> player.remoteAddress().getHostAddress().equals(entry.value()), reason);
+      Messages.success(source, "Banned address " + entry.value() + " " + describeBan(entry)
+          + (kicked > 0 ? " (" + kicked + (kicked == 1 ? " player" : " players") + " kicked)" : "") + ".");
+      return;
+    }
+
+    BanList.Entry entry = bans.ban(BanList.Kind.NAME, target, reason, actor, expiresAt);
+    // An online player's account is banned too, so a name change does not undo it. An offline one
+    // cannot be: Conduit does not look names up at Mojang, and a wrong UUID is worse than none.
+    Optional<TrackedPlayer> online = players.getByUsername(target);
+    online.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt()));
+    int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target), reason);
+    Messages.success(source, "Banned " + target + " " + describeBan(entry)
+        + (kicked > 0 ? " and kicked them" : " (they are not online)") + ".");
+  }
+
+  /** {@code /gunban <player|address>}, which lifts a ban of any kind held against that word. */
+  private static void gunban(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    if (arguments.isEmpty()) {
+      Messages.info(source, "Usage: /gunban <player|address>");
+      return;
+    }
+    String target = arguments.getFirst();
+    if (runtime.bans().pardonAny(target)) Messages.success(source, "Unbanned " + target + ".");
+    else Messages.failure(source, target + " is not banned.");
+  }
+
+  /** How a ban reads in a confirmation and in the list. */
+  private static String describeBan(BanList.Entry entry) {
+    return entry.permanent() ? "permanently"
+        : "for " + BanList.describeDuration(entry.expiresAt() - System.currentTimeMillis());
+  }
+
+  /**
+   * Kicks every online player the test picks out, and says how many that was. The test is given the
+   * API player rather than the tracked one, since an address ban has to ask where they connected
+   * from, which only the API player knows.
+   */
+  private static int kickMatching(PlayerManager players,
+      java.util.function.Predicate<gg.tame.conduit.api.player.Player> test, String reason) {
+    int kicked = 0;
+    for (TrackedPlayer tracked : players.all()) {
+      if (!(tracked instanceof gg.tame.conduit.api.player.Player api)) continue;
+      if (!test.test(api)) continue;
+      api.disconnect(reason);
+      kicked++;
+    }
+    return kicked;
+  }
+
+  /**
+   * {@code /gwhitelist <on|off|add|remove|list|clear|status>}. Every one of them takes effect on the
+   * next login attempt, with nothing reloaded and no file for the operator to edit.
+   */
+  private static void gwhitelist(CommandSource source, ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    Whitelist whitelist = runtime.whitelist();
+    String action = arguments.isEmpty() ? "status" : arguments.getFirst().toLowerCase(Locale.ROOT);
+    switch (action) {
+      case "on", "enable" -> {
+        if (whitelist.setEnabled(true)) {
+          Messages.success(source, "Whitelist on. " + whitelist.size()
+              + (whitelist.size() == 1 ? " player may join" : " players may join")
+              + ", plus anyone with " + Permissions.WHITELIST_BYPASS + ".");
+        } else {
+          Messages.info(source, "The whitelist is already on.");
+        }
+      }
+      case "off", "disable" -> {
+        if (whitelist.setEnabled(false)) Messages.success(source, "Whitelist off. Anyone may join.");
+        else Messages.info(source, "The whitelist is already off.");
+      }
+      case "add" -> {
+        if (arguments.size() < 2) { Messages.info(source, "Usage: /gwhitelist add <player>"); return; }
+        String name = arguments.get(1);
+        if (whitelist.add(name)) Messages.success(source, "Added " + name + " to the whitelist.");
+        else Messages.info(source, name + " is already on the whitelist.");
+      }
+      case "remove" -> {
+        if (arguments.size() < 2) { Messages.info(source, "Usage: /gwhitelist remove <player>"); return; }
+        String name = arguments.get(1);
+        if (!whitelist.remove(name)) { Messages.failure(source, name + " is not on the whitelist."); return; }
+        // Taking someone off while it is on is meant to keep them out, so it also puts them out.
+        int kicked = whitelist.isEnabled()
+            ? kickMatching(players, player -> player.username().equalsIgnoreCase(name),
+                "You are not on this network's whitelist.")
+            : 0;
+        Messages.success(source, "Removed " + name + " from the whitelist"
+            + (kicked > 0 ? " and kicked them" : "") + ".");
+      }
+      case "list" -> {
+        List<String> names = whitelist.names();
+        if (names.isEmpty()) { Messages.info(source, "The whitelist is empty."); return; }
+        source.sendMessage(Text.of("Whitelist (" + names.size() + ")").color(Messages.BRAND).bold());
+        source.sendMessage(Text.of(String.join(", ", names)).color(Messages.BODY));
+      }
+      case "clear" -> {
+        int had = whitelist.clear();
+        if (had == 0) Messages.info(source, "The whitelist was already empty.");
+        else Messages.success(source, "Cleared the whitelist (" + had + " removed).");
+      }
+      case "status" -> source.sendMessage(Text.of("Whitelist: ").color(Messages.LABEL)
+          .append(Text.of(whitelist.isEnabled() ? "on" : "off")
+              .color(whitelist.isEnabled() ? Messages.OK : Messages.OTHER))
+          .append(Text.of(" - " + whitelist.size()
+              + (whitelist.size() == 1 ? " player" : " players")).color(Messages.BODY)));
+      default -> Messages.info(source, "Usage: /gwhitelist <on|off|add|remove|list|clear|status>");
+    }
+  }
+
+  private static List<String> completeGban(PlayerManager players, List<String> arguments) {
+    if (arguments.size() <= 1) return completePlayers(players, arguments);
+    if (arguments.size() == 2) return filtered(List.of("perm", "30m", "1h", "6h", "1d", "7d", "4w"), arguments.get(1));
+    return List.of();
+  }
+
+  private static List<String> completeBanned(ConduitRuntime runtime, List<String> arguments) {
+    if (runtime == null || arguments.size() > 1) return List.of();
+    List<String> banned = new ArrayList<>();
+    for (BanList.Entry entry : runtime.bans().active()) {
+      // An account ban is lifted by unbanning the name it was made alongside, so a raw UUID is not
+      // something to offer an operator.
+      if (entry.kind() != BanList.Kind.ACCOUNT) banned.add(entry.value());
+    }
+    return filtered(banned, arguments.isEmpty() ? "" : arguments.getFirst());
+  }
+
+  private static List<String> completeWhitelist(ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
+    if (arguments.size() <= 1) {
+      return filtered(List.of("on", "off", "add", "remove", "list", "clear", "status"),
+          arguments.isEmpty() ? "" : arguments.getFirst());
+    }
+    if (arguments.size() == 2 && runtime != null) {
+      String action = arguments.getFirst().toLowerCase(Locale.ROOT);
+      // Adding offers who is online; removing offers who is actually on the list.
+      if (action.equals("add")) return completePlayers(players, List.of(arguments.get(1)));
+      if (action.equals("remove")) return filtered(runtime.whitelist().names(), arguments.get(1));
+    }
+    return List.of();
+  }
+
+  /** The entries of {@code options} that start with what has been typed, case-insensitively. */
+  private static List<String> filtered(List<String> options, String typed) {
+    String prefix = typed == null ? "" : typed.toLowerCase(Locale.ROOT);
+    List<String> matches = new ArrayList<>();
+    for (String option : options) if (option.toLowerCase(Locale.ROOT).startsWith(prefix)) matches.add(option);
+    return matches;
+  }
+
   private static void conduit(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments) {
-    String subcommand = arguments.isEmpty() ? "info" : arguments.getFirst().toLowerCase(Locale.ROOT);
+    // Bare /conduit used to be /conduit info, so the one command a player is most likely to try
+    // first told them nothing about the others. It now names them, and info stays where it is.
+    if (arguments.isEmpty()) {
+      usage(source);
+      return;
+    }
+    String subcommand = arguments.getFirst().toLowerCase(Locale.ROOT);
     String node = SUBCOMMAND_NODES.get(ALIASES.getOrDefault(subcommand, subcommand));
     if (node != null && !Permissions.allows(source, node)) {
       Messages.permission(source);
@@ -303,6 +498,22 @@ public final class CoreCommands {
       case "shutdown" -> shutdown(source, runtime, arguments.subList(1, arguments.size()));
       default -> Messages.info(source, "Unknown /conduit subcommand. Try /conduit help");
     }
+  }
+
+  /**
+   * What bare {@code /conduit} answers: the subcommands this source may actually run, so a player
+   * with one node is not shown the twenty they would be refused. A source with none is told that,
+   * rather than shown an empty pair of angle brackets.
+   */
+  private static void usage(CommandSource source) {
+    List<String> allowed = new ArrayList<>(conduitSubcommands(source));
+    if (source instanceof ConsoleCommandSource) allowed.add("shutdown");
+    if (allowed.isEmpty()) {
+      Messages.info(source, "Usage: /conduit help");
+      return;
+    }
+    source.sendMessage(Text.of("Usage: ").color(Messages.LABEL)
+        .append(Text.of("/conduit <" + String.join("|", allowed) + ">").color(Messages.BODY)));
   }
 
   /**
@@ -390,7 +601,10 @@ public final class CoreCommands {
     helpLine(source, Permissions.FIND, "/find <player>");
     helpLine(source, Permissions.ALERT, "/alert <message>");
     helpLine(source, Permissions.GKICK, "/gkick <player> [reason]");
-    helpLine(source, Permissions.INFO, "/conduit");
+    helpLine(source, Permissions.GBAN, "/gban <player|address> [duration] [reason]");
+    helpLine(source, Permissions.GBAN, "/gunban <player|address>");
+    helpLine(source, Permissions.GWHITELIST, "/gwhitelist <on|off|add|remove|list|clear|status>");
+    helpLine(source, Permissions.INFO, "/conduit info");
     helpLine(source, Permissions.SERVERS, "/conduit servers");
     helpLine(source, Permissions.PLUGINS, "/conduit plugins");
     helpLine(source, Permissions.UPTIME, "/conduit uptime");

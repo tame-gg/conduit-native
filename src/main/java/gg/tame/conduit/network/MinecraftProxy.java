@@ -458,6 +458,25 @@ public final class MinecraftProxy implements AutoCloseable {
     // Setup listeners may hold the login for seconds -- a permission plugin loading the player from
     // its database -- and nothing is decided for a client that gave up meanwhile.
     if (over(player, transport)) return;
+    // A ban comes before everything a plugin or a policy could say: a banned player is not someone
+    // whose login is being decided. Name, account and address are all asked, so a name change or a
+    // new name from the same address is still caught.
+    var ban = runtime.bans().find(player.username(), player.uniqueId(), player.remoteAddress().getHostAddress());
+    if (ban.isPresent()) {
+      try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(banMessage(ban.get())))); }
+      catch (IOException ignored) { }
+      ConduitLog.info(player.username() + " (" + player.remoteAddress().getHostAddress()
+          + ") was refused: banned (" + ban.get().reason() + ")");
+      player.leave(LoginStatus.CANCELLED_BY_PROXY);
+      return;
+    }
+    // Then the whitelist, which is a standing policy, before maintenance, which is a passing state.
+    if (!runtime.whitelist().allows(player.username(), () -> whitelistBypass(player))) {
+      try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(
+          "&cYou are not on this network's whitelist."))); } catch (IOException ignored) { }
+      player.leave(LoginStatus.CANCELLED_BY_PROXY);
+      return;
+    }
     if (runtime.maintenance().isActive() && !maintenanceBypass(player)) {
       try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(runtime.maintenance().kickMessage()))); } catch (IOException ignored) { }
       player.leave(LoginStatus.CANCELLED_BY_PROXY);
@@ -502,6 +521,23 @@ public final class MinecraftProxy implements AutoCloseable {
     }
     return false;
   }
+  /** What a banned player is shown: the operator's reason, and how long it has left when it ends. */
+  private static String banMessage(gg.tame.conduit.ops.BanList.Entry ban) {
+    String reason = "&c" + ban.reason();
+    return ban.remaining(System.currentTimeMillis())
+        .map(left -> reason + "\n&7Expires in " + left)
+        .orElse(reason + "\n&7This ban is permanent.");
+  }
+
+  /**
+   * Whether this player gets in with the whitelist on without being on it. Asked of the provider in
+   * force, read once, for the same reason the maintenance bypass is.
+   */
+  private boolean whitelistBypass(PlayerSession player) {
+    PermissionProvider provider = runtime.permissions();
+    return Permissions.allows(provider, player, Permissions.WHITELIST_BYPASS);
+  }
+
   /**
    * The allowlist first: it is the operator's own list, and has to work when the permission plugin
    * is broken or gone. Then the provider in force, read once, so a plugin disabled halfway through
@@ -609,7 +645,6 @@ public final class MinecraftProxy implements AutoCloseable {
   }
 
   /** Status sample size: what the vanilla server sends, and about what the client's tooltip shows. */
-  private static final int STATUS_SAMPLE = 12;
 
   private void serveStatus(PacketTransport client, ProtocolDefinition protocol, Handshake handshake,
                            java.net.InetSocketAddress remote) throws IOException {
@@ -634,8 +669,14 @@ public final class MinecraftProxy implements AutoCloseable {
       if (!runtime.maintenance().isActive()) description = StatusSettings.parseMotd(runtime.versionGate().kickMessage());
     }
     var online = runtime.players().all();
-    List<ServerListPingEvent.SamplePlayer> sample = online.stream().limit(STATUS_SAMPLE)
-        .map(player -> new ServerListPingEvent.SamplePlayer(player.username(), player.uniqueId())).toList();
+    // Who the server list names when the player count is hovered. The names are the network's, not
+    // one backend's, which is the whole point of asking a proxy; status.player-sample = 0 lists
+    // nobody, for a network where who is online is not public.
+    List<ServerListPingEvent.SamplePlayer> sample = online.stream().limit(status.playerSample())
+        .map(player -> new ServerListPingEvent.SamplePlayer(
+            status.playerSampleServer() ? player.username() + " (" + serverOf(player) + ")" : player.username(),
+            player.uniqueId()))
+        .toList();
     String host = gg.tame.conduit.modded.FmlAddressMarkers.parse(handshake.requestedHost()).cleanHost();
     ServerListPingEvent ping = runtime.events().fire(new ServerListPingEvent(remote,
         host.isEmpty() ? Optional.empty() : Optional.of(host), handshake.requestedPort(), clientProtocol, description,
@@ -649,6 +690,16 @@ public final class MinecraftProxy implements AutoCloseable {
     client.write(StatusResponder.response(protocol, request, ping));
     client.write(StatusResponder.pong(protocol, client.read(configuration.maxFrameBytes())));
   }
+  /**
+   * The server a sampled player is on, for the hover list. A player between servers -- switching, or
+   * still logging in -- has no current one, and is listed without a name rather than left out: they
+   * are online, which is what the count they are part of says.
+   */
+  private static String serverOf(gg.tame.conduit.api.player.Player player) {
+    var current = player.currentServer();
+    return current.isPresent() ? current.name() : "connecting";
+  }
+
   /**
    * Synchronized because ConduitProxy#shutdown closes from its own thread while the owner's
    * try-with-resources closes too once serve() returns; the second waits for the first rather than
