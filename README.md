@@ -3,7 +3,7 @@
 Conduit is an independently implemented Minecraft: Java Edition proxy foundation. It is not a
 Velocity or Velocity-CTD fork, and it has no dependency on either implementation.
 
-The legacy `tame-gg/conduit` checkout is intentionally separate and untouched.
+`tame-gg/conduit` is intentionally separate and untouched.
 
 Current version: **0.9.0**. Native plugin API version: **1**.
 
