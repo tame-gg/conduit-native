@@ -95,6 +95,14 @@ public final class ConfigurationLoader {
         if (!values.read.contains(key)) ConduitLog.warn("Unknown setting " + key + " in " + file + " is ignored");
       }
       VersionGateSettings gate = configuration.versions();
+      // The other way round, and the more expensive mistake: rules written but switched off. Every
+      // version still joins, and the server list advertises the whole range rather than the one the
+      // operator meant to name, with nothing anywhere to say why.
+      if (!gate.enabled() && gate.hasConstraints()) {
+        ConduitLog.warn("versions.allow / versions.minimum / versions.maximum are set in " + file
+            + ", but versions.enabled is false, so every Minecraft version may still join and the server"
+            + " list advertises every version Conduit carries. Set versions.enabled = true to apply them.");
+      }
       if (gate.enabled() && !gate.hasConstraints()) {
         ConduitLog.warn("versions.enabled is true in " + file + ", but versions.allow, versions.minimum and versions.maximum"
             + " are all unset, so no Minecraft version is turned away");

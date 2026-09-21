@@ -24,6 +24,8 @@ public final class PingVersionNameTests {
     withNothingGatedItIsTheWholeRange();
     aGatedVersionIsTheAnswer();
     theRangeEndsAreTheOnesThatCanActuallyJoin();
+    aSpanOfVersionsReadsAsASpan();
+    aGateThatIsOffAdvertisesNothingItDoesNotEnforce();
     System.out.println("PingVersionNameTests OK");
   }
 
@@ -66,6 +68,30 @@ public final class PingVersionNameTests {
     require(!ProtocolDefinition.hasCodec(floor - 1), "and nothing below it does");
     int newestCodec = ProtocolDefinition.all().keySet().stream().mapToInt(Integer::intValue).max().orElseThrow();
     require(ceiling >= newestCodec, "the ceiling is at least the newest codec, got " + ceiling + " for " + newestCodec);
+  }
+
+  /** Every release between two bounds is a span, not a list no server list entry could show. */
+  private static void aSpanOfVersionsReadsAsASpan() {
+    VersionGateSettings defaults = VersionGateSettings.defaults();
+    VersionGate span = new VersionGate(new VersionGateSettings(true, Set.of(), OptionalInt.of(765), OptionalInt.of(769),
+        VersionGateSettings.DEFAULT_PING, defaults.kickMessage(), defaults.kickMessageRange(), false));
+    String name = SupportedVersions.versionName(span, 47);
+    require(name.equals("Conduit 1.20.4-1.21.4"), "the two ends and nothing between, got " + name);
+    // The kick message still names them all: there the reader is a player being told what to install.
+    require(span.kickMessage().contains("1.20.5"), "the kick message still lists them, got " + span.kickMessage());
+  }
+
+  /**
+   * Rules written with the switch off gate nothing, so the answer is still the whole range: a
+   * server list that named the allowed version would be advertising a refusal that never happens.
+   */
+  private static void aGateThatIsOffAdvertisesNothingItDoesNotEnforce() {
+    VersionGateSettings defaults = VersionGateSettings.defaults();
+    VersionGate off = new VersionGate(new VersionGateSettings(false, Set.of(769), OptionalInt.empty(), OptionalInt.empty(),
+        VersionGateSettings.DEFAULT_PING, defaults.kickMessage(), defaults.kickMessageRange(), false));
+    require(off.allows(47), "an old client still joins with the gate off");
+    require(SupportedVersions.versionName(off, 47).equals("Conduit " + SupportedVersions.range()),
+        "so the range is what is advertised, got " + SupportedVersions.versionName(off, 47));
   }
 
   private static VersionGateSettings gated(Set<Integer> allowed) {

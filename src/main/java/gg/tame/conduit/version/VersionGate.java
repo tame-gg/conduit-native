@@ -77,8 +77,26 @@ public final class VersionGate {
     return template.replace("{versions}", versions.isBlank() ? "a supported version" : versions);
   }
 
+  /**
+   * The allowed versions as a server list entry should carry them: a handful by name, and anything
+   * longer as the span from the oldest to the newest. A gate that allows every version between
+   * 1.20.4 and 1.21.4 listed five of them, which is a line no client shows in full.
+   */
+  public String describeAllowedBriefly() {
+    Set<Integer> allowed = allowedProtocols();
+    if (allowed.isEmpty()) return describeAllowed();
+    List<Integer> sorted = new ArrayList<>(allowed);
+    sorted.sort(Comparator.naturalOrder());
+    if (sorted.size() <= 3) {
+      List<String> names = new ArrayList<>();
+      for (int protocol : sorted) names.add(ProtocolVersion.display(protocol));
+      return String.join(", ", names);
+    }
+    return ProtocolVersion.display(sorted.getFirst()) + "-" + ProtocolVersion.display(sorted.getLast());
+  }
+
   public String pingVersionName(int clientProtocol) {
-    String versions = describeAllowed();
+    String versions = describeAllowedBriefly();
     return settings.pingVersionName().replace("{versions}", versions.isBlank() ? "unsupported" : versions);
   }
 
