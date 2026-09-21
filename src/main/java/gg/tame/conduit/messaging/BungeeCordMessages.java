@@ -219,7 +219,16 @@ public final class BungeeCordMessages {
     // Through the same path /server takes, so health, events and the switch's own rules all apply:
     // a plugin message must not be a way around what a command has to obey. The switch itself is
     // only on the tracked player, which every real player also is.
-    if (player instanceof TrackedPlayer tracked) tracked.transferTo(backend.get().name());
+    //
+    // Said out loud, because this is the moment an operator needs to see. The switch tells the
+    // player when it cannot happen -- "dev is unavailable" -- but until now it told the log nothing,
+    // so a hub button that did nothing looked identical whether the message never arrived, the
+    // server was not registered, or the target refused the player. The switch's own outcome is the
+    // player's to be told; that it was asked for, and by whom, belongs here.
+    if (!(player instanceof TrackedPlayer tracked)) return;
+    ConduitLog.info("A backend plugin asked to move " + player.username() + " to '"
+        + backend.get().name() + "'. If they do not arrive, check that server with /conduit health.");
+    tracked.transferTo(backend.get().name());
   }
 
   /**
