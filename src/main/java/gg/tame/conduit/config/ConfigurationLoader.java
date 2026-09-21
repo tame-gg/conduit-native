@@ -159,7 +159,7 @@ public final class ConfigurationLoader {
     ConduitConfiguration configuration = new ConduitConfiguration(listener, maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
         forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()),
-        optionalBoolean(values, "listener.proxy-protocol", false));
+        optionalBoolean(values, "listener.proxy-protocol", false), forcedHosts(values));
     if (configuration.forwardingSecretFile().isPresent()) {
       // Otherwise first read by the launcher, where a missing file was a bare NoSuchFileException stack trace.
       Path secretFile = configuration.forwardingSecretFile().get();
@@ -264,6 +264,34 @@ public final class ConfigurationLoader {
         optionalBoolean(values, "updates.via", UpdateSettings.DEFAULT_VIA),
         optionalBoolean(values, "updates.check-only", false),
         optionalInteger(values, "updates.timeout-ms", UpdateSettings.DEFAULT_TIMEOUT_MS));
+  }
+
+  /**
+   * {@code [forced-hosts]}: each key a hostname the client writes in its handshake, each value the
+   * server to send it to, or a list of servers to try in order. A quoted key keeps its quotes here,
+   * as the reader only unquotes values, so they come off before the host is used.
+   */
+  private static gg.tame.conduit.routing.ForcedHosts forcedHosts(Map<String, String> values) {
+    String prefix = "forced-hosts.";
+    Map<String, List<String>> hosts = new LinkedHashMap<>();
+    for (String key : new java.util.TreeSet<>(values.keySet())) {
+      if (!key.startsWith(prefix)) continue;
+      String host = unquote(key.substring(prefix.length()));
+      String written = values.get(key);
+      List<String> servers = written != null && written.strip().startsWith("[")
+          ? parseList(written, key)
+          : List.of(written == null ? "" : written);
+      if (servers.size() == 1 && servers.getFirst().isBlank()) {
+        throw new IllegalArgumentException(key + " must name a server, or a list of them");
+      }
+      hosts.put(host, servers);
+    }
+    return gg.tame.conduit.routing.ForcedHosts.of(hosts);
+  }
+
+  private static String unquote(String text) {
+    if (text.length() >= 2 && text.startsWith("\"") && text.endsWith("\"")) return text.substring(1, text.length() - 1);
+    return text;
   }
 
   private static StatusSettings status(Map<String, String> values, Path configDirectory) {

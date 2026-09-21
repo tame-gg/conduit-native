@@ -111,6 +111,7 @@ public final class AllTests {
     ReleaseJarTests.run();
     ShutdownTests.run();
     RoutingFailoverTests.run();
+    ForcedHostTests.run();
     LifecycleRaceTests.run();
     PlayerLatencyTests.run();
     CommandForwardingTests.run();

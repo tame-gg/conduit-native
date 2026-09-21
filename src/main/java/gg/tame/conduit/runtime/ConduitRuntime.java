@@ -288,6 +288,8 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       live.add("modded.*");
       // Read from the configuration on every ping, so replacing it below is all it takes.
       live.add("status.*");
+      // Read from the configuration at every login, the same way.
+      live.add("forced-hosts.*");
       this.configuration = current.withOps(next.ops());
       if (!restart.isEmpty()) {
         return new ReloadResult(true, restart, live, null);

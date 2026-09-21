@@ -11,7 +11,19 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
                                   List<BackendServer> backends, List<String> initialBackends,
                                   List<String> fallbackBackends, AuthenticationSettings authentication,
                                   Optional<java.net.InetAddress> forwardedPlayerAddress,
-                                  OpsSettings ops, boolean proxyProtocol) {
+                                  OpsSettings ops, boolean proxyProtocol,
+                                  gg.tame.conduit.routing.ForcedHosts forcedHosts) {
+  /** Every setting but the forced hosts, of which there are none. */
+  public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
+                             Optional<Path> forwardingSecretFile, List<BackendServer> backends,
+                             List<String> initialBackends, List<String> fallbackBackends,
+                             AuthenticationSettings authentication,
+                             Optional<java.net.InetAddress> forwardedPlayerAddress, OpsSettings ops,
+                             boolean proxyProtocol) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends,
+        authentication, forwardedPlayerAddress, ops, proxyProtocol, gg.tame.conduit.routing.ForcedHosts.none());
+  }
+
   /** Every setting but the PROXY protocol one, which is off. */
   public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
                              Optional<Path> forwardingSecretFile, List<BackendServer> backends,
@@ -53,6 +65,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     if (authentication == null) authentication = AuthenticationSettings.offline();
     if (forwardedPlayerAddress == null) forwardedPlayerAddress = Optional.empty();
     if (ops == null) ops = OpsSettings.defaults();
+    if (forcedHosts == null) forcedHosts = gg.tame.conduit.routing.ForcedHosts.none();
     backends = List.copyOf(backends);
     initialBackends = List.copyOf(initialBackends);
     fallbackBackends = List.copyOf(fallbackBackends);
@@ -60,6 +73,16 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     if (initialBackends.isEmpty()) throw new IllegalArgumentException("routing.initial must name at least one backend");
     for (String name : initialBackends) requireBackend(backends, "routing.initial", name);
     for (String name : fallbackBackends) requireBackend(backends, "routing.fallback", name);
+    // A forced host naming a server that is not configured is told at start, not at the join it would
+    // spoil: the player still lands somewhere, so refusing to start over a typo would cost more than
+    // it saves.
+    for (var forced : forcedHosts.all().entrySet()) {
+      for (String name : forced.getValue()) {
+        if (backends.stream().anyMatch(backend -> backend.name().equalsIgnoreCase(name))) continue;
+        gg.tame.conduit.log.ConduitLog.warn("forced-hosts." + forced.getKey() + " names unknown server " + name
+            + ", which is ignored; players reaching that host follow routing.initial");
+      }
+    }
   }
   private static void requireBackend(List<BackendServer> backends, String key, String name) {
     if (backends.stream().anyMatch(backend -> backend.name().equals(name))) return;
@@ -80,6 +103,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
 
   public ConduitConfiguration withOps(OpsSettings replacement) {
     return new ConduitConfiguration(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends,
-        initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement, proxyProtocol);
+        initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement, proxyProtocol,
+        forcedHosts);
   }
 }

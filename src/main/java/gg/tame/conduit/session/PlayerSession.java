@@ -784,6 +784,26 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return connection;
   }
 
+  /**
+   * Puts the servers {@code [forced-hosts]} names for the address this player typed at the front of
+   * the list, in the order the file gives them, so lobby.example.com and pvp.example.com reach
+   * different backends through one proxy.
+   *
+   * <p>They go in front of the rest rather than replacing it: a forced host decides where a player
+   * lands, not whether they land anywhere, and a forced backend that is down or does not exist
+   * leaves them with the routing they would have had. A host nothing matches changes nothing.
+   */
+  private void forceHost(List<BackendServer> candidates) {
+    java.util.List<String> forced = runtime.configuration().forcedHosts().match(handshake.requestedHost());
+    if (forced.isEmpty()) return;
+    for (int index = forced.size() - 1; index >= 0; index--) {
+      var server = selector.registry().get(forced.get(index));
+      if (server.isEmpty()) continue;
+      candidates.removeIf(other -> other.name().equalsIgnoreCase(server.get().name()));
+      candidates.addFirst(server.get());
+    }
+  }
+
   /** Closes a backend and forgets it; closing twice is harmless, forgetting to is not. */
   private void discard(BackendConnection connection) {
     if (connection == null) return;
@@ -793,6 +813,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
 
   private BackendConnection connectInitial() throws IOException {
     List<BackendServer> candidates = new java.util.ArrayList<>(selector.candidatesFor(protocol.version().number(), modClassifier.family(), false));
+    forceHost(candidates);
     var choice = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerInitialServerEvent(this,
         candidates.isEmpty() ? null : runtime.registered(candidates.getFirst().name()).orElse(null)));
     choice.initialServer().flatMap(chosen -> selector.registry().get(chosen.getName())).ifPresent(chosen -> {

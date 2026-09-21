@@ -52,6 +52,16 @@ initial = ["lobby"]
 # Tried in order when the server a player is on goes away under them.
 fallback = ["lobby"]
 
+# One proxy, several front doors: a hostname a player typed in their server list
+# sends them to a particular backend. The name on the left is the address as the
+# client wrote it -- the port it named and any Forge marker are ignored, and case
+# does not matter. One server, or a list tried in order.
+# A host nothing here matches follows routing.initial as usual.
+# [forced-hosts]
+# "lobby.example.com" = "lobby"
+# "pvp.example.com" = ["pvp", "lobby"]
+
+
 
 # ============================================================================
 #  IDENTITY AND TRUST  --  who the player is, and how a backend knows
