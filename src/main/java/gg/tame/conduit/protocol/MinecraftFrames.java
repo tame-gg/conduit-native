@@ -34,9 +34,16 @@ public final class MinecraftFrames {
     destination.flush();
   }
   public static void writeUnflushed(OutputStream destination, byte[] packet) throws IOException {
+    // The length goes out in one write, not a byte at a time. Every byte written singly to an
+    // encrypted connection is its own AES/CFB8 call, and the JCE call overhead there is most of
+    // what a byte costs: a short packet spent as long on its two-byte length as on its body. The
+    // array is small, local and never escapes, so it is the allocator's cheapest case.
+    byte[] prefix = new byte[5];
+    int length = 0;
     int value = packet.length;
-    while ((value & ~0x7f) != 0) { destination.write((value & 0x7f) | 0x80); value >>>= 7; }
-    destination.write(value);
+    while ((value & ~0x7f) != 0) { prefix[length++] = (byte) ((value & 0x7f) | 0x80); value >>>= 7; }
+    prefix[length++] = (byte) value;
+    destination.write(prefix, 0, length);
     destination.write(packet);
   }
   static int readVarInt(InputStream source) throws IOException {
