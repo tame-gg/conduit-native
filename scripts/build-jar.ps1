@@ -272,9 +272,17 @@ if ($SkipSource) {
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-REM Which config to start with: the first argument, or conduit.toml beside this file.
-set "CONFIG=%~1"
-if "%CONFIG%"=="" set "CONFIG=conduit.toml"
+REM Which config to start with, and whether to log everything Conduit can say.
+REM   run.bat                     conduit.toml, ordinary logging
+REM   run.bat myconfig.toml       another configuration
+REM   run.bat -debug              conduit.toml, with debug lines
+REM   run.bat myconfig.toml -debug
+set "CONFIG="
+set "DEBUG="
+for %%A in (%*) do (
+  if /I "%%~A"=="-debug" (set "DEBUG=-Dconduit.debug=true") else (if not defined CONFIG set "CONFIG=%%~A")
+)
+if not defined CONFIG set "CONFIG=conduit.toml"
 
 where java >nul 2>&1
 if errorlevel 1 (
@@ -288,16 +296,28 @@ REM No check that the configuration exists: Conduit ships the file and writes it
 REM on a first start, along with plugins\ and forwarding.secret. Refusing here was
 REM the proxy declining to do something it is perfectly able to do.
 
+if not exist "logs" mkdir "logs"
+
 echo Starting Conduit with "%CONFIG%"
+if defined DEBUG echo Debug logging is on.
 echo.
-java -Xms512M -Xmx1G -jar conduit-VERSION.jar "%CONFIG%"
-set "CODE=%ERRORLEVEL%"
+
+REM Everything Conduit prints goes to the window and to logs\conduit-<when>.log at
+REM the same time. Conduit itself writes no log file, so without this a session is
+REM gone as soon as the window closes -- which is exactly when somebody asks what
+REM it said. The redirect is cmd's, not PowerShell's: PowerShell invoking java
+REM with 2>&1 of its own wraps every stderr line in a NativeCommandError, and a
+REM proxy's warnings would each arrive looking like a crash. PowerShell is only
+REM the thing on the other end of the pipe, writing the two copies, because
+REM Windows has no tee and Tee-Object writes UTF-16 that is awkward to read back.
+java %DEBUG% -Xms512M -Xmx1G -jar conduit-VERSION.jar "%CONFIG%" 2>&1 | powershell -NoProfile -ExecutionPolicy Bypass -Command "$name = 'logs\conduit-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log'; $out = [System.IO.StreamWriter]::new($name, $false, (New-Object System.Text.UTF8Encoding $false)); Write-Host ('Logging to ' + $name); try { $input | ForEach-Object { Write-Host $_; $out.WriteLine($_); $out.Flush() } } finally { $out.Close() }"
 
 echo.
-if not "%CODE%"=="0" (
-  echo Conduit exited with code %CODE%.
-  pause
-)
+echo Conduit has stopped. The log of this run is in the logs folder beside this file.
+REM Always, rather than only on a failure: the exit code belongs to the pipeline
+REM above and not to java, so there is no honest way here to tell one from the
+REM other. A window that closes on its own takes the reason with it.
+pause
 endlocal
 '@.Replace("VERSION", $version) | Set-Content (Join-Path $outDir "run.bat") -Encoding ascii
 
