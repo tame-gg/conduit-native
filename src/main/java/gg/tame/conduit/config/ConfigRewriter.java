@@ -43,6 +43,7 @@ import java.util.Set;
 public final class ConfigRewriter {
   /** Sections whose contents are the operator's alone, copied over rather than rendered. */
   private static final String SERVERS_PREFIX = "servers.";
+  private static final String FORCED_HOSTS = "forced-hosts";
 
   private ConfigRewriter() {}
 
@@ -58,30 +59,37 @@ public final class ConfigRewriter {
   }
 
   /**
-   * Rewrites {@code file} into the shipped layout when it was written for an older schema.
+   * Rewrites {@code file} into the shipped layout when it was written for an older schema, or when the
+   * shipped file has a setting -- live or commented out -- that this one has no line for.
    *
-   * <p>A file already at this schema, or at a newer one than this build knows, is left alone: rendering
-   * a newer file through an older template is how a setting this build has never heard of would get
-   * moved somewhere it does not belong.
+   * <p>The second case is what makes a new setting reach existing files without anyone remembering to
+   * bump the schema: {@code [forced-hosts]} and {@code favicon-policy} both shipped at schema 5, and a
+   * file already at 5 would never have been shown either.
+   *
+   * <p>A file at a newer schema than this build knows is left alone: rendering a newer file through an
+   * older template is how a setting this build has never heard of would get moved somewhere it does
+   * not belong.
    */
   public static Result rewrite(Path file) throws IOException {
     if (!Files.isRegularFile(file)) throw new IllegalArgumentException("config file missing: " + file);
     List<String> existing = Files.readAllLines(file, StandardCharsets.UTF_8);
+    List<String> template = ConfigTemplate.text().lines().toList();
     int from = ConfigTemplate.schemaVersionOf(existing);
     int to = ConfigTemplate.schemaVersion();
-    if (from >= to) return Result.unchanged(from);
+    if (from > to || (from == to && keys(existing).containsAll(keys(template)))) return Result.unchanged(from);
 
     Map<String, String> values = settings(existing);
-    List<String> serverBlocks = serverBlocks(existing);
+    List<String> serverBlocks = blocks(existing, section -> section.startsWith(SERVERS_PREFIX));
+    List<String> forcedHosts = blocks(existing, FORCED_HOSTS::equals);
     Set<String> used = new LinkedHashSet<>();
-    List<String> rendered = render(ConfigTemplate.text().lines().toList(), values, serverBlocks, used);
+    List<String> rendered = render(template, values, serverBlocks, forcedHosts, used);
 
     List<String> carried = new ArrayList<>();
     for (Map.Entry<String, String> setting : values.entrySet()) {
       String key = setting.getKey();
-      // Servers were copied wholesale, and the schema number is Conduit's own -- the template always
-      // writes the current one, so the old value is spent, not lost.
-      if (used.contains(key) || key.startsWith(SERVERS_PREFIX) || key.equals("ops.schema-version")) continue;
+      // Servers and forced hosts were copied wholesale, and the schema number is Conduit's own -- the
+      // template always writes the current one, so the old value is spent, not lost.
+      if (used.contains(key) || owned(key) || key.equals("ops.schema-version")) continue;
       carried.add(key);
     }
     if (!carried.isEmpty()) append(rendered, carried, values);
@@ -99,9 +107,11 @@ public final class ConfigRewriter {
   /** Logs what a rewrite did, in the terms an operator cares about. */
   public static void report(Path file, Result result) {
     if (!result.rewritten()) return;
-    ConduitLog.info("Updated " + file.getFileName() + " to the layout of configuration schema "
-        + result.toSchema() + " (it was written for " + result.fromSchema() + "). Every value you had set"
-        + " was kept; the file you had is " + result.backup().getFileName() + ".");
+    String why = result.fromSchema() == result.toSchema()
+        ? " to add the settings this version ships"
+        : " to the layout of configuration schema " + result.toSchema() + " (it was written for " + result.fromSchema() + ")";
+    ConduitLog.info("Updated " + file.getFileName() + why + ". Every value you had set was kept; the file"
+        + " you had is " + result.backup().getFileName() + ".");
     if (!result.carried().isEmpty()) {
       ConduitLog.warn("These settings are not part of schema " + result.toSchema() + ", so they were moved to"
           + " the end of " + file.getFileName() + " rather than dropped: " + String.join(", ", result.carried()));
@@ -115,17 +125,24 @@ public final class ConfigRewriter {
    * where the operator had that setting set, the line is written uncommented with their value.
    */
   private static List<String> render(List<String> template, Map<String, String> values,
-      List<String> serverBlocks, Set<String> used) {
+      List<String> serverBlocks, List<String> forcedHosts, Set<String> used) {
     List<String> out = new ArrayList<>(template.size() + 32);
     String section = "";
     boolean serversWritten = false;
+    boolean forcedHostsWritten = false;
     for (String raw : template) {
       String line = raw.strip();
-      if (line.startsWith("[") && line.endsWith("]")) {
-        section = line.substring(1, line.length() - 1);
-      } else if (line.startsWith("# [") && line.endsWith("]")) {
-        // A whole commented-out section, such as [metrics] or the example server.
-        section = line.substring(3, line.length() - 1);
+      String header = sectionOf(line);
+      if (header != null) section = header;
+      if (section.equals(FORCED_HOSTS) && !forcedHosts.isEmpty()) {
+        // The operator's hosts where the template shows its example ones. Only the header and the
+        // example entries are replaced: the banner and prose that follow belong to the next area.
+        if (header != null) {
+          out.addAll(forcedHosts);
+          forcedHostsWritten = true;
+          continue;
+        }
+        if (isEntry(line)) continue;
       }
       if (section.startsWith(SERVERS_PREFIX)) {
         // The operator's servers, once, in place of the template's example blocks. Everything the
@@ -147,7 +164,53 @@ public final class ConfigRewriter {
       out.add(indentOf(raw) + name + " = " + values.get(key));
     }
     if (!serversWritten) out.addAll(serverBlocks);
+    if (!forcedHostsWritten && !forcedHosts.isEmpty()) {
+      out.add("");
+      out.addAll(forcedHosts);
+    }
     return out;
+  }
+
+  /** The section a live or commented-out header line opens, or null when it is not a header. */
+  private static String sectionOf(String line) {
+    if (line.startsWith("[") && line.endsWith("]")) return line.substring(1, line.length() - 1);
+    // A whole commented-out section, such as [metrics] or the example server.
+    if (line.startsWith("# [") && line.endsWith("]")) return line.substring(3, line.length() - 1);
+    return null;
+  }
+
+  /** Sections whose contents are the operator's alone, copied over rather than rendered. */
+  private static boolean owned(String key) {
+    return key.startsWith(SERVERS_PREFIX) || key.startsWith(FORCED_HOSTS + ".");
+  }
+
+  /**
+   * Every {@code section.key} these lines mention, set or commented out -- what "this file already has
+   * a line for" means when deciding whether the shipped file offers something it does not.
+   */
+  private static Set<String> keys(List<String> lines) {
+    Set<String> keys = new LinkedHashSet<>();
+    String section = "";
+    for (String raw : lines) {
+      String line = raw.strip();
+      String header = sectionOf(line);
+      if (header != null) {
+        section = header;
+        continue;
+      }
+      String key = keyOf(section, line);
+      if (key != null && !owned(key)) keys.add(key);
+    }
+    return keys;
+  }
+
+  /** A {@code key = value} line, live or commented, whose key may be quoted as a hostname is. */
+  private static boolean isEntry(String line) {
+    String body = line.startsWith("#") ? line.substring(1).strip() : line;
+    int equals = body.indexOf('=');
+    if (equals < 1) return false;
+    String name = body.substring(0, equals).strip();
+    return name.matches("\"[^\"]+\"|[A-Za-z0-9_.-]+") && isValue(body.substring(equals + 1).strip());
   }
 
   private static void append(List<String> out, List<String> carried, Map<String, String> values) {
@@ -236,12 +299,13 @@ public final class ConfigRewriter {
   }
 
   /**
-   * The operator's {@code [servers.*]} blocks, verbatim, comments and all.
+   * The operator's blocks for the sections {@code wanted} accepts -- {@code [servers.*]},
+   * {@code [forced-hosts]} -- verbatim, comments and all.
    *
-   * <p>Copied rather than rendered: a backend is the operator's own, the template has nothing to say
-   * about it beyond an example, and whatever they wrote above one is theirs to keep.
+   * <p>Copied rather than rendered: a backend or a hostname is the operator's own, the template has
+   * nothing to say about it beyond an example, and whatever they wrote above one is theirs to keep.
    */
-  private static List<String> serverBlocks(List<String> lines) {
+  private static List<String> blocks(List<String> lines, java.util.function.Predicate<String> wanted) {
     List<String> blocks = new ArrayList<>();
     List<String> pendingComments = new ArrayList<>();
     boolean inServer = false;
@@ -249,7 +313,7 @@ public final class ConfigRewriter {
       String line = raw.strip();
       boolean header = line.startsWith("[") && line.endsWith("]");
       if (header) {
-        inServer = line.substring(1, line.length() - 1).startsWith(SERVERS_PREFIX);
+        inServer = wanted.test(line.substring(1, line.length() - 1));
         if (inServer) {
           if (!blocks.isEmpty()) blocks.add("");
           blocks.addAll(pendingComments);

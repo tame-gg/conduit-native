@@ -32,6 +32,7 @@ public final class ConfigValidationTests {
     suspiciousValuesAreOneWarning();
     theLauncherPrintsOneLineAndNoStackTrace();
     anOldLayoutIsRewrittenWithoutLosingValues();
+    aNewSettingReachesAFileAtTheSameSchema();
     aBareFolderIsMadeStartable();
     System.out.println("ConfigValidationTests OK");
   }
@@ -131,6 +132,38 @@ public final class ConfigValidationTests {
 
     // Idempotent: the file is now at this schema, so nothing happens a second time.
     require(!ConfigRewriter.rewrite(file).rewritten(), "a file already at this schema is left alone");
+  }
+
+  /**
+   * A setting added to the shipped file reaches a file already at the current schema. favicon-policy
+   * and [forced-hosts] shipped without a schema bump, and a file at that schema never saw them.
+   */
+  private static void aNewSettingReachesAFileAtTheSameSchema() throws Exception {
+    require(ConfigTemplate.schemaVersion() == gg.tame.conduit.config.OpsSettings.CURRENT_SCHEMA,
+        "the shipped conduit.toml and OpsSettings.CURRENT_SCHEMA name the same schema");
+    Path file = TempFiles.dir("conduit-sameschema").resolve("conduit.toml");
+    Files.writeString(file, BASE + """
+        [status]
+        motd = "mine"
+        # my hosts
+        [forced-hosts]
+        "pvp.example.com" = ["lobby"]
+        [ops]
+        schema-version = %d
+        """.formatted(ConfigTemplate.schemaVersion()));
+
+    var result = ConfigRewriter.rewrite(file);
+    require(result.rewritten() && result.fromSchema() == result.toSchema(),
+        "a file missing a shipped setting is rewritten without a schema bump, got " + result);
+    require(result.carried().isEmpty(), "forced hosts are the operator's, not unread settings, got " + result.carried());
+    String text = Files.readString(file);
+    require(text.contains("# favicon-policy = \"plugins\""), "the new setting is offered, commented, at its default");
+    require(text.contains("# my hosts") && !text.contains("lobby.example.com"),
+        "the operator's hosts replace the template's example ones");
+    ConduitConfiguration after = ConfigurationLoader.load(file);
+    require(after.forcedHosts().all().containsKey("pvp.example.com"), "the forced host still loads, got " + after.forcedHosts());
+    require(text.contains("motd = \"mine\""), "the motd kept");
+    require(!ConfigRewriter.rewrite(file).rewritten(), "and once it has every setting, it is left alone");
   }
 
   /**
