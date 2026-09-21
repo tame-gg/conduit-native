@@ -105,6 +105,7 @@ public final class AllTests {
     BackendPingTests.run();
     StatusIsolationTests.run();
     FaviconPolicyTests.run();
+    PingVersionNameTests.run();
     ObservabilityTests.run();
     ConfigValidationTests.run();
     ProxyProtocolTests.run();

@@ -618,7 +618,9 @@ public final class MinecraftProxy implements AutoCloseable {
     // listener started with.
     var status = runtime.configuration().status();
     Text description = status.motd();
-    String versionName = "Conduit " + protocol.version().displayName();
+    // Not the table that happens to be answering: that named one release out of the range Conduit
+    // admits, so anything pinging with an old protocol number was told "Conduit 1.8.9".
+    String versionName = gg.tame.conduit.version.SupportedVersions.versionName(runtime.versionGate(), clientProtocol);
     int advertised = protocol.version().number();
     if (runtime.maintenance().isActive()) {
       // The same reader status.motd goes through: it is a MOTD, shown in the same server list, and
@@ -626,7 +628,6 @@ public final class MinecraftProxy implements AutoCloseable {
       description = StatusSettings.parseMotd(runtime.maintenance().motd());
     }
     if (runtime.versionGate().isEnabled() && !runtime.versionGate().allows(clientProtocol)) {
-      versionName = runtime.versionGate().pingVersionName(clientProtocol);
       advertised = runtime.versionGate().statusProtocolAdvertisement(clientProtocol).orElse(clientProtocol);
       if (!runtime.maintenance().isActive()) description = Text.of(runtime.versionGate().kickMessage());
     }
