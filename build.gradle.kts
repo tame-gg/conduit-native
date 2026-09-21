@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "gg.tame.conduit"
-version = "0.9.3-SNAPSHOT"
+version = "0.9.4-SNAPSHOT"
 
 java {
   toolchain.languageVersion.set(JavaLanguageVersion.of(21))
