@@ -1,13 +1,15 @@
 # Builds a single runnable conduit.jar, plus a .bat to start it.
 #
-# The jar bundles the ViaVersion projects' object code, which is GPL-3.0-or-later,
-# so it may only be handed to anyone alongside their Corresponding Source (GPLv3
-# section 6; docs/LICENSING_VIA.md). This script therefore fetches the upstream
-# release-tag archives into source/third-party/ and Conduit's own source into
-# source/conduit/, the same two things `gradle distZip` ships -- so what comes out
-# of dist/ is a distribution that may be published as it stands.
+# The jar carries no ViaVersion. Via is GPL-3.0-or-later object code, and a jar
+# holding it may only be handed to anyone alongside Via's Corresponding Source;
+# it is also out of date the moment Via ships a new Minecraft release. So Conduit
+# installs Via into lib/via on a start that can reach repo.viaversion.com, and
+# this jar is Conduit's own code plus the Apache-2.0 libraries Via needs.
 #
-# -SkipSource leaves both out. That is for running the build on this machine only;
+# Conduit itself is GPL-3.0-or-later, so the jar still travels with its own
+# Corresponding Source, written into source/conduit/ (GPLv3 section 6).
+#
+# -SkipSource leaves that out. That is for running the build on this machine only;
 # the result is not something to give to anyone else.
 #
 # What goes in: Conduit's own classes and generated tables, the runtime
@@ -66,8 +68,16 @@ try {
     }
     Get-Item $file
   }
+  # ViaVersion itself is deliberately NOT merged. It is GPL object code, and a jar carrying it may
+  # only be handed to anyone alongside Via's Corresponding Source; it also goes stale the moment Via
+  # ships a new Minecraft release, which is every few weeks. Conduit installs it into lib/via on a
+  # start that can reach repo.viaversion.com (Bootstrap, ViaUpdater#install), so what ships here is
+  # Conduit's own code and the Apache-2.0 libraries Via needs -- fastutil, Netty, Guava -- which do
+  # not go stale and are what would otherwise have to be downloaded with it.
+  $viaOwn = @("viaversion-api", "viaversion-common", "viabackwards-common", "viarewind-common", "ViaLegacy")
   $runtime = @(Get-ChildItem (Join-Path $lib "via") -Filter *.jar |
-    Where-Object { $_.Name -notlike "*-sources.jar" }) + @($velocityRuntime)
+    Where-Object { $_.Name -notlike "*-sources.jar" } |
+    Where-Object { $name = $_.Name; -not ($viaOwn | Where-Object { $name -like "$_-*.jar" }) }) + @($velocityRuntime)
   # Guava is the one library both halves want, so build.gradle.kts excludes it from velocityRuntime
   # and the Via set is where it comes from -- at the newer version, which is the one both ask for.
   # That arrangement is invisible from either side, so it is stated here: if lib/via ever stops
@@ -255,8 +265,6 @@ if ($SkipSource) {
   }
   Get-ChildItem $sourceDir -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force
-
-  & (Join-Path $PSScriptRoot "fetch-via-source.ps1") -OutDir (Join-Path $outDir "source/third-party")
 }
 
 @'
@@ -299,5 +307,5 @@ Write-Host "  $outDir\$jarName  ($jarSize MB, runnable on its own)"
 Write-Host "  $outDir\run.bat"
 Write-Host "  $outDir\conduit.toml  (and conduit-26.2.toml)"
 if (-not $SkipSource) {
-  Write-Host "  $outDir\source\  Corresponding Source for Conduit and the GPL Via jars"
+  Write-Host "  $outDir\source\  Corresponding Source for Conduit"
 }

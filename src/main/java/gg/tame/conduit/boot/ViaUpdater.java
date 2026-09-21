@@ -139,6 +139,65 @@ public final class ViaUpdater {
     }
   }
 
+  /**
+   * Downloads one exact set into {@code viaDirectory}, for a proxy that has no ViaVersion at all.
+   *
+   * <p>ViaVersion is not inside the jar: it is GPL object code, and shipping it is what would oblige
+   * every copy of Conduit to travel with Via's Corresponding Source. So a first start installs the
+   * set this build is pinned to, and {@link #update} moves it forward from there.
+   *
+   * <p>The versions asked for are the pinned ones rather than the newest published, so a first start
+   * and a hundredth start of the same build install the same thing, and a Via that has just changed
+   * under a network is an update it can see in the log rather than a surprise on a fresh box.
+   */
+  public static Outcome install(Path viaDirectory, Map<String, String> want, int timeoutMs) {
+    try {
+      HttpClient client = HttpClient.newBuilder()
+          .connectTimeout(Duration.ofMillis(timeoutMs))
+          .followRedirects(HttpClient.Redirect.NORMAL)
+          .build();
+      Path staging = viaDirectory.resolve(".incoming");
+      deleteRecursively(staging);
+      Files.createDirectories(staging);
+      List<Path> downloaded = new ArrayList<>();
+      Map<String, String> installing = new LinkedHashMap<>();
+      try {
+        for (String artifact : ViaArtifacts.NAMES) {
+          String pinned = want.get(artifact);
+          if (pinned == null || pinned.isBlank()) {
+            return Outcome.of(Outcome.Kind.FAILED, "no version pinned for " + artifact);
+          }
+          // The newest release in the pinned major, so a first start does not download the pinned set
+          // and then immediately replace it. Anything else -- a repository that will not say, a new
+          // major, a version that is not a release -- and the pinned one is what is installed.
+          String version = pinned;
+          try {
+            String release = release(client, artifact, timeoutMs);
+            if (release != null && ViaArtifacts.isRelease(release)
+                && ViaArtifacts.major(release) == ViaArtifacts.major(pinned)
+                && ViaArtifacts.compare(release, pinned) > 0) {
+              version = release;
+            }
+          } catch (IOException | RuntimeException unavailable) {
+            version = pinned;
+          }
+          installing.put(artifact, version);
+          downloaded.add(download(client, artifact, version, staging, timeoutMs));
+        }
+        Files.createDirectories(viaDirectory);
+        for (Path jar : downloaded) {
+          Files.move(jar, viaDirectory.resolve(jar.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+        }
+      } finally {
+        deleteRecursively(staging);
+      }
+      return Outcome.of(Outcome.Kind.UPDATED, describe(installing));
+    } catch (IOException | InterruptedException | RuntimeException failure) {
+      if (failure instanceof InterruptedException) Thread.currentThread().interrupt();
+      return Outcome.of(Outcome.Kind.FAILED, describe(failure));
+    }
+  }
+
   /** The {@code <release>} in an artifact's Maven metadata, or null. */
   private static String release(HttpClient client, String artifact, int timeoutMs)
       throws IOException, InterruptedException {

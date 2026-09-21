@@ -288,21 +288,25 @@ log-mod-handshakes = false
 #  UPDATES  --  keeping ViaVersion current
 # ============================================================================
 
-# ViaVersion is inside the Conduit jar, so translation works offline with nothing
-# to fetch. But a jar cannot update itself, and Via supports each new Minecraft
-# release well before a Conduit release can.
+# ViaVersion is not inside the Conduit jar. It is GPLv3 object code, which a jar
+# carrying it could only pass on together with Via's own source, and it would be
+# out of date within weeks: Via supports each new Minecraft release long before a
+# Conduit release can.
 #
-# With via = true, Conduit checks ViaVersion's own repository on start and, if
-# there is a newer release in the same version line, downloads it into lib/via and
-# uses it in place of the bundled copy. The jars it replaces are kept in
+# So the first start with nothing in lib/via installs the set this build pins,
+# from ViaVersion's own repository, each jar checked against its published
+# SHA-256. With via = true it also looks for a newer release in the same version
+# line on every start and downloads that, keeping the jars it replaces in
 # lib/via/superseded. A new major version is reported and not taken, because
-# Conduit is built against the internals of the one it ships with.
+# Conduit is built against the internals of the line it pins.
 #
 # Nothing here can stop Conduit starting. An unreachable repository, a blocked
-# proxy or a checksum that does not match all end the same way: one line in the
-# log and the bundled ViaVersion. To update Via by hand instead, put a complete
-# set of its five jars in lib/via -- Conduit prefers those whether it fetched them
-# or you did. (restart)
+# proxy or a checksum that does not match all end the same way: a line in the log
+# and a proxy that comes up. With no Via at all, cross-version play is off and a
+# client may only join a backend on its own protocol.
+#
+# For a machine with no route out, put the five Via jars in lib/via yourself --
+# Conduit uses those whether it fetched them or you did. (restart)
 [updates]
 via = true
 # Say that a newer version exists without downloading it.

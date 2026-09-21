@@ -48,10 +48,19 @@ https://github.com/google/guava, https://github.com/javax-inject/javax-inject
 --------------------------------------------------
 This repository does not contain these components. The scripts, and Gradle,
 download them from their upstream repositories onto the machine that builds
-Conduit. A Gradle distribution (distZip, distTar or installDist) conveys every
-component in the Gradle list below. It carries this file, LICENSE (with the
-GPLv3 text) and, under source/, the Corresponding Source for Conduit and for
-each GPL component. See docs/LICENSING_VIA.md.
+Conduit.
+
+The ViaVersion artifacts below are NOT in a Conduit distribution. They are GPL
+object code, and Conduit does not convey them: a running proxy downloads them
+from repo.viaversion.com into lib/via on the operator's own machine. They are
+listed here because Conduit links against them and runs in one process with
+them. Anyone who passes on a populated lib/via alongside the jar is conveying
+Via as well, and needs Via's Corresponding Source from the matching upstream
+tags; scripts/fetch-via-source.ps1 fetches those archives.
+
+Everything else below is in the jar, which carries this file, LICENSE (with the
+GPLv3 text) and, under source/, the Corresponding Source for Conduit. See
+docs/LICENSING_VIA.md.
 
 GPL-3.0-or-later (text in LICENSE)
   viaversion-common 5.11.0       Copyright (C) 2016-2026 ViaVersion and contributors

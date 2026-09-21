@@ -41,7 +41,9 @@ Conduit from, not in a `config/` subfolder of it.
 `java -jar conduit-<version>.jar conduit.toml` in an empty folder is enough. There is no setup step:
 Conduit ships the configuration it would otherwise have complained was missing, so a first start
 writes `conduit.toml`, creates `plugins/`, generates `forwarding.secret` and comes up on the
-defaults. ViaVersion is inside the jar, so translation works with no network and nothing to fetch.
+defaults. ViaVersion is not inside the jar: the first start that can reach
+`repo.viaversion.com` installs it into `lib/via`, and a start that cannot says so and carries on with
+cross-version play off.
 
 The defaults are the safe ones, not the convenient ones: `authentication.mode = "online"`, so Conduit
 does the Mojang check, and `forwarding.mode = "none"`, so nothing is forwarded until you say what to
@@ -57,27 +59,36 @@ never dropped; and the file you had is kept beside it as `conduit.toml.bak-<sche
 schema-version` is how Conduit knows which layout your file is in, and is the one line in it that is
 not yours to set.
 
-### Keeping ViaVersion current
+### Where ViaVersion comes from
 
-ViaVersion is inside the jar, so translation works offline. But a jar cannot update itself, and Via
-supports each new Minecraft release well before a Conduit release can -- Via 5.12.0 registers Minecraft
-26.3, which the Via bundled in this build does not.
+ViaVersion lives in `lib/via` beside the configuration, not in the jar. Two reasons: it is
+GPL-3.0-or-later object code, so a jar carrying it could only be handed on together with Via's own
+Corresponding Source, and it would be out of date within weeks -- Via supports each new Minecraft
+release long before a Conduit release can, and 5.12.0 registers Minecraft 26.3.
 
-So `lib/via` beside the configuration is an override: a complete set of the five Via jars there is used
-in place of the bundled copies, by class path order, whether you put them there or Conduit did. With
-`[updates] via = true` (the default), Conduit checks ViaVersion's repository on start and downloads a
-newer release into `lib/via`, keeping the jars it replaces in `lib/via/superseded`.
+A first start with nothing in `lib/via` installs the set this build is pinned to from
+`repo.viaversion.com`, each jar checked against the SHA-256 published beside it. After that, with
+`[updates] via = true` (the default), Conduit looks for a newer release on each start and downloads
+it into the same place, keeping the jars it replaces in `lib/via/superseded`. The Apache-2.0
+libraries Via needs -- fastutil, Netty, Guava -- are in the jar, so what is fetched is Via itself
+and nothing else.
 
 Four rules keep that from being worse than no updater at all:
 
 - **It cannot stop Conduit starting.** An unreachable repository, a blocked proxy, a full disk or a
-  checksum that does not match all end the same way: one line in the log and the bundled Via.
+  checksum that does not match all end the same way: a line in the log and a proxy that comes up. If
+  there is no Via at all, cross-version play is off and the log says so; a client may still join any
+  backend on its own protocol.
 - **Releases only, and inside the version line.** Snapshots are ignored, and a new major version is
   reported rather than taken -- `gg.tame.conduit.viaversion` extends Via's internal classes, and a
   major bump is where those change.
-- **The whole set or none of it.** An updated `viaversion-common` against the bundled `viaversion-api`
+- **The whole set or none of it.** An updated `viaversion-common` against an older `viaversion-api`
   is the one combination guaranteed not to work, so a partial `lib/via` is ignored with a warning.
 - **Never a downgrade.** A stale `lib/via` left over from an older Conduit is ignored rather than used.
+
+For a machine with no route to the internet, put the five jars in `lib/via` yourself -- the versions
+this build pins are in `src/main/resources/gg/tame/conduit/via-bundled.properties` -- or point
+`-Dconduit.via.repository=<url>` at an internal mirror of the same layout.
 
 `updates.check-only = true` reports a newer version without downloading it. `-Dconduit.via.update=false`
 turns the check off for one start, and `-Dconduit.via.repository=<url>` points it at an internal mirror

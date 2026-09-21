@@ -173,10 +173,12 @@ repair should be removed once an upstream release fixes the encoding.
 
 ## Licensing
 
-The Via artifacts Conduit links and bundles are GPLv3-licensed, and Conduit
-itself is licensed GPL-3.0-or-later. `docs/LICENSING_VIA.md` records exactly
-which artifacts are used, under which license, and how a distribution carries
-their notices and Corresponding Source.
+The Via artifacts Conduit links against are GPLv3-licensed, and Conduit
+itself is licensed GPL-3.0-or-later. They are not shipped inside the jar: the
+proxy installs them into `lib/via` from ViaVersion's own repository, so a
+Conduit distribution conveys no Via object code. `docs/LICENSING_VIA.md` records
+exactly which artifacts are used, under which license, and what that means for
+anyone who passes on a running installation.
 
 Upstream projects: https://github.com/ViaVersion
 

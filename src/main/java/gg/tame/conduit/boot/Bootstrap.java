@@ -70,9 +70,29 @@ public final class Bootstrap {
     launchWith(override, forwarded);
   }
 
-  /** Runs the updater when the configuration asks for it, and says what it found. */
+  /** Installs ViaVersion when there is none, then updates it when the configuration asks. */
   private static void prepareVia(Path viaDirectory, Path configPath) throws IOException {
     BootConfig config = BootConfig.read(configPath);
+    if (!ViaArtifacts.inDirectory(viaDirectory).keySet().containsAll(ViaArtifacts.NAMES) && !viaInsideJar()) {
+      // Nothing to translate with. Conduit does not carry Via -- see ViaUpdater#install -- so this
+      // is what an unpacked-and-started copy looks like, and it is where the jars come from.
+      if (!config.viaUpdates()) {
+        say("WARN", "ViaVersion is not in " + viaDirectory + " and updates.via is false, so it will not be"
+            + " downloaded. Cross-version play is off until the jars are there.");
+        return;
+      }
+      Map<String, String> pinned = ViaArtifacts.bundled();
+      say("INFO", "No ViaVersion in " + viaDirectory + ", so Conduit is installing it from repo.viaversion.com"
+          + " (the newest release of the " + describeVersions(pinned) + " line)...");
+      ViaUpdater.Outcome installed = ViaUpdater.install(viaDirectory, pinned, config.timeoutMs());
+      if (installed.kind() == ViaUpdater.Outcome.Kind.FAILED) {
+        say("WARN", "Could not install ViaVersion (" + installed.detail() + "). Conduit starts without it, so a"
+            + " client may only join a backend on its own protocol. Put the jars in " + viaDirectory
+            + " yourself, or start again with the repository reachable.");
+        return;
+      }
+      say("INFO", "Installed ViaVersion: " + installed.detail());
+    }
     if (!config.viaUpdates()) return;
     Map<String, String> have = effectiveVersions(viaDirectory);
     ViaUpdater.Outcome outcome = ViaUpdater.update(viaDirectory, have, config.checkOnly(), config.timeoutMs());
@@ -94,6 +114,22 @@ public final class Bootstrap {
   }
 
   /**
+   * Whether a ViaVersion is inside this jar after all, asked by resource and not by class, since
+   * loading one here would load it in the wrong loader. Old builds merged it in; this one does not,
+   * and the check keeps such a build working rather than downloading what it already has.
+   */
+  private static boolean viaInsideJar() {
+    return Bootstrap.class.getResource("/com/viaversion/viaversion/api/Via.class") != null;
+  }
+
+  /** "viaversion-api 5.11.0, ..." for a line in the log. */
+  private static String describeVersions(Map<String, String> versions) {
+    List<String> parts = new ArrayList<>();
+    versions.forEach((artifact, version) -> parts.add(artifact + " " + version));
+    return String.join(", ", parts);
+  }
+
+  /**
    * The versions in effect right now: whatever {@code lib/via} holds, falling back per artifact to the
    * bundled copy.
    *
@@ -101,9 +137,15 @@ public final class Bootstrap {
    * honestly instead of making the other four look absent.
    */
   private static Map<String, String> effectiveVersions(Path viaDirectory) throws IOException {
-    Map<String, String> versions = new LinkedHashMap<>(ViaArtifacts.bundled());
+    // The pinned set is the floor only when the jar really carries it; otherwise what is on disk is
+    // all there is, and pretending otherwise would make an update look unnecessary.
+    Map<String, String> versions = viaInsideJar() ? new LinkedHashMap<>(ViaArtifacts.bundled()) : new LinkedHashMap<>();
     ViaArtifacts.inDirectory(viaDirectory).forEach((artifact, found) -> {
-      if (ViaArtifacts.compare(found.version(), versions.get(artifact)) > 0) versions.put(artifact, found.version());
+      // With nothing in the jar there is nothing to compare against, and what is on disk is simply
+      // what is in effect. Comparing against an absent version is how a first start walked into a
+      // NullPointerException and lost its update check.
+      String have = versions.get(artifact);
+      if (have == null || ViaArtifacts.compare(found.version(), have) > 0) versions.put(artifact, found.version());
     });
     return versions;
   }
@@ -111,18 +153,21 @@ public final class Bootstrap {
   /**
    * The override jars, in class path order, or nothing at all.
    *
-   * <p>Three things have to hold before the bundled Via is displaced, and any one of them failing means
-   * the jar's own copy is used:
+   * <p>This is where ViaVersion comes from: the jar carries none, so a complete set here is the Via
+   * the proxy runs on. Two things have to hold, and either failing means the proxy runs without Via
+   * -- every player still reaches a backend on their own protocol, and only cross-version play is
+   * off:
    *
    * <ul>
-   *   <li>Every one of the five artifacts is present. A set missing one resolves that one from the jar,
-   *       and an updated {@code viaversion-common} against a bundled {@code viaversion-api} is the
-   *       combination that does not work.
-   *   <li>At least one is newer than what is bundled. A stale {@code lib/via} left over from an older
-   *       Conduit would otherwise be a silent downgrade.
-   *   <li>None is a different major version. The proxy extends internal Via classes, and a major bump
-   *       is where those change.
+   *   <li>Every one of the five artifacts is present. An updated {@code viaversion-common} against an
+   *       older {@code viaversion-api} is the combination that does not work, and a set missing one
+   *       has nothing to fall back to now.
+   *   <li>None is a different major version from the set this build pins. The proxy extends internal
+   *       Via classes, and a major bump is where those change.
    * </ul>
+   *
+   * <p>An older build that merged Via into the jar still works the way it always did: there the
+   * pinned set really is inside the jar, so a set here must also be newer than it before it is used.
    */
   private static List<URL> overrideJars(Path viaDirectory, boolean quiet) {
     try {
@@ -135,8 +180,8 @@ public final class Bootstrap {
       if (!missing.isEmpty()) {
         if (!quiet) {
           say("WARN", viaDirectory + " has some ViaVersion jars but not all of them (missing "
-              + String.join(", ", missing) + "), so the ones in the jar are used instead. A partial set"
-              + " cannot be mixed with the bundled one.");
+              + String.join(", ", missing) + "), so none of them are used: a partial set cannot be mixed"
+              + " with another. Delete the directory to have Conduit install a whole one.");
         }
         return List.of();
       }
@@ -148,14 +193,17 @@ public final class Bootstrap {
         if (ViaArtifacts.major(version) != ViaArtifacts.major(have)) {
           if (!quiet) {
             say("WARN", viaDirectory + " holds " + artifact + " " + version + ", a different major version"
-                + " from the bundled " + have + ". This Conduit is built against " + have + ", so the"
-                + " bundled ViaVersion is used. Remove it from lib/via to silence this.");
+                + " from the " + have + " this Conduit is built against, so it is not used. Put the " + have
+                + " line back in lib/via, or update Conduit.");
           }
           return List.of();
         }
         if (ViaArtifacts.compare(version, have) > 0) newer = true;
       }
-      if (!newer) return List.of();
+      // "Newer than the jar's copy" only means something when the jar has one. Unbundled, a set that
+      // matches the pinned versions exactly is the ordinary case: it is what the first start
+      // installed.
+      if (!newer && viaInsideJar()) return List.of();
 
       List<URL> urls = new ArrayList<>(ViaArtifacts.NAMES.size());
       List<String> names = new ArrayList<>(ViaArtifacts.NAMES.size());
@@ -164,7 +212,7 @@ public final class Bootstrap {
         urls.add(jar.file().toUri().toURL());
         names.add(artifact + " " + jar.version());
       }
-      if (!quiet) say("INFO", "Using the ViaVersion in " + viaDirectory + " instead of the bundled one: "
+      if (!quiet) say("INFO", "ViaVersion from " + viaDirectory + ": "
           + String.join(", ", names) + ".");
       return urls;
     } catch (IOException | RuntimeException failure) {
