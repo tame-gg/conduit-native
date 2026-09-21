@@ -151,7 +151,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private boolean needSelfPlayerInfo = true;
   /** The UUID the client was told is its own, by the Login Success that reached it. */
   private volatile java.util.UUID clientUuid;
-  private volatile Thread clientReader;
   /**
    * Body of the client's most recent Client Information packet, without the packet id.
    *
@@ -616,18 +615,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (configurationEntered == null) connectedToFirst();
     this.joinedAtNanos = joined;
     try {
-      if (watch()) return;
+      // The session is handed to the selector and this thread is done: from here the player is read
+      // by selector workers, and costs no thread of their own between packets. There is no second
+      // path to fall back to -- see watch().
+      watch();
     } catch (IOException | RuntimeException failed) {
       // PostLogin has already fired. A kick racing attachment still ends a completed login,
-      // just as returning from the blocking relay does, and releases its accounting once.
+      // just as returning from the blocking relay did, and releases its accounting once.
       ended();
       throw failed;
-    }
-    Thread backendReader = gg.tame.conduit.network.SocketThreads.start(this::readBackend);
-    try { readClient(); }
-    finally {
-      backendReader.interrupt();
-      ended();
     }
   }
 
@@ -658,9 +654,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * tests build one -- and the caller then reads them on two threads as it always did. Both or
    * neither: half a relay watched and half on a thread is a shape nothing else here expects.
    */
-  private boolean watch() throws IOException {
+  private void watch() throws IOException {
     var selector = runtime.connectionSelector();
-    if (selector == null || !client.selectable()) return false;
+    // Every socket Conduit owns is channel-backed -- the listener accepts on a ServerSocketChannel
+    // and a backend is dialled on a SocketChannel -- so these cannot be false. They used to mean
+    // "keep a thread per socket instead"; now they mean this session is not what it claims to be,
+    // and ending it with a reason beats relaying it down a path nothing else uses any more.
+    if (!client.selectable()) throw new IOException("the client connection is not channel-backed");
     boolean endNow;
     // Under the lock the switch commits in, and watching whatever backend is current rather than
     // the one the login opened. Login fires PlayerPostLoginEvent and PlayerServerConnectedEvent
@@ -671,7 +671,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // {@code watched} while deciding, so both that read and this write have to be one decision.
     synchronized (lock) {
       BackendConnection live = backend;
-      if (live == null || !live.selectable()) return false;
+      if (live == null) throw new IOException("the player has no backend to watch");
+      if (!live.selectable()) throw new IOException("the backend connection is not channel-backed");
       var backendWatch = watchBackend(live);
       clientWatch = client.attachTo(selector, new gg.tame.conduit.network.ConnectionSelector.Handler() {
         @Override public boolean onReadable() throws IOException { return relayBufferedFromClient(); }
@@ -698,7 +699,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // Outside the lock: ending closes both connections, and the client's close waits out the linger
     // that gives a kicked player their reason, which is not something to hold the switch lock for.
     if (endNow) ended();
-    return true;
   }
 
   /**
@@ -1438,13 +1438,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     ProtocolTrace.note("configuration absorption complete for " + clientProtocol + "→" + backendProtocol);
   }
-  private void readClient() {
-    clientReader = Thread.currentThread();
-    try {
-      while (!closed) relayFromClient(client.read(configuration.maxFrameBytes()));
-    } catch (IOException ignored) { }
-  }
-
   /**
    * Everything the client has sent that is already buffered, for a session the selector watches.
    *
@@ -1764,20 +1757,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       System.err.println("Could not replay client information to " + target.server().name() + ": " + exception.getMessage());
     }
   }
-  private void readBackend() {
-    while (!closed) {
-      BackendConnection current;
-      synchronized (lock) {
-        while (!closed && (backend == null || lifecycle.get() == SessionLifecycle.SWITCHING)) {
-          try { lock.wait(1000); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
-        }
-        current = backend;
-        if (closed || current == null) continue;
-      }
-      if (!relayFromBackend(current)) return;
-    }
-  }
-
   /**
    * Everything this backend has sent that is already buffered, for a session the selector watches.
    *
@@ -2192,10 +2171,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public boolean transferTo(String name) {
     BackendServer server = selector.registry().get(name).orElse(null);
     if (server == null) return false;
-    // A switch opens a socket and logs in to it, which is far too long to hold a relay thread: the
-    // client reader when there is one, and a worker off the bounded pool when the session is
-    // watched, where it would be holding a thread the other players are relayed on.
-    if (Thread.currentThread() == clientReader || gg.tame.conduit.network.ConnectionSelector.onWorkerThread()) {
+    // A switch opens a socket and logs in to it, which is far too long to spend on a worker off the
+    // bounded pool: that is a thread the other players are relayed on.
+    if (gg.tame.conduit.network.ConnectionSelector.onWorkerThread()) {
       gg.tame.conduit.network.SocketThreads.start(() -> {
         if (runSwitch(server).successful()) Messages.connected(this, server.name());
         else Messages.unavailable(this, server.name());

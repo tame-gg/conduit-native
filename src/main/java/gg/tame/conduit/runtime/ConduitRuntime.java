@@ -120,22 +120,20 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final Object connectionSelectorLock = new Object();
   private gg.tame.conduit.network.ConnectionSelector connectionSelector;
   /**
-   * Where playing connections are watched, built on the first player to reach a server so that a
-   * proxy nobody has joined does not start selector threads for nobody.
+   * Where playing connections are watched. Opened at start, and the only place a playing connection
+   * is ever read: there is no second path, so what a session costs between packets is a file
+   * descriptor and its buffers on every platform, not a thread on some of them.
    *
-   * <p>Null when one could not be opened, which is not fatal: a session that cannot be watched keeps
-   * the thread per socket it has always had, and says so once rather than refusing the player.
+   * <p>It used to be built on the first player and to be allowed to fail, with a session that could
+   * not be watched keeping a thread per socket. That left the population a proxy could hold
+   * depending on whether a {@link java.nio.channels.Selector} had opened hours earlier, which is
+   * not a thing to find out at a thousand players. A selector that will not open means this JDK
+   * cannot do non-blocking I/O at all; the proxy says so and does not start.
    */
-  public gg.tame.conduit.network.ConnectionSelector connectionSelector() {
+  public gg.tame.conduit.network.ConnectionSelector connectionSelector() throws IOException {
     synchronized (connectionSelectorLock) {
-      if (connectionSelector == null && !closed.get()) {
-        try {
-          connectionSelector = new gg.tame.conduit.network.ConnectionSelector();
-        } catch (java.io.IOException failed) {
-          gg.tame.conduit.log.ConduitLog.warn("Could not open a connection selector, so every player"
-              + " keeps a thread per socket: " + failed.getMessage());
-        }
-      }
+      if (closed.get()) throw new IOException("the proxy is shutting down");
+      if (connectionSelector == null) connectionSelector = new gg.tame.conduit.network.ConnectionSelector();
       return connectionSelector;
     }
   }
@@ -228,6 +226,13 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   /** Fires ProxyStartEvent, once; the matching ProxyShutdownEvent comes from {@link #close()}. */
   public void started() {
     if (!started.compareAndSet(false, true)) return;
+    // Opened here rather than on the first player, so a JDK that cannot give us one is a start that
+    // fails with a reason rather than a proxy that quietly holds far fewer players than it says.
+    try { connectionSelector(); }
+    catch (IOException failed) {
+      throw new IllegalStateException("Could not open the connection selector playing sessions are"
+          + " read on; this JDK cannot do non-blocking I/O: " + failed.getMessage(), failed);
+    }
     configuration.ops().metrics().prometheusAddress().ifPresent(address -> {
       // A metrics address that cannot be bound is reported and the proxy serves players regardless.
       try { metricsEndpoint = gg.tame.conduit.metrics.PrometheusEndpoint.start(address, this); }

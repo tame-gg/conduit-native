@@ -356,9 +356,9 @@ public final class MinecraftProxy implements AutoCloseable {
       PlayerSession player = new PlayerSession(configuration, transport, protocol, session, pipeline, forwarder, runtime,
           handshake, firstPacket, loginStart, playerAddress);
       // What this connection owes back whenever it ends, and once however many paths reach it: a
-      // watched session outlives this thread and releases itself, a session read on threads of its
-      // own is released by the finally below, and a session that stopped being watched part way
-      // through setting it up can reach both.
+      // session that reached the selector outlives this thread and releases itself, and one whose
+      // login ended first is released by the finally below. A login that failed part way through
+      // being handed over can reach both.
       java.util.concurrent.atomic.AtomicBoolean releasedOnce = new java.util.concurrent.atomic.AtomicBoolean();
       Runnable release = () -> {
         if (releasedOnce.compareAndSet(false, true)) release(loginMessages, opened, client, leaseHolder);
