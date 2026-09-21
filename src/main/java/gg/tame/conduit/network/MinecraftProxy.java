@@ -320,7 +320,9 @@ public final class MinecraftProxy implements AutoCloseable {
         throw new IOException("unsupported Minecraft protocol: " + handshake.protocolVersion());
       }
       if (!runtime.versionGate().allows(handshake.protocolVersion())) {
-        try { transport.write(LoginDisconnect.encode(protocol, runtime.versionGate().kickMessage())); } catch (IOException ignored) { }
+        // Through the same reader status.motd goes through, so a kick screen takes MiniMessage and
+        // & codes like every other line an operator writes.
+        try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(runtime.versionGate().kickMessage()))); } catch (IOException ignored) { }
         return;
       }
       byte[] loginStart = transport.read(configuration.maxFrameBytes());
@@ -457,7 +459,7 @@ public final class MinecraftProxy implements AutoCloseable {
     // its database -- and nothing is decided for a client that gave up meanwhile.
     if (over(player, transport)) return;
     if (runtime.maintenance().isActive() && !maintenanceBypass(player)) {
-      try { transport.write(LoginDisconnect.encode(protocol, runtime.maintenance().kickMessage())); } catch (IOException ignored) { }
+      try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(runtime.maintenance().kickMessage()))); } catch (IOException ignored) { }
       player.leave(LoginStatus.CANCELLED_BY_PROXY);
       return;
     }
@@ -629,7 +631,7 @@ public final class MinecraftProxy implements AutoCloseable {
     }
     if (runtime.versionGate().isEnabled() && !runtime.versionGate().allows(clientProtocol)) {
       advertised = runtime.versionGate().statusProtocolAdvertisement(clientProtocol).orElse(clientProtocol);
-      if (!runtime.maintenance().isActive()) description = Text.of(runtime.versionGate().kickMessage());
+      if (!runtime.maintenance().isActive()) description = StatusSettings.parseMotd(runtime.versionGate().kickMessage());
     }
     var online = runtime.players().all();
     List<ServerListPingEvent.SamplePlayer> sample = online.stream().limit(STATUS_SAMPLE)
