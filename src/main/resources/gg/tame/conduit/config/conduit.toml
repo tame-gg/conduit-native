@@ -131,6 +131,11 @@ display-max-players = 100
 # A 64x64 PNG, relative to this file. (example)
 # favicon = "server-icon.png"
 
+# Who decides the icon: "plugins" (default) lets a ping plugin set one, "proxy-only"
+# always sends the icon above, or none -- use it when a plugin would otherwise pass a
+# backend's icon off as this proxy's.
+# favicon-policy = "plugins"
+
 # Turned on and off with /conduit maintenance. While it is on, players see motd in
 # the server list and kick-message if they try to join.
 [maintenance]

@@ -18,7 +18,39 @@ import java.util.Optional;
  * What the server list shows before plugins change it. {@code displayMaxPlayers} is only the
  * number printed after the slash: Conduit has no join cap, and this is not one.
  */
-public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon) {
+public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon,
+                             FaviconPolicy faviconPolicy) {
+  /**
+   * Who decides the icon a client is sent.
+   *
+   * <p>{@code PLUGINS} is how Conduit has always answered: a {@code ServerListPingEvent} listener,
+   * or a Velocity plugin through {@code ProxyPingEvent}, may set whatever icon it likes and that is
+   * what the client gets. {@code PROXY_ONLY} takes the icon back after every listener has had its
+   * say, so what the server list shows is the operator's own file or nothing at all. It exists for
+   * the deployment where a plugin pings a backend and hands the answer on: the backend's icon is
+   * not this proxy's identity, and an operator who has decided that wants it settled here rather
+   * than in each plugin. Nothing else about the answer is touched.
+   */
+  public enum FaviconPolicy {
+    PLUGINS,
+    PROXY_ONLY;
+
+    public static FaviconPolicy parse(String written) {
+      String text = written == null ? "" : written.strip().toLowerCase(java.util.Locale.ROOT);
+      return switch (text) {
+        case "", "plugins" -> PLUGINS;
+        case "proxy-only" -> PROXY_ONLY;
+        default -> throw new IllegalArgumentException(
+            "status.favicon-policy must be \"plugins\" or \"proxy-only\"");
+      };
+    }
+  }
+
+  /** The policy Conduit has always had: whatever a plugin sets is what the client is sent. */
+  public StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon) {
+    this(motd, displayMaxPlayers, favicon, FaviconPolicy.PLUGINS);
+  }
+
   public static final String DEFAULT_MOTD = "Conduit";
   public static final int DEFAULT_DISPLAY_MAX_PLAYERS = 100;
   /**
@@ -31,6 +63,7 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
   public StatusSettings {
     if (motd == null) motd = Text.of(DEFAULT_MOTD);
     if (favicon == null) favicon = Optional.empty();
+    if (faviconPolicy == null) faviconPolicy = FaviconPolicy.PLUGINS;
     if (displayMaxPlayers < 0) throw new IllegalArgumentException("status.display-max-players must be >= 0");
   }
 

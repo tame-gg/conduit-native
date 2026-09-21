@@ -640,6 +640,9 @@ public final class MinecraftProxy implements AutoCloseable {
     // A client left with no answer at all shows the server as unreachable, which is what a plugin
     // cancelling this asks for.
     if (ping.cancelled()) return;
+    // The one place the answer is written, so the policy holds for every plugin on every path --
+    // a native listener, a Velocity ProxyPingEvent, or a chain of both.
+    if (status.faviconPolicy() == StatusSettings.FaviconPolicy.PROXY_ONLY) ping.setFavicon(status.favicon());
     client.write(StatusResponder.response(protocol, request, ping));
     client.write(StatusResponder.pong(protocol, client.read(configuration.maxFrameBytes())));
   }

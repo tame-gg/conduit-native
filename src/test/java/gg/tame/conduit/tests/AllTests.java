@@ -104,6 +104,7 @@ public final class AllTests {
     MalformedInputTests.run();
     BackendPingTests.run();
     StatusIsolationTests.run();
+    FaviconPolicyTests.run();
     ObservabilityTests.run();
     ConfigValidationTests.run();
     ProxyProtocolTests.run();

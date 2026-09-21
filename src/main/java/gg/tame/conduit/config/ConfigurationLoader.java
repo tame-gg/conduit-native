@@ -299,7 +299,8 @@ public final class ConfigurationLoader {
         StatusSettings.parseMotd(optionalString(values, "status.motd", StatusSettings.DEFAULT_MOTD)),
         optionalInteger(values, "status.display-max-players", StatusSettings.DEFAULT_DISPLAY_MAX_PLAYERS),
         Optional.ofNullable(values.get("status.favicon")).filter(file -> !file.isBlank())
-            .flatMap(file -> StatusSettings.favicon(configDirectory.resolve(file).normalize())));
+            .flatMap(file -> StatusSettings.favicon(configDirectory.resolve(file).normalize())),
+        StatusSettings.FaviconPolicy.parse(optionalString(values, "status.favicon-policy", "plugins")));
   }
 
   private static TranslationSettings translation(Map<String, String> values) {
