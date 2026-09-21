@@ -565,17 +565,33 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       var event = new gg.tame.conduit.api.event.messaging.PluginMessageEvent(this, decoded.channel(), decoded.data(), direction);
       runtime.events().fire(event);
       if (event.cancelled()) return false;
-      if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY
-          && configuration.ops().messaging().bungeeCordChannel()
-          && gg.tame.conduit.messaging.BungeeCordMessages.isChannel(decoded.channel())) {
-        runtime.bungeeCord().handle(this, decoded.channel(), decoded.data());
-        return false;
+      if (direction == gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY) {
+        if (configuration.ops().messaging().bungeeCordChannel()
+            && gg.tame.conduit.messaging.BungeeCordMessages.isChannel(decoded.channel())) {
+          runtime.bungeeCord().handle(this, decoded.channel(), decoded.data());
+          return false;
+        }
+        // Every other channel a backend sends on, named once per session. Without this, a hub
+        // plugin whose message never arrives and one whose message arrives under a name Conduit
+        // does not recognise look exactly alike from the log: both are silence. This says which.
+        if (backendChannelsSeen.add(decoded.channel())) {
+          gg.tame.conduit.log.ConduitLog.debug(origin() + ": backend '"
+              + (backend == null ? "?" : backend.server().name()) + "' sent on plugin channel '"
+              + decoded.channel() + "' (" + decoded.data().length + " bytes), passed to the client");
+        }
       }
       return true;
-    } catch (IOException ignored) {
+    } catch (IOException malformed) {
+      // Forwarded rather than dropped, as before -- but no longer in silence. A plugin message the
+      // proxy cannot read is the one shape of this bug that leaves no other trace anywhere.
+      gg.tame.conduit.log.ConduitLog.debug(origin() + ": could not read a plugin message ("
+          + direction + "): " + malformed.getMessage());
       return true;
     }
   }
+  /** Backend plugin channels already named in the log, so each is said once rather than per packet. */
+  private final java.util.Set<String> backendChannelsSeen = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
   private record OptionalServerView(gg.tame.conduit.api.server.RegisteredServer server) implements OptionalServer {
     @Override public boolean isPresent() { return server != null; }
     @Override public gg.tame.conduit.api.server.RegisteredServer orElse(gg.tame.conduit.api.server.RegisteredServer fallback) {
