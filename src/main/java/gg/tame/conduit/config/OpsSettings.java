@@ -14,7 +14,8 @@ public record OpsSettings(
     StatusSettings status,
     MetricsSettings metrics,
     UpdateSettings updates,
-    MessagingSettings messaging
+    MessagingSettings messaging,
+    RoutingSettings routing
 ) {
   public static final int CURRENT_SCHEMA = 5;
 
@@ -31,33 +32,42 @@ public record OpsSettings(
     if (metrics == null) metrics = MetricsSettings.defaults();
     if (updates == null) updates = UpdateSettings.defaults();
     if (messaging == null) messaging = MessagingSettings.defaults();
+    if (routing == null) routing = RoutingSettings.defaults();
   }
 
-  /** Every setting but the messaging ones, which then take their defaults. */
+  /** Every setting but the routing ones, which then take their defaults. */
+  public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
+                     ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
+                     StatusSettings status, MetricsSettings metrics, UpdateSettings updates, MessagingSettings messaging) {
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, updates,
+        messaging, null);
+  }
+
+  /** Every setting but the messaging and routing ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
                      StatusSettings status, MetricsSettings metrics, UpdateSettings updates) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, updates, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, updates, null, null);
   }
 
   /** Every setting but the update and messaging ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
                      StatusSettings status, MetricsSettings metrics) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, null, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, null, null, null);
   }
 
   /** Every setting but the metrics and update ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
                      StatusSettings status) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, null, null, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, null, null, null, null);
   }
 
   /** Every setting but the server-list ones, which then take their defaults. */
   public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
                      ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation) {
-    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, null, null, null, null);
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, null, null, null, null, null);
   }
 
   public static OpsSettings defaults() {
@@ -72,6 +82,7 @@ public record OpsSettings(
         StatusSettings.defaults(),
         MetricsSettings.defaults(),
         UpdateSettings.defaults(),
-        MessagingSettings.defaults());
+        MessagingSettings.defaults(),
+        RoutingSettings.defaults());
   }
 }

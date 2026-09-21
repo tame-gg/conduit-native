@@ -112,6 +112,7 @@ public final class NativeApiTests {
     aLiveBackendPingAsksTheBackend();
     aKickWhilePlayingReachesTheClientAsTheBackendWroteIt();
     aKickListenerCanRedirectThePlayer();
+    aShuttingDownBackendMovesThePlayerRatherThanDisconnectingThem();
     aRefusedSwitchKeepsThePlayerAndTellsThem();
     aRefusedFirstServerMovesOnAndExplains();
     theClientsLanguageIsKnownOnceItSendsItsSettings();
@@ -741,6 +742,30 @@ public final class NativeApiTests {
     }
   }
 
+  /**
+   * A backend shutting down is the commonest event on a network, and it is a kick: the server says
+   * "Server closed" to everyone on it and goes. Passing that on threw the player off the proxy
+   * entirely, so restarting one server disconnected everyone who happened to be on it.
+   */
+  private static void aShuttingDownBackendMovesThePlayerRatherThanDisconnectingThem() throws Exception {
+    try (Backend lobby = new Backend("lobby"); Backend survival = new Backend("survival");
+         Fixture proxy = new Fixture(List.of(lobby, survival), List.of("lobby"), List.of("lobby", "survival"))) {
+      try (Client client = Client.join(proxy.port(), "stayer")) {
+        require(proxy.recorder.await(PlayerServerConnectedEvent.class, 1), "joined the lobby");
+        // Exactly what a server sends on the way down, with nobody listening for the event.
+        lobby.send(packet(DISCONNECT_OUT, output -> MinecraftOutput.string(output, "{\"text\":\"Server closed\"}")));
+        require(proxy.recorder.await(PlayerServerSwitchEvent.class, 1), "moved instead, events " + proxy.recorder.names());
+        require(proxy.runtime.player("stayer").orElseThrow().currentServer().name().equals("survival"),
+            "onto the next server that would take them");
+        require(survival.logins.get() == 1, "which was actually dialled");
+        require(client.received(p -> id(p) == DISCONNECT_OUT).isEmpty(),
+            "and the player is never shown the kick screen");
+        require(client.await(p -> id(p) == CHAT_OUT && text(p).contains("Server closed")),
+            "but is told why they moved");
+      }
+    }
+  }
+
   private static void aKickListenerCanRedirectThePlayer() throws Exception {
     try (Backend lobby = new Backend("lobby"); Backend survival = new Backend("survival");
          Fixture proxy = new Fixture(List.of(lobby, survival), List.of("lobby"), List.of("lobby"))) {
@@ -1088,9 +1113,13 @@ public final class NativeApiTests {
     });
   }
   static byte[] chat(String line) throws IOException { return packet(CHAT_IN, output -> MinecraftOutput.string(output, line)); }
-  private static byte[] pluginMessage(int id, String channel, byte[] data) throws IOException {
+  static byte[] pluginMessage(int id, String channel, byte[] data) throws IOException {
     return new PluginMessage(channel, data).encode(id);
   }
+  /** The clientbound 1.8 plugin-message id, for a test in another class driving these fixtures. */
+  static int pluginOut() { return PLUGIN_OUT; }
+  static String channelOf(byte[] packet) { return channel(packet); }
+  static byte[] dataOf(byte[] packet) { return data(packet); }
   /** The channel of a 1.8 plugin message in either direction, or "" for any other packet. */
   private static String channel(byte[] packet) {
     try {

@@ -501,19 +501,53 @@ public final class CoreCommands {
   }
 
   /**
-   * What bare {@code /conduit} answers: the subcommands this source may actually run, so a player
-   * with one node is not shown the twenty they would be refused. A source with none is told that,
-   * rather than shown an empty pair of angle brackets.
+   * What bare {@code /conduit} answers.
+   *
+   * <p>It used to be one line naming every subcommand, separated by pipes, which at fourteen of them
+   * was a paragraph of words with no shape: nothing said which of them looks at the proxy and which
+   * changes it. They are grouped here instead, and only the groups this source may actually use are
+   * shown -- a player with one node sees one line rather than the twenty they would be refused.
    */
   private static void usage(CommandSource source) {
-    List<String> allowed = new ArrayList<>(conduitSubcommands(source));
-    if (source instanceof ConsoleCommandSource) allowed.add("shutdown");
+    List<String> allowed = conduitSubcommands(source);
     if (allowed.isEmpty()) {
       Messages.info(source, "Usage: /conduit help");
       return;
     }
-    source.sendMessage(Text.of("Usage: ").color(Messages.LABEL)
-        .append(Text.of("/conduit <" + String.join("|", allowed) + ">").color(Messages.BODY)));
+    source.sendMessage(Text.of(Conduit.BRAND + " " + Conduit.VERSION).color(Messages.BRAND).bold());
+    source.sendMessage(Text.of("Proxy commands. Run one as /conduit <name>.").color(Messages.LABEL));
+    for (Group group : CONDUIT_GROUPS) {
+      List<String> mine = new ArrayList<>();
+      for (String subcommand : group.subcommands()) if (allowed.contains(subcommand)) mine.add(subcommand);
+      if (mine.isEmpty()) continue;
+      source.sendMessage(Text.of("  " + pad(group.title()) + " ").color(Messages.LABEL)
+          .append(Text.of(String.join(", ", mine)).color(Messages.BODY)));
+    }
+    if (source instanceof ConsoleCommandSource) {
+      source.sendMessage(Text.of("  " + pad("Console") + " ").color(Messages.LABEL)
+          .append(Text.of("shutdown").color(Messages.BODY)));
+    }
+    source.sendMessage(Text.of("/conduit help").color(Messages.BODY)
+        .append(Text.of(" lists every command, not only these.").color(Messages.OTHER)));
+  }
+
+  /** A heading and the subcommands under it, for the overview bare /conduit prints. */
+  private record Group(String title, List<String> subcommands) { }
+
+  /**
+   * The overview's groups, in the order they are shown: what the proxy is doing, what an operator
+   * changes while it runs, and what is only reached for when something is wrong.
+   */
+  private static final List<Group> CONDUIT_GROUPS = List.of(
+      new Group("Status", List.of("info", "servers", "health", "uptime", "metrics", "plugins")),
+      new Group("Operate", List.of("maintenance", "drain", "undrain", "attack", "reload")),
+      new Group("Diagnose", List.of("doctor", "diagnostics", "dump", "heap", "cache")));
+
+  /** Group headings padded to one width, so the names beside them line up in a fixed-width chat. */
+  private static String pad(String title) {
+    StringBuilder padded = new StringBuilder(title);
+    while (padded.length() < 8) padded.append(' ');
+    return padded.toString();
   }
 
   /**
@@ -589,42 +623,78 @@ public final class CoreCommands {
     }
   }
 
+  /**
+   * {@code /conduit help}: every command this source may run, grouped and with a word on what each
+   * one does.
+   *
+   * <p>It was a flat list of usage strings, network commands and proxy subcommands together, in the
+   * order they happened to be written. Twenty-eight lines of that is a wall nobody reads, and it
+   * never said what any of them were for. A group whose commands this source may not run is left out
+   * entirely rather than shown empty.
+   */
   private static void help(CommandSource source) {
-    source.sendMessage(Text.of("Conduit commands:").color(Messages.BRAND).bold());
-    source.sendMessage(Text.of("/server").color(Messages.BODY));
-    source.sendMessage(Text.of("/server <server>").color(Messages.BODY));
-    source.sendMessage(Text.of("/hub").color(Messages.BODY));
-    source.sendMessage(Text.of("/ping").color(Messages.BODY));
-    helpLine(source, Permissions.SEND, "/send <player|server|current> <server>");
-    helpLine(source, Permissions.GLIST, "/glist");
-    helpLine(source, Permissions.PLIST, "/plist <server>");
-    helpLine(source, Permissions.FIND, "/find <player>");
-    helpLine(source, Permissions.ALERT, "/alert <message>");
-    helpLine(source, Permissions.GKICK, "/gkick <player> [reason]");
-    helpLine(source, Permissions.GBAN, "/gban <player|address> [duration] [reason]");
-    helpLine(source, Permissions.GBAN, "/gunban <player|address>");
-    helpLine(source, Permissions.GWHITELIST, "/gwhitelist <on|off|add|remove|list|clear|status>");
-    helpLine(source, Permissions.INFO, "/conduit info");
-    helpLine(source, Permissions.SERVERS, "/conduit servers");
-    helpLine(source, Permissions.PLUGINS, "/conduit plugins");
-    helpLine(source, Permissions.UPTIME, "/conduit uptime");
-    helpLine(source, Permissions.METRICS, "/conduit metrics");
-    helpLine(source, Permissions.HEALTH, "/conduit health");
-    helpLine(source, Permissions.MAINTENANCE, "/conduit maintenance <on|off|status>");
-    helpLine(source, Permissions.DRAIN, "/conduit drain <server>");
-    helpLine(source, Permissions.DRAIN, "/conduit undrain <server>");
-    helpLine(source, Permissions.DOCTOR, "/conduit doctor");
-    helpLine(source, Permissions.DIAGNOSTICS, "/conduit diagnostics");
-    helpLine(source, Permissions.ATTACK, "/conduit attack <on|off|status>");
-    helpLine(source, Permissions.CACHE, "/conduit cache invalidate <source>");
-    helpLine(source, Permissions.RELOAD, "/conduit reload");
-    helpLine(source, Permissions.DUMP, "/conduit dump");
-    helpLine(source, Permissions.HEAP, "/conduit heap");
-    if (source instanceof ConsoleCommandSource) source.sendMessage(Text.of("/conduit shutdown [reason]").color(Messages.BODY));
+    source.sendMessage(Text.of(Conduit.BRAND + " " + Conduit.VERSION).color(Messages.BRAND).bold());
+    helpGroup(source, "Getting around", List.of(
+        entry(null, "/server", "list the servers you may join"),
+        entry(null, "/server <server>", "move yourself there"),
+        entry(null, "/hub", "back to the lobby"),
+        entry(null, "/ping", "your latency to the proxy")));
+    helpGroup(source, "Players", List.of(
+        entry(Permissions.GLIST, "/glist", "who is online, by server"),
+        entry(Permissions.PLIST, "/plist <server>", "who is on one server"),
+        entry(Permissions.FIND, "/find <player>", "which server someone is on"),
+        entry(Permissions.SEND, "/send <player|server|current> <server>", "move someone else"),
+        entry(Permissions.ALERT, "/alert <message>", "tell the whole network")));
+    helpGroup(source, "Moderation", List.of(
+        entry(Permissions.GKICK, "/gkick <player> [reason]", "disconnect someone once"),
+        entry(Permissions.GBAN, "/gban <player|address> [duration] [reason]", "keep them out; no duration is permanent"),
+        entry(Permissions.GBAN, "/gunban <player|address>", "lift a ban"),
+        entry(Permissions.GWHITELIST, "/gwhitelist <on|off|add|remove|list|clear|status>", "close the network to a list")));
+    helpGroup(source, "Proxy status", List.of(
+        entry(Permissions.INFO, "/conduit info", "version, your server, player counts"),
+        entry(Permissions.SERVERS, "/conduit servers", "every backend and whether it is up"),
+        entry(Permissions.HEALTH, "/conduit health", "health checks, with their counters"),
+        entry(Permissions.UPTIME, "/conduit uptime", "how long this proxy has been up"),
+        entry(Permissions.METRICS, "/conduit metrics", "counters this proxy keeps"),
+        entry(Permissions.PLUGINS, "/conduit plugins", "what is loaded")));
+    helpGroup(source, "Proxy operations", List.of(
+        entry(Permissions.MAINTENANCE, "/conduit maintenance <on|off|status>", "close the network with a message"),
+        entry(Permissions.DRAIN, "/conduit drain <server>", "stop sending players to one backend"),
+        entry(Permissions.DRAIN, "/conduit undrain <server>", "start again"),
+        entry(Permissions.ATTACK, "/conduit attack <on|off|status>", "stricter flood limits, without editing config"),
+        entry(Permissions.RELOAD, "/conduit reload", "re-read conduit.toml")));
+    helpGroup(source, "When something is wrong", List.of(
+        entry(Permissions.DOCTOR, "/conduit doctor", "what looks wrong with this setup"),
+        entry(Permissions.DIAGNOSTICS, "/conduit diagnostics", "the long form of it"),
+        entry(Permissions.DUMP, "/conduit dump", "write a support bundle to disk"),
+        entry(Permissions.HEAP, "/conduit heap", "memory, right now"),
+        entry(Permissions.CACHE, "/conduit cache invalidate <source>", "drop a cache")));
+    if (source instanceof ConsoleCommandSource) {
+      helpGroup(source, "Console only", List.of(
+          entry(null, "/conduit shutdown [reason]", "stop the proxy, telling players why")));
+    }
   }
 
-  private static void helpLine(CommandSource source, String permission, String usage) {
-    if (Permissions.allows(source, permission)) source.sendMessage(Text.of(usage).color(Messages.BODY));
+  /** One line of help: the node it needs, how it is typed, and what it does. */
+  private record HelpEntry(String permission, String usage, String description) { }
+
+  private static HelpEntry entry(String permission, String usage, String description) {
+    return new HelpEntry(permission, usage, description);
+  }
+
+  /** Prints a heading and its lines, or nothing at all when this source may run none of them. */
+  private static void helpGroup(CommandSource source, String title, List<HelpEntry> entries) {
+    List<HelpEntry> mine = new ArrayList<>();
+    for (HelpEntry entry : entries) {
+      if (entry.permission() == null || Permissions.allows(source, entry.permission())) mine.add(entry);
+    }
+    if (mine.isEmpty()) return;
+    source.sendMessage(Text.empty());
+    source.sendMessage(Text.of(title).color(Messages.BRAND));
+    for (HelpEntry entry : mine) {
+      source.sendMessage(Text.of("  " + entry.usage()).color(Messages.BODY)
+          .append(Text.of("  " + entry.description()).color(Messages.OTHER)));
+    }
   }
 
   /**

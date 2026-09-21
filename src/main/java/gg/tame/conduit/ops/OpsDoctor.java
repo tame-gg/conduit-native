@@ -23,6 +23,20 @@ public final class OpsDoctor {
     List<Finding> findings = new ArrayList<>();
     ConduitConfiguration config = runtime.configuration();
     findings.add(new Finding(Severity.OK, "version", "Conduit " + Conduit.VERSION));
+    // The one question an operator asks when a hub button does nothing: has the backend's plugin
+    // actually said anything to this proxy? A count of zero is not itself a fault -- a network may
+    // simply have no such plugin -- so it is reported rather than warned about, and it separates
+    // "the message never arrives" from "it arrives and something later is wrong".
+    if (!config.ops().messaging().bungeeCordChannel()) {
+      findings.add(new Finding(Severity.WARNING, "bungeecord",
+          "The BungeeCord plugin channel is off, so hub and queue plugins running on a backend cannot"
+              + " reach this proxy. Set messaging.bungeecord-channel = true to let them."));
+    } else {
+      long handled = runtime.bungeeCord().handledCount();
+      findings.add(new Finding(Severity.OK, "bungeecord", handled == 0
+          ? "BungeeCord plugin channel on; no backend plugin has used it yet since this start."
+          : "BungeeCord plugin channel on; " + handled + " message(s) answered since this start."));
+    }
     if (config.listener().getPort() < 1 || config.listener().getPort() > 65535) {
       findings.add(new Finding(Severity.ERROR, "listener", "Listener port is invalid."));
     } else {

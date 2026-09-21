@@ -1936,8 +1936,50 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     else if (result instanceof KickResult.Notify notify) disconnect(notify.message());
     else if (result != stay) disconnect(((KickResult.Disconnect) result).reason());
     else {
-      // The backend's own packet, untouched: what the player saw before this event existed.
+      // A backend that kicks a player while they are playing is, far more often than not, a backend
+      // shutting down: "Server closed" is the last thing it says before the socket goes. Throwing
+      // the player off the whole network for that is what a single server has to do and what a
+      // proxy exists so that it need not do -- so the player is moved somewhere else and told why,
+      // which is what an operator coming from BungeeCord expects and what a hub network needs.
+      //
+      // Only when there is somewhere to go. A kick with no candidate left still ends the session
+      // with the backend's own packet, untouched, which is what the player saw before this existed.
+      if (fallbackAfterKick(kicker, playDisconnectReason(disconnect))) return true;
       try { writeClient(disconnect, true); } finally { close(); }
+    }
+    return false;
+  }
+
+  /**
+   * Moves a kicked player to another server rather than off the proxy.
+   *
+   * <p>The session is already SWITCHING and the kicker is discarded here, so the walk is the same
+   * one a lost backend takes. True when somebody took the player; false when nothing did, and the
+   * caller then ends the session the way it always did. Nothing is disconnected from in here: a
+   * failure has to leave the original kick to be reported, not replace it with a worse message.
+   */
+  private boolean fallbackAfterKick(BackendConnection kicker, java.util.Optional<Text> reason) {
+    if (!configuration.fallbackOnKick()) return false;
+    discard(kicker);
+    Set<String> failed = new HashSet<>();
+    failed.add(ServerRegistry.normalize(kicker.server().name()));
+    List<BackendServer> order = new java.util.ArrayList<>(
+        selector.fallback(kicker.server().name(), failed, clientProtocol, modClassifier.family(), false));
+    for (BackendServer server : order) {
+      if (closed) return false;
+      try {
+        switchTo(server, true);
+        // The reason first, so the player reads why they moved before being told where to.
+        reason.ifPresent(text -> sendMessage(Text.of("Kicked from " + kicker.server().name() + ": ")
+            .color(TextColor.RED).append(text)));
+        Messages.connected(this, server.name());
+        ConduitMetrics.current().fallbackEvent();
+        return true;
+      } catch (RefusedSwitch refused) {
+        failed.add(ServerRegistry.normalize(server.name()));
+      } catch (Exception exception) {
+        failed.add(ServerRegistry.normalize(server.name()));
+      }
     }
     return false;
   }

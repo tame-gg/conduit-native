@@ -106,4 +106,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
         initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement, proxyProtocol,
         forcedHosts);
   }
+
+  /** Whether a kick nobody handled moves the player on rather than off; see RoutingSettings. */
+  public boolean fallbackOnKick() { return ops().routing().fallbackOnKick(); }
 }

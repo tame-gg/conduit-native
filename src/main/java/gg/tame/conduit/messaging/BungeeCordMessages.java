@@ -53,8 +53,19 @@ public final class BungeeCordMessages {
   private static final String ONLINE = "ONLINE";
 
   private final ConduitRuntime runtime;
+  /**
+   * Whether anything has ever come in on this channel. The first one is worth a line at INFO: the
+   * failure this channel is prone to is invisible -- a plugin sends, nothing happens, nothing is
+   * logged at either end -- and an operator wondering why their hub button does nothing needs to be
+   * able to tell "the message never arrived" from "it arrived and I got it wrong". After the first,
+   * they are counted and left at debug.
+   */
+  private final java.util.concurrent.atomic.AtomicLong handled = new java.util.concurrent.atomic.AtomicLong();
 
   public BungeeCordMessages(ConduitRuntime runtime) { this.runtime = runtime; }
+
+  /** How many messages have been answered on this channel, for {@code /conduit doctor}. */
+  public long handledCount() { return handled.get(); }
 
   /** Whether this is the channel, under either of its two names. */
   public static boolean isChannel(String channel) {
@@ -74,6 +85,12 @@ public final class BungeeCordMessages {
   public boolean handle(Player sender, String channel, byte[] data) {
     try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(data))) {
       String subchannel = in.readUTF();
+      if (handled.getAndIncrement() == 0) {
+        ConduitLog.info("A backend plugin is using the " + channel + " channel (first message: "
+            + subchannel + ", from '" + sender.currentServer().name() + "'). Conduit answers it.");
+      } else {
+        ConduitLog.debug(channel + " " + subchannel + " from '" + sender.currentServer().name() + "'");
+      }
       switch (subchannel) {
         case "Connect" -> connect(sender, in.readUTF());
         case "ConnectOther" -> {
@@ -190,7 +207,13 @@ public final class BungeeCordMessages {
   private void connect(Player player, String server) {
     Optional<BackendServer> backend = registered(server);
     if (backend.isEmpty()) {
-      ConduitLog.debug("A backend asked to connect " + player.username() + " to '" + server + "', which is not registered");
+      // At WARN, and naming what is registered. This is the likeliest way a hub button does nothing
+      // on a correctly configured proxy: the plugin's server name and the name in conduit.toml have
+      // to be the same word, and nothing else in the system ever says they are not.
+      ConduitLog.warn("A backend plugin asked to connect " + player.username() + " to '" + server
+          + "', which is not a server in conduit.toml. Registered servers are: "
+          + String.join(", ", runtime.selector().registry().names())
+          + ". The name in the plugin's configuration has to match one of those.");
       return;
     }
     // Through the same path /server takes, so health, events and the switch's own rules all apply:

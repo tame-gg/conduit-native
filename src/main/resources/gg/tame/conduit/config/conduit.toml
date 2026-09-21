@@ -51,6 +51,11 @@ port = 25566
 initial = ["lobby"]
 # Tried in order when the server a player is on goes away under them.
 fallback = ["lobby"]
+# When a backend kicks a player and no plugin decided what to do -- which is what a
+# server says as it shuts down -- move them to the next server that will take them
+# and tell them why, instead of disconnecting them from the network. Turn it off
+# where a kick is meant to be final and its screen is meant to be seen.
+fallback-on-kick = true
 
 # One proxy, several front doors: a hostname a player typed in their server list
 # sends them to a particular backend. The name on the left is the address as the

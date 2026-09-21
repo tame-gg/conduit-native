@@ -256,7 +256,7 @@ public final class ConfigurationLoader {
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
     return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory),
-        metrics(values), updates(values), messaging(values));
+        metrics(values), updates(values), messaging(values), routingSettings(values));
   }
 
   private static MetricsSettings metrics(Map<String, String> values) {
@@ -265,6 +265,11 @@ public final class ConfigurationLoader {
     InetSocketAddress address = parseAddress(values, key);
     if (address.isUnresolved()) throw new IllegalArgumentException(key + " must be an IP address or a host name that resolves, with a port");
     return new MetricsSettings(Optional.of(address));
+  }
+
+  private static RoutingSettings routingSettings(Map<String, String> values) {
+    return new RoutingSettings(optionalBoolean(values, "routing.fallback-on-kick",
+        RoutingSettings.DEFAULT_FALLBACK_ON_KICK));
   }
 
   private static MessagingSettings messaging(Map<String, String> values) {

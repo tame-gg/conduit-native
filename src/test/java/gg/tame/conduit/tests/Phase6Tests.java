@@ -350,7 +350,12 @@ public final class Phase6Tests {
     core.dispatch(player, "/server missing");
     require(player.messages.stream().anyMatch(line -> line.contains("Unknown server: missing")), "unknown");
     core.dispatch(player, "/conduit");
-    require(player.messages.stream().anyMatch(line -> line.startsWith("Usage: /conduit <")), "bare /conduit names its subcommands");
+    // Grouped rather than one long pipe-separated line: the overview has to say which subcommands
+    // look at the proxy and which change it, or it is just as unreadable as the list it replaced.
+    require(player.messages.stream().anyMatch(line -> line.startsWith("Proxy commands")), "bare /conduit introduces the subcommands");
+    require(player.messages.stream().anyMatch(line -> line.contains("Status") && line.contains("info")),
+            "and groups them, said " + player.messages);
+    require(player.messages.stream().anyMatch(line -> line.contains("/conduit help")), "and points at the full list");
     require(player.messages.stream().noneMatch(line -> line.equals("Current server: lobby")), "bare /conduit is not info");
     core.dispatch(player, "/conduit info");
     require(player.messages.stream().anyMatch(line -> line.startsWith("Conduit ")), "conduit version");

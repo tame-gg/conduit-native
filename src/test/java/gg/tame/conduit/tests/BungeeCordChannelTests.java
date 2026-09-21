@@ -25,7 +25,80 @@ public final class BungeeCordChannelTests {
     bothChannelNamesAreRecognised();
     aSubchannelRoundTripsThroughTheFormat();
     aForwardBodyKeepsItsBytes();
+    aBackendConnectMovesThePlayer();
+    theProxyAnswersAQuestionAndTheClientNeverSeesIt();
     System.out.println("BungeeCordChannelTests OK");
+  }
+
+  /**
+   * The whole point, end to end: a backend plugin sends Connect and the player moves.
+   *
+   * <p>This is what a hub plugin's /hub does and nothing else. Checking the payload format alone,
+   * as the tests above do, says the bytes are right and says nothing about whether the proxy ever
+   * reads them -- which is exactly how a channel that was implemented but never reached could look
+   * healthy.
+   */
+  private static void aBackendConnectMovesThePlayer() throws Exception {
+    try (NativeApiTests.Backend lobby = new NativeApiTests.Backend("lobby");
+         NativeApiTests.Backend hub = new NativeApiTests.Backend("hub");
+         NativeApiTests.Fixture proxy = new NativeApiTests.Fixture(
+             java.util.List.of(lobby, hub), java.util.List.of("lobby"), java.util.List.of("lobby"))) {
+      try (NativeApiTests.Client client = NativeApiTests.Client.join(proxy.port(), "hubber")) {
+        require(proxy.recorder.await(
+            gg.tame.conduit.api.event.player.PlayerServerConnectedEvent.class, 1), "joined the lobby");
+        require(proxy.runtime.player("hubber").orElseThrow().currentServer().name().equals("lobby"),
+            "starts on the lobby");
+
+        byte[] connect = write(out -> { out.writeUTF("Connect"); out.writeUTF("hub"); });
+        lobby.send(NativeApiTests.pluginMessage(NativeApiTests.pluginOut(), "bungeecord:main", connect));
+
+        require(waitFor(() -> proxy.runtime.player("hubber")
+            .map(player -> player.currentServer().name().equals("hub")).orElse(false), 10_000),
+            "the backend's Connect moved the player to hub, got "
+                + proxy.runtime.player("hubber").map(player -> player.currentServer().name()).orElse("gone"));
+        require(hub.logins.get() == 1, "and the hub was actually dialled");
+        // The message was addressed to the proxy, so the client must never have been handed it.
+        require(client.received(packet -> NativeApiTests.channelOf(packet).equals("bungeecord:main")).isEmpty(),
+            "the client never sees a message addressed to the proxy");
+      }
+    }
+  }
+
+  /** A question the proxy answers goes back to the backend that asked, and nowhere else. */
+  private static void theProxyAnswersAQuestionAndTheClientNeverSeesIt() throws Exception {
+    try (NativeApiTests.Backend lobby = new NativeApiTests.Backend("lobby");
+         NativeApiTests.Fixture proxy = new NativeApiTests.Fixture(
+             java.util.List.of(lobby), java.util.List.of("lobby"), java.util.List.of("lobby"))) {
+      try (NativeApiTests.Client client = NativeApiTests.Client.join(proxy.port(), "asker")) {
+        require(proxy.recorder.await(
+            gg.tame.conduit.api.event.player.PlayerServerConnectedEvent.class, 1), "joined");
+
+        byte[] ask = write(out -> { out.writeUTF("PlayerCount"); out.writeUTF("ALL"); });
+        lobby.send(NativeApiTests.pluginMessage(NativeApiTests.pluginOut(), "bungeecord:main", ask));
+
+        require(waitFor(() -> !lobby.received(packet ->
+            NativeApiTests.channelOf(packet).equals("bungeecord:main")).isEmpty(), 10_000),
+            "the backend got an answer back on the same channel");
+        byte[] reply = NativeApiTests.dataOf(lobby.received(packet ->
+            NativeApiTests.channelOf(packet).equals("bungeecord:main")).getFirst());
+        try (DataInputStream in = new DataInputStream(new ByteArrayInputStream(reply))) {
+          require(in.readUTF().equals("PlayerCount"), "the reply names its subchannel");
+          require(in.readUTF().equals("ALL"), "and what it is about");
+          require(in.readInt() == 1, "and counts the one player online");
+        }
+        require(client.received(packet -> NativeApiTests.channelOf(packet).equals("bungeecord:main")).isEmpty(),
+            "and the client saw none of it");
+      }
+    }
+  }
+
+  private static boolean waitFor(java.util.function.BooleanSupplier condition, long millis) throws InterruptedException {
+    long deadline = System.currentTimeMillis() + millis;
+    while (System.currentTimeMillis() < deadline) {
+      if (condition.getAsBoolean()) return true;
+      Thread.sleep(25);
+    }
+    return condition.getAsBoolean();
   }
 
   private static void bothChannelNamesAreRecognised() {
