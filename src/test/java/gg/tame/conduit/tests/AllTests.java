@@ -103,6 +103,7 @@ public final class AllTests {
     PluginRuntimeTests.run();
     MalformedInputTests.run();
     BackendPingTests.run();
+    StatusIsolationTests.run();
     ObservabilityTests.run();
     ConfigValidationTests.run();
     ProxyProtocolTests.run();
