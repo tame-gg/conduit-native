@@ -71,6 +71,7 @@ public final class ConnectionSelector implements AutoCloseable {
   private static final int PAUSED_READ_CEILING_BYTES = 64 * 1024;
 
   private static final ThreadLocal<Boolean> IN_WORKER = new ThreadLocal<>();
+  private static final ThreadLocal<Boolean> IN_SELECTOR = new ThreadLocal<>();
 
   /**
    * Whether this thread is relaying a connection for the selector.
@@ -81,8 +82,28 @@ public final class ConnectionSelector implements AutoCloseable {
    */
   public static boolean onWorkerThread() { return IN_WORKER.get() != null; }
 
+  /** Whether this thread is a selector loop: the two to four threads every connection waits on. */
+  public static boolean onSelectorThread() { return IN_SELECTOR.get() != null; }
+
   private final Loop[] loops = new Loop[SELECTOR_THREADS];
   private final ExecutorService workers;
+  /**
+   * Where a session is told its connection has gone.
+   *
+   * <p>Telling it runs the session's own end: PlayerDisconnectEvent, every plugin listening to it,
+   * and a close that waits out the linger a kicked player's reason is sent in. On a selector thread
+   * that is every other connection on that loop waiting behind one plugin's database write, and
+   * there are only two to four of those threads; on a worker it is one of the threads the rest of
+   * the players are relayed on. Neither is the session's to spend, so it gets a thread here.
+   *
+   * <p>Cached rather than fixed: a session ending is the common path, not a rare one, so a thread
+   * per disconnect would be the thread per connection this whole class exists to get rid of -- and
+   * a bounded pool would put the slow listener back in front of everyone else's disconnect, which
+   * is the thing being fixed, only one queue further along. Threads here are reused between
+   * disconnects and only multiply while listeners are actually slow.
+   */
+  private final ExecutorService endings =
+      Executors.newCachedThreadPool(SocketThreads.factory("conduit-session-end-"));
   private final AtomicInteger next = new AtomicInteger();
   private volatile boolean running = true;
 
@@ -215,9 +236,27 @@ public final class ConnectionSelector implements AutoCloseable {
     // something a disconnect waits behind. In a finally because onClosed re-enters here by way of
     // the transport's own cancel(), which returns at the line above and must not leave the key.
     try {
-      if (reason != null) registration.handler.onClosed(reason, fault);
+      if (reason != null) tell(registration, reason, fault);
     } finally {
       registration.loop.remove(registration);
+    }
+  }
+
+  /**
+   * Hands the session its ending, off whichever of this class's threads noticed it. Inline when the
+   * caller is not one of them -- a session closing itself already runs where it chose to.
+   */
+  private void tell(Registration registration, String reason, boolean fault) {
+    if (!onSelectorThread() && !onWorkerThread()) {
+      registration.handler.onClosed(reason, fault);
+      return;
+    }
+    try {
+      endings.execute(() -> registration.handler.onClosed(reason, fault));
+    } catch (RejectedExecutionException stopping) {
+      // The proxy is going down. Better to run it here, on a thread that is stopping anyway, than
+      // to leave a session that never hears it ended.
+      registration.handler.onClosed(reason, fault);
     }
   }
 
@@ -225,6 +264,10 @@ public final class ConnectionSelector implements AutoCloseable {
     running = false;
     for (Loop loop : loops) loop.stop();
     workers.shutdownNow();
+    // Not shutdownNow: what is running here is a session telling its plugins it ended, and a
+    // shutdown has already given those their own budget. Interrupting them mid-event would leave
+    // whatever they were doing half done.
+    endings.shutdown();
   }
 
   /** One selector thread: readiness in, worker tasks out. */
@@ -285,6 +328,7 @@ public final class ConnectionSelector implements AutoCloseable {
     }
 
     @Override public void run() {
+      IN_SELECTOR.set(Boolean.TRUE);
       while (alive) {
         try {
           selector.select(SWEEP_INTERVAL_MILLIS);

@@ -17,13 +17,22 @@ import java.util.concurrent.ThreadFactory;
 public final class SocketThreads {
   // ponytail: a platform thread per socket-blocking task on Windows costs a real stack each; return
   // to virtual threads everywhere once JDK-8334574 is fixed in the JDK Conduit ships on.
-  private static final ThreadFactory FACTORY = System.getProperty("os.name", "").startsWith("Windows")
-      ? Thread.ofPlatform().name("conduit-io-", 0).daemon(true).factory()
-      : Thread.ofVirtual().factory();
+  private static final boolean WINDOWS = System.getProperty("os.name", "").startsWith("Windows");
+  private static final ThreadFactory FACTORY = factory("conduit-io-");
 
   private SocketThreads() { }
 
   public static ThreadFactory factory() { return FACTORY; }
+
+  /**
+   * The same policy under a name of its own, so that a thread dump says which of Conduit's jobs a
+   * thread is doing rather than showing every one of them as another conduit-io.
+   */
+  public static ThreadFactory factory(String namePrefix) {
+    return WINDOWS
+        ? Thread.ofPlatform().name(namePrefix, 0).daemon(true).factory()
+        : Thread.ofVirtual().name(namePrefix, 0).factory();
+  }
 
   public static Thread start(Runnable task) {
     Thread thread = FACTORY.newThread(task);
