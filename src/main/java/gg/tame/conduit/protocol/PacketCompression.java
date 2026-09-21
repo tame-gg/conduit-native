@@ -2,7 +2,6 @@
 package gg.tame.conduit.protocol;
 
 import java.io.ByteArrayOutputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.zip.DataFormatException;
 import java.util.zip.Deflater;
@@ -14,7 +13,25 @@ public final class PacketCompression {
   private int threshold = -1;
   private final int maximumUncompressedBytes;
   private final Inflater inflater = new Inflater();
-  private final Deflater deflater = new Deflater();
+  /**
+   * Deflate level for every packet this proxy re-compresses.
+   *
+   * <p>zlib's own default is 6, which is chosen for files written once and read many times. A proxy
+   * is the other case: every packet is deflated once, travels once, and is thrown away. Level 4
+   * reaches roughly the same size on the chunk and entity data that dominates the stream for a
+   * fraction of the CPU, and the bytes saved by 6 are not worth the time spent finding them on a
+   * connection that is re-compressing for every player on the network.
+   */
+  private static final int DEFLATE_LEVEL = 4;
+  /** Where a deflate buffer starts; grown, and kept, for the next packet through this connection. */
+  private static final int DEFLATE_CHUNK_BYTES = 8192;
+  private final Deflater deflater = new Deflater(DEFLATE_LEVEL);
+  /**
+   * Held across packets rather than allocated per packet. {@code wrap} used to make a 512-byte
+   * buffer, two {@link ByteArrayOutputStream}s and a {@code toByteArray} copy for every packet it
+   * compressed, so a busy connection spent more time in the allocator than in zlib.
+   */
+  private byte[] deflateBuffer = new byte[DEFLATE_CHUNK_BYTES];
   private final Object inflateLock = new Object();
   private final Object deflateLock = new Object();
   public PacketCompression(int maximumUncompressedBytes) { this.maximumUncompressedBytes = maximumUncompressedBytes; }
@@ -78,20 +95,50 @@ public final class PacketCompression {
   public byte[] wrap(byte[] packet) throws IOException {
     if (!enabled()) return packet;
     if (packet.length < threshold) {
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream(packet.length + 1);
-      try (DataOutputStream output = new DataOutputStream(bytes)) { MinecraftOutput.varInt(output, 0); output.write(packet); }
-      return bytes.toByteArray();
+      // A zero size VarInt is one byte, and it means "what follows is not compressed". Below the
+      // threshold that is most of the stream -- movement, keep alives, chat -- so it is built by
+      // hand rather than through two streams and a copy.
+      byte[] uncompressed = new byte[packet.length + 1];
+      uncompressed[0] = 0;
+      System.arraycopy(packet, 0, uncompressed, 1, packet.length);
+      return uncompressed;
     }
     synchronized (deflateLock) {
       deflater.reset();
       deflater.setInput(packet);
       deflater.finish();
-      ByteArrayOutputStream compressed = new ByteArrayOutputStream();
-      byte[] buffer = new byte[512];
-      while (!deflater.finished()) { int n = deflater.deflate(buffer); compressed.write(buffer, 0, n); }
-      ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-      try (DataOutputStream output = new DataOutputStream(bytes)) { MinecraftOutput.varInt(output, packet.length); compressed.writeTo(output); }
-      return bytes.toByteArray();
+      // The size VarInt goes in front of the deflate stream, so deflate straight in behind it and
+      // hand back one array. Nothing here copies the compressed bytes a second time.
+      int prefix = varIntBytes(packet.length);
+      if (deflateBuffer.length < prefix + DEFLATE_CHUNK_BYTES) {
+        deflateBuffer = new byte[prefix + DEFLATE_CHUNK_BYTES];
+      }
+      writeVarInt(deflateBuffer, 0, packet.length);
+      int produced = prefix;
+      while (!deflater.finished()) {
+        if (produced == deflateBuffer.length) {
+          deflateBuffer = java.util.Arrays.copyOf(deflateBuffer, deflateBuffer.length * 2);
+        }
+        produced += deflater.deflate(deflateBuffer, produced, deflateBuffer.length - produced);
+      }
+      return java.util.Arrays.copyOf(deflateBuffer, produced);
     }
+  }
+
+  /** Bytes a VarInt of this value takes; it is never negative here, so five is the most. */
+  private static int varIntBytes(int value) {
+    int bytes = 1;
+    while ((value & ~0x7f) != 0) { value >>>= 7; bytes++; }
+    return bytes;
+  }
+
+  /** The same encoding {@link MinecraftOutput#varInt} writes, straight into an array. */
+  private static int writeVarInt(byte[] destination, int offset, int value) {
+    while ((value & ~0x7f) != 0) {
+      destination[offset++] = (byte) ((value & 0x7f) | 0x80);
+      value >>>= 7;
+    }
+    destination[offset++] = (byte) value;
+    return offset;
   }
 }
