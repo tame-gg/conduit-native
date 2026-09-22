@@ -21,6 +21,12 @@ public final class Main {
       System.exit(2);
     }
     Path configPath = Path.of(arguments[checkOnly ? 1 : 0]);
+    // A real start keeps what the console says in logs/ beside the configuration, for a bug report
+    // after the window is gone; --check-config writes nothing.
+    if (!checkOnly) {
+      Path folder = configPath.toAbsolutePath().getParent();
+      gg.tame.conduit.log.ConduitFileLog.install((folder == null ? Path.of(".") : folder).resolve("logs"));
+    }
     ConduitConfiguration config;
     try {
       // A bare folder is made startable before anything tries to read a configuration out of it: the

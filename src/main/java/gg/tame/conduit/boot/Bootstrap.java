@@ -55,6 +55,8 @@ public final class Bootstrap {
 
     // --check-config must not touch the network or the disk, so the whole of this is skipped for it.
     if (!checkOnly) {
+      // First, so the ViaVersion lines below are in logs/latest.log with everything after them.
+      gg.tame.conduit.log.ConduitFileLog.install(directory.resolve("logs"));
       try {
         prepareVia(viaDirectory, configPath);
       } catch (IOException | RuntimeException failure) {

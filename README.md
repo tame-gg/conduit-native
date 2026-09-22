@@ -114,6 +114,11 @@ Colour is off when output is redirected, when `NO_COLOR` is set and when `TERM=d
 `-Dconduit.color=true` or `=false` overrides all of that, which is what an old `conhost` without
 virtual-terminal processing needs.
 
+Everything the console shows is also kept in `logs/latest.log` beside `conduit.toml`, without the
+colour codes: Conduit's lines, ViaVersion's, plugins', command replies and stack traces. On each
+start the previous session's log is compressed to `logs/<date>-<n>.log.gz`. Attach those to a bug
+report. The JVM's own start-up warnings go around Java's streams and are on the console only.
+
 ### ViaVersion translation (on by default)
 
 `[translation] enabled = true` is the default, with `engine = "via-preferred"`: ViaVersion /
