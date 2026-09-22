@@ -328,6 +328,13 @@ log-mod-handshakes = false
 # [metrics]
 # prometheus-address = "127.0.0.1:9225"
 
+# How backend plugins reach the proxy. The BungeeCord plugin channel is what a hub
+# plugin's /hub, and a queue plugin running on a backend, is built on: without it
+# they fail silently, because the message is delivered and never acted on. Turn it
+# off only where no backend is trusted to move, kick or message players.
+[messaging]
+bungeecord-channel = true
+
 
 # ============================================================================
 #  UPDATES  --  keeping ViaVersion current
@@ -352,13 +359,6 @@ log-mod-handshakes = false
 #
 # For a machine with no route out, put the five Via jars in lib/via yourself --
 # Conduit uses those whether it fetched them or you did. (restart)
-# How backend plugins reach the proxy. The BungeeCord plugin channel is what a hub
-# plugin's /hub, and a queue plugin running on a backend, is built on: without it
-# they fail silently, because the message is delivered and never acted on. Turn it
-# off only where no backend is trusted to move, kick or message players.
-[messaging]
-bungeecord-channel = true
-
 [updates]
 via = true
 # Say that a newer version exists without downloading it.
