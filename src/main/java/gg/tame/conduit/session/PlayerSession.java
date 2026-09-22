@@ -2904,9 +2904,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     outbound = resourcePacks.beforeWrite(writtenIn, outbound);
     if (outbound == null) return;
     display.beforeWrite(writtenIn, outbound);
-    if (flush) client.write(outbound);
-    else {
-      client.writeUnflushed(outbound);
+    try {
+      if (flush) client.write(outbound);
+      else client.writeUnflushed(outbound);
+    } catch (gg.tame.conduit.network.PacketTransport.FrameTooLargeException tooLarge) {
+      // Sent anyway, the client misreads the frame and drops with "Connection lost". Thrown on, it
+      // reads as the backend going away and the player is moved to a fallback over it.
+      gg.tame.conduit.log.ConduitLog.warn(origin() + ": " + tooLarge.getMessage() + "; disconnecting");
+      disconnect("A server sent you a packet too large to deliver (" + tooLarge.bytes() + " bytes).");
+      return;
     }
     awaitingBackendJoinGame.written(outbound);
     display.afterWrite(writtenIn, outbound);

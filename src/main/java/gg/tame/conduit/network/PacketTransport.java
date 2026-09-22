@@ -60,7 +60,23 @@ public final class PacketTransport {
     writeUnflushed(packet);
     flush();
   }
+  /**
+   * The largest frame a vanilla peer reads: its frame decoder takes a length of at most three VarInt
+   * bytes. A larger one is not refused by the peer so much as misread, and the connection is lost
+   * with nothing to say why.
+   */
+  public static final int MAX_WIRE_FRAME_BYTES = (1 << 21) - 1;
+  /** A packet that cannot be framed for a vanilla peer; nothing of it has been written. */
+  public static final class FrameTooLargeException extends IOException {
+    private final int bytes;
+    FrameTooLargeException(int bytes) {
+      super("a " + bytes + "-byte frame is larger than a Minecraft peer can read (" + MAX_WIRE_FRAME_BYTES + ")");
+      this.bytes = bytes;
+    }
+    public int bytes() { return bytes; }
+  }
   public void writeUnflushed(byte[] packet) throws IOException {
+    if (packet.length > MAX_WIRE_FRAME_BYTES) throw new FrameTooLargeException(packet.length);
     synchronized (writeLock) {
       MinecraftFrames.writeUnflushed(output, packet);
       ConduitMetrics.current().outbound(packet.length);

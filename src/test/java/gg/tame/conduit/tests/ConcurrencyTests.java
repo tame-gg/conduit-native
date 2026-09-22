@@ -69,7 +69,26 @@ public final class ConcurrencyTests {
     framesAreNotAllocatedBeforeTheyArrive();
     everyBackendASessionOpensIsClosedWhenItEnds();
     silentLoginsHoldNoAuthenticationPermits();
+    aFrameTooLargeForTheClientIsNotWritten();
     System.out.println("ConcurrencyTests passed.");
+  }
+
+  /**
+   * A vanilla client reads a frame length of at most three VarInt bytes, so a larger frame is
+   * misread rather than refused. It must not reach the socket at all, and a smaller one must.
+   */
+  private static void aFrameTooLargeForTheClientIsNotWritten() throws Exception {
+    ByteArrayOutputStream wire = new ByteArrayOutputStream();
+    PacketTransport transport = new PacketTransport(InputStream.nullInputStream(), wire);
+    try {
+      transport.write(new byte[PacketTransport.MAX_WIRE_FRAME_BYTES + 1]);
+      throw new AssertionError("a frame over the limit was written");
+    } catch (PacketTransport.FrameTooLargeException expected) {
+      require(expected.bytes() == PacketTransport.MAX_WIRE_FRAME_BYTES + 1, "the refused size is reported");
+    }
+    require(wire.size() == 0, "nothing of the refused frame reached the stream: " + wire.size());
+    transport.write(new byte[PacketTransport.MAX_WIRE_FRAME_BYTES]);
+    require(wire.size() == PacketTransport.MAX_WIRE_FRAME_BYTES + 3, "the largest legal frame goes out with a three-byte length");
   }
 
   /**
