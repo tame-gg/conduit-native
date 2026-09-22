@@ -481,7 +481,7 @@ version gate's name and message replace these while they apply, and a plugin can
 | Drain / undrain | IMPLEMENTED |
 | Health-aware fallback / initial routing | IMPLEMENTED |
 | Client version gating (`[versions]`) | IMPLEMENTED |
-| Graceful shutdown (bounded transfer then disconnect) | IMPLEMENTED |
+| Graceful shutdown (players told why, then disconnected) | IMPLEMENTED |
 | Config migration foundation (append missing Ops defaults) | PARTIAL (flat loader; comments best-effort) |
 | Unknown settings (a misspelt key) named in a startup warning instead of silently ignored | IMPLEMENTED |
 | Metrics HTTP endpoint (Prometheus text format) | IMPLEMENTED (optional, off by default; see Metrics below) |

@@ -367,12 +367,12 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     return true;
   }
 
-  /** ProxyPreShutdownEvent goes between the last accept and the first player moved or kicked. */
+  /** ProxyPreShutdownEvent goes between the last accept and the first player is disconnected. */
   public void shutdownGracefully(Runnable stopAccepting) {
     gracefulShutdown.run(() -> {
       stopAccepting.run();
       if (started.get()) events.fire(new gg.tame.conduit.api.event.proxy.ProxyPreShutdownEvent(this));
-    }, players, selector);
+    }, players);
   }
 
   /**

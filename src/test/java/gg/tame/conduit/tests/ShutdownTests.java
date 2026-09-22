@@ -34,7 +34,35 @@ public final class ShutdownTests {
     aNativeShutdownReasonReachesPlayers();
     aVelocityShutdownReasonReachesPlayers();
     theConsoleStopsTheProxyAndAPlayerCannot();
+    aShutdownDoesNotMovePlayersToAFallbackFirst();
     System.out.println("ShutdownTests OK");
+  }
+
+  /**
+   * A shutdown used to log every player in to a fallback server before disconnecting them. Every
+   * fallback is behind the proxy that is stopping, so all that bought was a burst of logins at that
+   * server and its world on screen behind the shutdown message.
+   */
+  private static void aShutdownDoesNotMovePlayersToAFallbackFirst() throws Exception {
+    java.util.concurrent.atomic.AtomicInteger logins = new java.util.concurrent.atomic.AtomicInteger();
+    try (ServerSocket spare = new ServerSocket(0)) {
+      Thread.ofPlatform().daemon().name("shutdown-spare").start(() -> {
+        try {
+          while (true) {
+            try (Socket socket = spare.accept()) {
+              byte[] handshake = MinecraftFrames.read(socket.getInputStream(), 4096);
+              if (Handshake.decode(handshake).nextState() == 2) logins.incrementAndGet();
+              else AllTests.answerStatus(socket, 47);
+            } catch (IOException dropped) { if (spare.isClosed()) return; }
+          }
+        } catch (Exception ended) { }
+      });
+      String reason = joinThenShutDown(TempFiles.dir("conduit-shutdown-fallback").resolve("plugins"),
+          proxy -> proxy.runtime().shutdown(Text.of("Going down")),
+          new BackendServer("spare", new InetSocketAddress("127.0.0.1", spare.getLocalPort())));
+      require(reason.contains("Going down"), "the player is told why, got " + reason);
+      require(logins.get() == 0, "no player was logged in to the fallback on the way out, got " + logins.get());
+    }
   }
 
   private static void aNativeShutdownReasonReachesPlayers() throws Exception {
@@ -94,10 +122,21 @@ public final class ShutdownTests {
 
   /** Joins a 1.8 player, runs {@code stop}, and returns the reason of the disconnect the player is sent. */
   private static String joinThenShutDown(Path plugins, Consumer<MinecraftProxy> stop) throws Exception {
+    return joinThenShutDown(plugins, stop, null);
+  }
+
+  /** As above, with {@code fallback}, when given, as the one server routing falls back to. */
+  private static String joinThenShutDown(Path plugins, Consumer<MinecraftProxy> stop, BackendServer fallback) throws Exception {
     try (ServerSocket lobby = new ServerSocket(0)) {
       Thread.ofPlatform().daemon().name("shutdown-backend").start(() -> ObservabilityTests.serveBackend(lobby));
-      ConduitConfiguration configuration = VelocityCompatTests.configuration(
-          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort()))));
+      BackendServer main = new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort()));
+      ConduitConfiguration configuration = VelocityCompatTests.configuration(List.of(main));
+      if (fallback != null) {
+        configuration = new ConduitConfiguration(configuration.listener(), configuration.maxFrameBytes(),
+            configuration.forwardingMode(), configuration.forwardingSecretFile(), List.of(main, fallback),
+            List.of("lobby"), List.of(fallback.name()), configuration.authentication(),
+            configuration.forwardedPlayerAddress(), configuration.ops());
+      }
       MinecraftProxy proxy = new MinecraftProxy(configuration, Authenticators.create(configuration.authentication()), RsaKeys.generate(), plugins);
       Thread serving = Thread.ofPlatform().daemon().name("shutdown-serve").start(() -> { try { proxy.serve(); } catch (IOException ignored) { } });
       try (Socket client = new Socket()) {

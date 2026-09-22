@@ -3,18 +3,12 @@ package gg.tame.conduit.ops;
 
 import gg.tame.conduit.config.ShutdownSettings;
 import gg.tame.conduit.log.ConduitLog;
-import gg.tame.conduit.routing.BackendSelector;
 import gg.tame.conduit.session.PlayerManager;
 import gg.tame.conduit.session.TrackedPlayer;
 import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Bounded graceful shutdown: stop accepts, try fallback transfers, then disconnect. */
+/** Graceful shutdown: stop accepting, then disconnect every player with the shutdown message. */
 public final class GracefulShutdown {
   private final AtomicBoolean shuttingDown = new AtomicBoolean();
   private volatile ShutdownSettings settings;
@@ -37,58 +31,19 @@ public final class GracefulShutdown {
     return asked != null ? asked : gg.tame.conduit.api.text.Text.of(settings.message());
   }
 
-  public void run(Runnable stopAccepting, PlayerManager players, BackendSelector selector) {
+  /**
+   * Stops accepting and tells every player why they are being disconnected.
+   *
+   * <p>It used to move each player to a fallback backend first. Every fallback sits behind this same
+   * proxy, so the move only bought a second login -- a burst of them at the fallback server, a
+   * ServerConnectedEvent for plugins, the fallback world on screen behind the message -- before the
+   * disconnect that followed anyway.
+   */
+  public void run(Runnable stopAccepting, PlayerManager players) {
     if (!shuttingDown.compareAndSet(false, true)) return;
     stopAccepting.run();
-    ShutdownSettings local = settings;
-    gg.tame.conduit.api.text.Text message = message();
-    if (!local.gracefulEnabled()) {
-      disconnectAll(players, message);
-      return;
-    }
-    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(local.timeoutMs());
-    List<TrackedPlayer> snapshot = new ArrayList<>(players.all());
-    Semaphore permits = new Semaphore(16);
-    List<Thread> workers = new ArrayList<>();
-    for (TrackedPlayer player : snapshot) {
-      workers.add(gg.tame.conduit.network.SocketThreads.start(() -> {
-        try {
-          permits.acquire();
-          if (System.nanoTime() > deadline) {
-            disconnect(player, message);
-            return;
-          }
-          Set<String> failed = new HashSet<>();
-          String current = player.currentBackend();
-          if (current != null && !current.isBlank()) failed.add(current.toLowerCase());
-          boolean moved = false;
-          for (var server : selector.fallback(current == null ? "" : current, failed)) {
-            if (System.nanoTime() > deadline) break;
-            try {
-              if (player.transferTo(server.name())) {
-                moved = true;
-                break;
-              }
-            } catch (RuntimeException ignored) { }
-            failed.add(server.name().toLowerCase());
-          }
-          if (!moved) disconnect(player, message);
-        } catch (InterruptedException interrupted) {
-          Thread.currentThread().interrupt();
-          disconnect(player, message);
-        } finally {
-          permits.release();
-        }
-      }));
-    }
-    for (Thread worker : workers) {
-      long remaining = deadline - System.nanoTime();
-      if (remaining <= 0) break;
-      try { worker.join(TimeUnit.NANOSECONDS.toMillis(remaining) + 1); }
-      catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-    }
-    disconnectAll(players, message);
-    ConduitLog.info("Graceful shutdown completed.");
+    disconnectAll(players, message());
+    if (settings.gracefulEnabled()) ConduitLog.info("Graceful shutdown completed.");
   }
 
   private static void disconnectAll(PlayerManager players, gg.tame.conduit.api.text.Text message) {
