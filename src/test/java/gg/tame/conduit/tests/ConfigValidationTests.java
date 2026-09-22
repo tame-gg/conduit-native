@@ -91,6 +91,12 @@ public final class ConfigValidationTests {
         interval-ms = 3000
         [experimental]
         turbo-mode = true
+        [permissions]
+        operators = ["Admin"]
+        [metrics]
+        prometheus-address = "127.0.0.1:9229"
+        [bans]
+        default-reason = "Rules"
         [ops]
         schema-version = 1
         """);
@@ -110,6 +116,13 @@ public final class ConfigValidationTests {
     require(after.authentication().kickExistingPlayers(), "kick-existing-players kept");
     require(after.ops().status().displayMaxPlayers() == 250, "display-max-players kept");
     require(after.ops().health().intervalMs() == 3000, "an ops value kept");
+    // The template offers these three under commented-out headers. Uncommenting the value but not
+    // the header put each under the section above it, where it was ignored as unknown.
+    require(after.ops().permissions().operators().equals(java.util.Set.of("admin")),
+        "[permissions] operators kept, got " + after.ops().permissions().operators());
+    require(after.ops().metrics().prometheusAddress().map(address -> address.getPort() == 9229).orElse(false),
+        "[metrics] prometheus-address kept");
+    require(after.ops().bans().defaultReason().equals("Rules"), "[bans] default-reason kept");
     require(after.initialBackends().equals(List.of("survival"))
         && after.fallbackBackends().equals(List.of("survival", "dev")), "routing kept");
 

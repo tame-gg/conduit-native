@@ -130,10 +130,18 @@ public final class ConfigRewriter {
     String section = "";
     boolean serversWritten = false;
     boolean forcedHostsWritten = false;
+    // Where in out a commented-out header such as "# [metrics]" was written, until a value under it
+    // is. A setting the operator had there is written live, and it only belongs to that section if
+    // the header is live too: left commented, the value landed in whichever section came before and
+    // was ignored there as unknown -- [permissions] operators under [maintenance], for one.
+    int commentedHeader = -1;
     for (String raw : template) {
       String line = raw.strip();
       String header = sectionOf(line);
-      if (header != null) section = header;
+      if (header != null) {
+        section = header;
+        commentedHeader = line.startsWith("#") ? out.size() : -1;
+      }
       if (section.equals(FORCED_HOSTS) && !forcedHosts.isEmpty()) {
         // The operator's hosts where the template shows its example ones. Only the header and the
         // example entries are replaced: the banner and prose that follow belong to the next area.
@@ -159,6 +167,10 @@ public final class ConfigRewriter {
         continue;
       }
       used.add(key);
+      if (commentedHeader >= 0) {
+        out.set(commentedHeader, indentOf(out.get(commentedHeader)) + "[" + section + "]");
+        commentedHeader = -1;
+      }
       String name = line.startsWith("#") ? line.substring(1).strip() : line;
       name = name.substring(0, name.indexOf('=')).strip();
       out.add(indentOf(raw) + name + " = " + values.get(key));
