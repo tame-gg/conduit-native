@@ -45,12 +45,18 @@ public final class BanList {
    * One ban. {@code value} is the name, the UUID or the address, already in the form
    * {@link #normalise} puts it in, so a lookup is an equality test.
    */
-  public record Entry(Kind kind, String value, String reason, String actor, long createdAt, long expiresAt) {
+  public record Entry(Kind kind, String value, String reason, String actor, long createdAt, long expiresAt, String alias) {
     public Entry {
       if (kind == null) throw new IllegalArgumentException("a ban needs a kind");
       if (value == null || value.isBlank()) throw new IllegalArgumentException("a ban needs something to ban");
       if (reason == null || reason.isBlank()) reason = "Banned from this network.";
       if (actor == null || actor.isBlank()) actor = "console";
+      alias = alias == null ? "" : normalise(Kind.NAME, alias);
+    }
+
+    /** A ban that was not made alongside a name ban. */
+    public Entry(Kind kind, String value, String reason, String actor, long createdAt, long expiresAt) {
+      this(kind, value, reason, actor, createdAt, expiresAt, "");
     }
 
     public boolean permanent() { return expiresAt == PERMANENT; }
@@ -119,9 +125,17 @@ public final class BanList {
    * attempt is a list nobody can read.
    */
   public synchronized Entry ban(Kind kind, String value, String reason, String actor, long expiresAt) {
+    return ban(kind, value, reason, actor, expiresAt, "");
+  }
+
+  /**
+   * As above, for an account ban made alongside a name ban: {@code alias} is that name, so lifting the
+   * name's ban lifts this one too. An account ban left behind by an unban kept the player out.
+   */
+  public synchronized Entry ban(Kind kind, String value, String reason, String actor, long expiresAt, String alias) {
     String normalised = normalise(kind, value);
     entries.removeIf(entry -> entry.kind() == kind && entry.value().equals(normalised));
-    Entry entry = new Entry(kind, normalised, reason, actor, System.currentTimeMillis(), expiresAt);
+    Entry entry = new Entry(kind, normalised, reason, actor, System.currentTimeMillis(), expiresAt, alias);
     entries.add(entry);
     persist();
     return entry;
@@ -131,12 +145,26 @@ public final class BanList {
   public synchronized boolean pardon(Kind kind, String value) {
     String normalised = normalise(kind, value);
     long now = System.currentTimeMillis();
+    if (kind == Kind.NAME) {
+      // The account banned alongside this name goes with it. One made before bans recorded their
+      // name is recognised as the one the same /gban wrote: same reason, same staff member, same
+      // expiry, written within a second of the name's.
+      List<Entry> named = new ArrayList<>();
+      for (Entry entry : entries) if (entry.kind() == Kind.NAME && entry.value().equals(normalised)) named.add(entry);
+      entries.removeIf(entry -> entry.kind() == Kind.ACCOUNT && (entry.alias().equals(normalised)
+          || entry.alias().isEmpty() && named.stream().anyMatch(name -> sameCommand(name, entry))));
+    }
     boolean removed = entries.removeIf(entry ->
         entry.kind() == kind && entry.value().equals(normalised) && !entry.expired(now));
     // Expired entries for the same thing go with it, so a pardon leaves nothing behind.
     entries.removeIf(entry -> entry.kind() == kind && entry.value().equals(normalised));
     if (removed) persist();
     return removed;
+  }
+
+  private static boolean sameCommand(Entry name, Entry account) {
+    return name.reason().equals(account.reason()) && name.actor().equals(account.actor())
+        && name.expiresAt() == account.expiresAt() && Math.abs(name.createdAt() - account.createdAt()) <= 1000;
   }
 
   /** Lifts whatever ban of any kind is held against this text, for a {@code /gunban} that is given one word. */
@@ -219,8 +247,9 @@ public final class BanList {
     String[] parts = line.split("\t", -1);
     if (parts.length < 6) return null;
     try {
+      // The seventh field, the name an account ban was made alongside, is newer than the file format.
       return new Entry(Kind.valueOf(parts[0]), parts[1], unescape(parts[2]), unescape(parts[3]),
-          Long.parseLong(parts[4]), Long.parseLong(parts[5]));
+          Long.parseLong(parts[4]), Long.parseLong(parts[5]), parts.length > 6 ? unescape(parts[6]) : "");
     } catch (IllegalArgumentException malformed) {
       // One unreadable line is one ban lost, not a proxy that will not start.
       ConduitLog.warn("Ignoring a line in bans.txt that could not be read: " + line);
@@ -237,11 +266,13 @@ public final class BanList {
     entries.removeIf(entry -> entry.expired(now));
     StringBuilder out = new StringBuilder();
     out.append("# Conduit bans. Written by /gban; edit only while the proxy is stopped.\n");
-    out.append("# kind\tvalue\treason\tactor\tcreated\texpires (").append(PERMANENT).append(" = permanent)\n");
+    out.append("# kind\tvalue\treason\tactor\tcreated\texpires (").append(PERMANENT).append(" = permanent)\t[name an account ban was made with]\n");
     for (Entry entry : entries) {
       out.append(entry.kind().name()).append(FIELD).append(entry.value()).append(FIELD)
           .append(escape(entry.reason())).append(FIELD).append(escape(entry.actor())).append(FIELD)
-          .append(entry.createdAt()).append(FIELD).append(entry.expiresAt()).append('\n');
+          .append(entry.createdAt()).append(FIELD).append(entry.expiresAt());
+      if (!entry.alias().isEmpty()) out.append(FIELD).append(escape(entry.alias()));
+      out.append('\n');
     }
     try {
       Path temporary = file.resolveSibling(FILE + ".tmp");

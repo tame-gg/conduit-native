@@ -341,7 +341,7 @@ public final class CoreCommands {
     BanList.Entry entry = bans.ban(BanList.Kind.NAME, target, reason, actor, expiresAt);
     // An online player's account is banned too, so a name change does not undo it. An offline one
     // cannot be: Conduit does not look names up at Mojang, and a wrong UUID is worse than none.
-    onlineTarget.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt()));
+    onlineTarget.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt(), target));
     int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target),
         screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
     Messages.success(source, "Banned " + target + " " + describeBan(entry)
