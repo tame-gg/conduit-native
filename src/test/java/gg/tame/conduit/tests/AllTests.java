@@ -144,6 +144,7 @@ public final class AllTests {
     LoginPluginMessageTests.run();
     ServerResourcePackTests.run();
     BanWhitelistTests.run();
+    BanMessageTests.run();
     BungeeCordChannelTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }

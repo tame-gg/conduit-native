@@ -307,13 +307,15 @@ public final class CoreCommands {
       Optional<Long> parsed = BanList.parseExpiry(rest.getFirst());
       if (parsed.isPresent()) { expiresAt = parsed.get(); rest = rest.subList(1, rest.size()); }
     }
-    String reason = rest.isEmpty() ? "Banned from this network." : String.join(" ", rest);
+    gg.tame.conduit.config.BanSettings screen = runtime.configuration().ops().bans();
+    String reason = screen.reasonOr(String.join(" ", rest));
     String actor = source.username();
     BanList bans = runtime.bans();
 
     if (BanList.looksLikeAddress(target)) {
       BanList.Entry entry = bans.ban(BanList.Kind.ADDRESS, target, reason, actor, expiresAt);
-      int kicked = kickMatching(players, player -> player.remoteAddress().getHostAddress().equals(entry.value()), reason);
+      int kicked = kickMatching(players, player -> player.remoteAddress().getHostAddress().equals(entry.value()),
+          screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
       Messages.success(source, "Banned address " + entry.value() + " " + describeBan(entry)
           + (kicked > 0 ? " (" + kicked + (kicked == 1 ? " player" : " players") + " kicked)" : "") + ".");
       return;
@@ -324,7 +326,8 @@ public final class CoreCommands {
     // cannot be: Conduit does not look names up at Mojang, and a wrong UUID is worse than none.
     Optional<TrackedPlayer> online = players.getByUsername(target);
     online.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt()));
-    int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target), reason);
+    int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target),
+        screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
     Messages.success(source, "Banned " + target + " " + describeBan(entry)
         + (kicked > 0 ? " and kicked them" : " (they are not online)") + ".");
   }
@@ -354,11 +357,13 @@ public final class CoreCommands {
    */
   private static int kickMatching(PlayerManager players,
       java.util.function.Predicate<gg.tame.conduit.api.player.Player> test, String reason) {
+    // Read the same way the login screen is, so colour codes in the [bans] template show as colour.
+    var screen = gg.tame.conduit.config.StatusSettings.parseMotd(reason);
     int kicked = 0;
     for (TrackedPlayer tracked : players.all()) {
       if (!(tracked instanceof gg.tame.conduit.api.player.Player api)) continue;
       if (!test.test(api)) continue;
-      api.disconnect(reason);
+      api.disconnect(screen);
       kicked++;
     }
     return kicked;

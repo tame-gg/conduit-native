@@ -521,12 +521,10 @@ public final class MinecraftProxy implements AutoCloseable {
     }
     return false;
   }
-  /** What a banned player is shown: the operator's reason, and how long it has left when it ends. */
-  private static String banMessage(gg.tame.conduit.ops.BanList.Entry ban) {
-    String reason = "&c" + ban.reason();
-    return ban.remaining(System.currentTimeMillis())
-        .map(left -> reason + "\n&7Expires in " + left)
-        .orElse(reason + "\n&7This ban is permanent.");
+  /** What a banned player is shown: the {@code [bans]} template, filled in from this ban. */
+  private String banMessage(gg.tame.conduit.ops.BanList.Entry ban) {
+    return runtime.configuration().ops().bans()
+        .render(ban.reason(), ban.actor(), ban.remaining(System.currentTimeMillis()));
   }
 
   /**

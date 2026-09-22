@@ -256,7 +256,7 @@ public final class ConfigurationLoader {
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
     return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory),
-        metrics(values), updates(values), messaging(values), routingSettings(values));
+        metrics(values), updates(values), messaging(values), routingSettings(values), bans(values));
   }
 
   private static MetricsSettings metrics(Map<String, String> values) {
@@ -265,6 +265,15 @@ public final class ConfigurationLoader {
     InetSocketAddress address = parseAddress(values, key);
     if (address.isUnresolved()) throw new IllegalArgumentException(key + " must be an IP address or a host name that resolves, with a port");
     return new MetricsSettings(Optional.of(address));
+  }
+
+  private static BanSettings bans(Map<String, String> values) {
+    return new BanSettings(
+        optionalString(values, "bans.message", BanSettings.DEFAULT_MESSAGE),
+        optionalString(values, "bans.temporary", BanSettings.DEFAULT_TEMPORARY),
+        // Blank is allowed here: a network may not want a permanent ban to say so.
+        values.containsKey("bans.permanent") ? values.get("bans.permanent") : BanSettings.DEFAULT_PERMANENT,
+        optionalString(values, "bans.default-reason", BanSettings.DEFAULT_REASON));
   }
 
   private static RoutingSettings routingSettings(Map<String, String> values) {

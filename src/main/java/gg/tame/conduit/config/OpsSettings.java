@@ -15,7 +15,8 @@ public record OpsSettings(
     MetricsSettings metrics,
     UpdateSettings updates,
     MessagingSettings messaging,
-    RoutingSettings routing
+    RoutingSettings routing,
+    BanSettings bans
 ) {
   public static final int CURRENT_SCHEMA = 5;
 
@@ -33,6 +34,16 @@ public record OpsSettings(
     if (updates == null) updates = UpdateSettings.defaults();
     if (messaging == null) messaging = MessagingSettings.defaults();
     if (routing == null) routing = RoutingSettings.defaults();
+    if (bans == null) bans = BanSettings.defaults();
+  }
+
+  /** Every setting but the ban screen, which then takes its default. */
+  public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
+                     ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
+                     StatusSettings status, MetricsSettings metrics, UpdateSettings updates, MessagingSettings messaging,
+                     RoutingSettings routing) {
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, updates,
+        messaging, routing, null);
   }
 
   /** Every setting but the routing ones, which then take their defaults. */
@@ -83,6 +94,7 @@ public record OpsSettings(
         MetricsSettings.defaults(),
         UpdateSettings.defaults(),
         MessagingSettings.defaults(),
-        RoutingSettings.defaults());
+        RoutingSettings.defaults(),
+        BanSettings.defaults());
   }
 }
