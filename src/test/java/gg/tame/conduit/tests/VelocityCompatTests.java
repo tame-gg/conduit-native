@@ -430,6 +430,9 @@ public final class VelocityCompatTests {
               signal("login-perm:" + event.getPlayer().hasPermission("vtest.x") + ":" + event.getPlayer().hasPermission("other"));
             }
             if (event.getPlayer().getUsername().equals("Denied")) event.setResult(ResultedEvent.ComponentResult.denied(Component.text("no entry")));
+            if (event.getPlayer().getUsername().equals("Stalled")) {
+              try { Thread.sleep(3_000); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
+            }
           }
           @Subscribe(priority = 100) public EventTask postLoginFirst(PostLoginEvent event) {
             return EventTask.async(() -> signal("postlogin-first:" + event.getPlayer().getUsername()));
@@ -592,6 +595,17 @@ public final class VelocityCompatTests {
         }
         require(signals.contains("login:Denied") && backends.stream().noneMatch(line -> line.endsWith("login:Denied")),
             "the denied player never reached a backend: " + backends);
+
+        // A LoginEvent no plugin finished deciding on is refused, not let in on its default result.
+        System.setProperty("conduit.velocity.waitMillis", "500");
+        try (Client stalled = Client.join(proxy.port(), "Stalled")) {
+          byte[] kicked = stalled.await(frame -> text(frame).contains("took too long"), "a refusal for an undecided login");
+          require(kicked[0] == 0x00, "refused at login, with a login disconnect");
+        } finally {
+          System.clearProperty("conduit.velocity.waitMillis");
+        }
+        require(backends.stream().noneMatch(line -> line.endsWith("login:Stalled")),
+            "the undecided player never reached a backend: " + backends);
 
         try (Client alice = Client.join(proxy.port(), "Alice")) {
           alice.await(frame -> frame[0] == 0x01, "Join Game");

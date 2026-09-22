@@ -27,6 +27,11 @@ import java.util.logging.Logger;
  */
 final class VelocityEnvironment {
   static final long WAIT_MS = 10_000;
+  /** {@link #WAIT_MS}, unless {@code -Dconduit.velocity.waitMillis} says otherwise; read on each wait. */
+  static long waitMillis() { return Long.getLong("conduit.velocity.waitMillis", WAIT_MS); }
+  /** What a player is refused with when Velocity plugins did not decide on their login in time. */
+  static final net.kyori.adventure.text.Component LOGIN_UNDECIDED = net.kyori.adventure.text.Component.text(
+      "The server took too long to check your login. Please try again.");
 
   final ConduitProxy conduit;
   final Logger log = Logger.getLogger("velocity");
@@ -100,10 +105,10 @@ final class VelocityEnvironment {
   /** False when the wait ran out; the caller then carries on with the event as the handlers left it. */
   boolean await(CompletableFuture<?> future, String what) {
     try {
-      future.get(WAIT_MS, TimeUnit.MILLISECONDS);
+      future.get(waitMillis(), TimeUnit.MILLISECONDS);
       return true;
     } catch (TimeoutException slow) {
-      log.warning("Velocity plugins took over " + WAIT_MS + " ms to handle " + what + "; continuing without them");
+      log.warning("Velocity plugins took over " + waitMillis() + " ms to handle " + what + "; continuing without them");
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
     } catch (Exception failed) {

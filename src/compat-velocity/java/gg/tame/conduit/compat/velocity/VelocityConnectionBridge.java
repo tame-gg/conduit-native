@@ -68,7 +68,14 @@ final class VelocityConnectionBridge {
     PreLoginEvent pre = new PreLoginEvent(new LoginConnection(environment, event.remoteAddress(), event.virtualHost(), event.protocolVersion(),
         event.transferred(), event::sendLoginPluginMessage), event.username(), event.claimedUniqueId().orElse(null));
     pre.setResult(offered);
-    PreLoginComponentResult result = environment.fireAndWait(pre).getResult();
+    // A login a plugin has not finished deciding on is refused, not let in. The result it was
+    // offered is "allowed", so carrying on with it when a ban plugin's database was slow to answer
+    // admitted exactly the players that plugin was there to keep out.
+    if (!environment.await(environment.events.fire(pre), "PreLoginEvent")) {
+      event.deny(Texts.toConduit(VelocityEnvironment.LOGIN_UNDECIDED));
+      return;
+    }
+    PreLoginComponentResult result = pre.getResult();
     if (result == offered) return;
     if (!result.isAllowed()) {
       event.deny(Texts.toConduit(result.getReasonComponent().orElse(Component.empty())));

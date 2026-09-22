@@ -92,7 +92,12 @@ final class VelocityEventBridge {
   /** About to go to a backend; not fired for a player maintenance refused. */
   @Subscribe public void onLogin(PlayerLoginEvent event) {
     if (!event.allowed() || !listening(LoginEvent.class)) return;
-    LoginEvent login = environment.fireAndWait(new LoginEvent(environment.player(event.player())));
+    LoginEvent login = new LoginEvent(environment.player(event.player()));
+    // Refused rather than let in on a result nobody finished deciding: see onPreLogin.
+    if (!environment.await(environment.events.fire(login), "LoginEvent")) {
+      event.deny(Texts.toConduit(VelocityEnvironment.LOGIN_UNDECIDED));
+      return;
+    }
     if (!login.getResult().isAllowed()) {
       event.deny(Texts.toConduit(login.getResult().getReasonComponent().orElse(net.kyori.adventure.text.Component.empty())));
     }
