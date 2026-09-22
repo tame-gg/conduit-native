@@ -33,6 +33,7 @@ public final class ConfigValidationTests {
     theLauncherPrintsOneLineAndNoStackTrace();
     anOldLayoutIsRewrittenWithoutLosingValues();
     aNewSettingReachesAFileAtTheSameSchema();
+    rewritesDoNotRepeatTheTemplatesProse();
     aBareFolderIsMadeStartable();
     System.out.println("ConfigValidationTests OK");
   }
@@ -177,6 +178,45 @@ public final class ConfigValidationTests {
     require(after.forcedHosts().all().containsKey("pvp.example.com"), "the forced host still loads, got " + after.forcedHosts());
     require(text.contains("motd = \"mine\""), "the motd kept");
     require(!ConfigRewriter.rewrite(file).rewritten(), "and once it has every setting, it is left alone");
+  }
+
+  /**
+   * The comment above the first server and above [forced-hosts] is the template's, and each rewrite
+   * wrote it again: once from the template, once more as though the operator had written it. A file
+   * that already gathered copies is rewritten back to one, and rewriting again changes nothing.
+   */
+  private static void rewritesDoNotRepeatTheTemplatesProse() throws Exception {
+    Path file = TempFiles.dir("conduit-prose").resolve("conduit.toml");
+    String serversProse = "# One block per backend. The name is what /server takes and what /glist shows.";
+    String hostsProse = "# A host nothing here matches follows routing.initial as usual.";
+    Files.writeString(file, """
+        [listener]
+        host = "127.0.0.1"
+        port = 25565
+        %1$s
+        %1$s
+        %1$s
+        # my lobby
+        [servers.lobby]
+        host = "127.0.0.1"
+        port = 25566
+        [routing]
+        initial = ["lobby"]
+        %2$s
+        %2$s
+        [forced-hosts]
+        "play.example.com" = "lobby"
+        [ops]
+        schema-version = %3$d
+        """.formatted(serversProse, hostsProse, ConfigTemplate.schemaVersion()));
+
+    require(ConfigRewriter.rewrite(file).rewritten(), "a file carrying copies of the template's prose is rewritten");
+    String once = Files.readString(file);
+    require(once.lines().filter(serversProse::equals).count() == 1, "the servers paragraph once, got: " + once);
+    require(once.lines().filter(hostsProse::equals).count() == 1, "the forced-hosts paragraph once, got: " + once);
+    require(once.contains("# my lobby"), "the operator's own comment above a server is kept");
+    require(ConfigurationLoader.load(file).forcedHosts().all().containsKey("play.example.com"), "the forced host kept");
+    require(!ConfigRewriter.rewrite(file).rewritten(), "and it is then left alone");
   }
 
   /**

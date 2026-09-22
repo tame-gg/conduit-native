@@ -76,11 +76,19 @@ public final class ConfigRewriter {
     List<String> template = ConfigTemplate.text().lines().toList();
     int from = ConfigTemplate.schemaVersionOf(existing);
     int to = ConfigTemplate.schemaVersion();
-    if (from > to || (from == to && keys(existing).containsAll(keys(template)))) return Result.unchanged(from);
+    Set<String> prose = prose(template);
+    java.util.function.Predicate<String> servers = section -> section.startsWith(SERVERS_PREFIX);
+    java.util.function.Predicate<String> forced = FORCED_HOSTS::equals;
+    // A file an earlier rewrite filled with copies of the template's prose is rewritten too, which is
+    // what clears them: the copies are not the operator's, so the blocks below leave them out.
+    Map<String, Long> shipped = commentCounts(template);
+    boolean bloated = commentCounts(existing).entrySet().stream()
+        .anyMatch(comment -> comment.getValue() > shipped.getOrDefault(comment.getKey(), Long.MAX_VALUE));
+    if (from > to || (from == to && !bloated && keys(existing).containsAll(keys(template)))) return Result.unchanged(from);
 
     Map<String, String> values = settings(existing);
-    List<String> serverBlocks = blocks(existing, section -> section.startsWith(SERVERS_PREFIX));
-    List<String> forcedHosts = blocks(existing, FORCED_HOSTS::equals);
+    List<String> serverBlocks = blocks(existing, servers, prose);
+    List<String> forcedHosts = blocks(existing, forced, prose);
     Set<String> used = new LinkedHashSet<>();
     List<String> rendered = render(template, values, serverBlocks, forcedHosts, used);
 
@@ -310,14 +318,39 @@ public final class ConfigRewriter {
     return values;
   }
 
+  /** How many times each comment line appears, stripped. */
+  private static Map<String, Long> commentCounts(List<String> lines) {
+    Map<String, Long> counts = new LinkedHashMap<>();
+    for (String raw : lines) {
+      String line = raw.strip();
+      if (line.startsWith("#")) counts.merge(line, 1L, Long::sum);
+    }
+    return counts;
+  }
+
+  /** Every comment line the template carries, stripped: prose that is Conduit's, not the operator's. */
+  private static Set<String> prose(List<String> template) {
+    Set<String> prose = new java.util.HashSet<>();
+    for (String raw : template) {
+      String line = raw.strip();
+      if (line.startsWith("#")) prose.add(line);
+    }
+    return prose;
+  }
+
   /**
    * The operator's blocks for the sections {@code wanted} accepts -- {@code [servers.*]},
-   * {@code [forced-hosts]} -- verbatim, comments and all.
+   * {@code [forced-hosts]} -- verbatim, comments and all, except comments that are the template's
+   * own prose.
    *
    * <p>Copied rather than rendered: a backend or a hostname is the operator's own, the template has
    * nothing to say about it beyond an example, and whatever they wrote above one is theirs to keep.
+   * But the comment above the first {@code [servers.*]} in a file that was rewritten before is the
+   * template's "One block per backend" paragraph, which the render writes itself; kept as the
+   * operator's, it gained a copy on every rewrite.
    */
-  private static List<String> blocks(List<String> lines, java.util.function.Predicate<String> wanted) {
+  private static List<String> blocks(List<String> lines, java.util.function.Predicate<String> wanted,
+      Set<String> prose) {
     List<String> blocks = new ArrayList<>();
     List<String> pendingComments = new ArrayList<>();
     boolean inServer = false;
@@ -336,7 +369,7 @@ public final class ConfigRewriter {
       }
       if (line.startsWith("#")) {
         // Held: a comment belongs to whatever comes after it, which may be a server block.
-        pendingComments.add(raw);
+        if (!prose.contains(line)) pendingComments.add(raw);
         continue;
       }
       if (line.isEmpty()) {
