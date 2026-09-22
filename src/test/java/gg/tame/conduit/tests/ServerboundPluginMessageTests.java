@@ -19,19 +19,12 @@ public final class ServerboundPluginMessageTests {
 
   public static void run() {
     everyTableCanWriteAPluginMessageToTheServer();
-    the262IdsAreThePublishedOnes();
+    theNewIdsAreThePublishedOnes();
     System.out.println("ServerboundPluginMessageTests OK");
   }
 
-  /**
-   * 1.20.1 (763) is left out by name: its table is a minimal one, and the README does not claim it
-   * for real clients. Any other table without the id is a gap like 26.2's was.
-   */
-  private static final java.util.Set<Integer> MINIMAL_TABLES = java.util.Set.of(763);
-
   private static void everyTableCanWriteAPluginMessageToTheServer() {
     for (int number : ProtocolCatalog.codecNumbers()) {
-      if (MINIMAL_TABLES.contains(number)) continue;
       ProtocolDefinition definition = ProtocolDefinition.forVersion(number);
       require(definition.defines(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE),
           "protocol " + number + " has a serverbound Play plugin message");
@@ -42,13 +35,15 @@ public final class ServerboundPluginMessageTests {
     }
   }
 
-  /** From the minecraft.wiki packet list for protocol 776. */
-  private static void the262IdsAreThePublishedOnes() {
+  /** From the minecraft.wiki packet lists for protocols 776 and 763. */
+  private static void theNewIdsAreThePublishedOnes() {
     ProtocolDefinition definition = ProtocolDefinition.forVersion(776);
     require(definition.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE) == 0x16,
         "26.2's serverbound Play plugin message is 0x16");
     require(definition.id(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_PLUGIN_MESSAGE) == 0x02,
         "26.2's serverbound Configuration plugin message is 0x02");
+    require(ProtocolDefinition.forVersion(763).id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE) == 0x0D,
+        "1.20.1's serverbound Play plugin message is 0x0D");
   }
 
   private static void require(boolean condition, String message) {
