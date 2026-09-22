@@ -744,8 +744,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         String said = origin() + ": backend '" + connection.server().name() + "' closed: " + reason;
         if (fault) gg.tame.conduit.log.ConduitLog.warn(said);
         else gg.tame.conduit.log.ConduitLog.debug(said);
+        if (!live) return;
+        // A backend that reset the connection -- it crashed, was killed, or closed with bytes from
+        // Conduit still unread, which Windows turns into a reset -- is as gone as one that hung up,
+        // and is fallen back from the same way. Ending the session here dropped the player where a
+        // clean close would have moved them. On a thread of its own, as the walk dials backends.
+        if (fault && lifecycle.get() == SessionLifecycle.CONNECTED) {
+          gg.tame.conduit.network.SocketThreads.start(() -> handleBackendLoss(connection));
+          return;
+        }
         // Only the live backend going means the session is over.
-        if (live) ended();
+        ended();
       }
     });
   }
