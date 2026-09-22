@@ -46,6 +46,18 @@ public final class Permissions {
   /** Held by the people who must still get in when the whitelist is on, such as the staff turning it on. */
   public static final String WHITELIST_BYPASS = "conduit.whitelist.bypass";
 
+  /** Every node above, found rather than listed, so a node added later is never left out of it. */
+  public static java.util.List<String> all() {
+    java.util.List<String> nodes = new java.util.ArrayList<>();
+    for (java.lang.reflect.Field field : Permissions.class.getFields()) {
+      int modifiers = field.getModifiers();
+      if (field.getType() != String.class || !java.lang.reflect.Modifier.isStatic(modifiers)
+          || !java.lang.reflect.Modifier.isFinal(modifiers)) continue;
+      try { nodes.add((String) field.get(null)); } catch (IllegalAccessException unreadable) { }
+    }
+    return nodes;
+  }
+
   /**
    * Whether {@code source} holds {@code node}. {@link #CONDUIT_ADMIN} stands for every Conduit node,
    * and for nothing of a plugin's -- but only where the node itself was left unsaid: a provider that

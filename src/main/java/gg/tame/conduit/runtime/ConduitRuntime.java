@@ -185,6 +185,29 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     // changed for everyone connected, and the tree they hold says otherwise until they are told.
     refreshCommandTrees();
   }
+  /** The provider the nodes were last shown to, so each one is asked about them once. */
+  private final java.util.concurrent.atomic.AtomicReference<PermissionProvider> revealedTo = new java.util.concurrent.atomic.AtomicReference<>();
+  /**
+   * Asks the permissions plugin about every Conduit node, once per plugin, by way of {@code player},
+   * and ignores the answers. A plugin such as LuckPerms offers in its editor only the nodes it has
+   * seen checked, and some of Conduit's are checked only at the moment they matter --
+   * conduit.punish.exempt when someone is kicked -- so an operator could not find them to grant. Once
+   * is enough, since it remembers a node whoever it was checked for; every login would ask about
+   * players nothing else needs to. Called at a login, on the login's thread: a player being logged in
+   * is one the plugin has loaded, and a plugin that has just been removed is never asked.
+   */
+  public void revealNodes(Player player) {
+    PermissionProvider provider = permissions.provider();
+    if (player == null || provider == DEFAULT_PERMISSIONS) return;
+    PermissionProvider before = revealedTo.get();
+    if (before == provider || !revealedTo.compareAndSet(before, provider)) return;
+    // The provider itself, not the player's current one: a provider replaced or released while
+    // this runs is asked nothing more, and its replacement nothing it was not asked for.
+    for (String node : gg.tame.conduit.command.Permissions.all()) {
+      if (permissions.provider() != provider) return;
+      try { provider.hasPermission(player, node); } catch (RuntimeException ignored) { }
+    }
+  }
   /** Whatever {@code plugin} installed stops answering, before its class loader closes under it. */
   public void pluginReleased(gg.tame.conduit.api.plugin.Plugin plugin) {
     boolean wasTheirs;

@@ -634,6 +634,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     long joined = System.nanoTime();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
+    runtime.revealNodes(this);
     // The client is in Configuration from its Login Success on; the reader below relays the server's
     // phase, up to the Finish Configuration that waits for what plugins start here. A phase plugins
     // hear about ends before the player counts as on the server, as the Velocity events have it.
