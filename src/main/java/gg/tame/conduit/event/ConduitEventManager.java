@@ -73,6 +73,9 @@ public final class ConduitEventManager implements EventManager {
     // One order across every matching type. Walked type by type, a listener on Event and one on the
     // exact class ran in whatever order the map happened to hold them.
     matching.sort(ORDER);
+    // A listener may wait on the client -- a pack it offered, a cookie it asked for -- and what this
+    // thread has written so far would otherwise sit unsent until its relay pass is over.
+    if (!matching.isEmpty()) gg.tame.conduit.network.ConnectionSelector.flushPendingWrites();
     for (Handler handler : matching) {
       try { handler.method.invoke(handler.listener, event); }
       catch (InvocationTargetException thrown) {

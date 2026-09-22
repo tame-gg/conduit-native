@@ -2399,6 +2399,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     PlayerConfigurationEvent entered = configurationEntered;
     if (entered == null) return 0;
     long started = System.nanoTime();
+    // A hold is usually waiting on the client's answer to something just written to it.
+    gg.tame.conduit.network.ConnectionSelector.flushPendingWrites();
     // A hold that failed is over as much as one that completed.
     var holds = entered.holds().stream().map(hold -> {
       var over = new java.util.concurrent.CompletableFuture<Void>();

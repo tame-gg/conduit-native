@@ -82,6 +82,17 @@ public final class ConnectionSelector implements AutoCloseable {
    */
   public static boolean onWorkerThread() { return IN_WORKER.get() != null; }
 
+  /**
+   * Sends what this worker has written so far instead of at the end of its pass. For anything about
+   * to wait on a peer's answer -- the answer cannot come to a request still sitting in the proxy.
+   * Does nothing on any other thread, whose flushes are never held back.
+   */
+  public static void flushPendingWrites() {
+    if (!onWorkerThread()) return;
+    ChannelWriter.flushDeferred();
+    ChannelWriter.deferFlushes();
+  }
+
   /** Whether this thread is a selector loop: the two to four threads every connection waits on. */
   public static boolean onSelectorThread() { return IN_SELECTOR.get() != null; }
 
@@ -464,6 +475,7 @@ public final class ConnectionSelector implements AutoCloseable {
       // the proxy giving up on the connection, and the reason is the only account of why.
       boolean fault = false;
       IN_WORKER.set(Boolean.TRUE);
+      ChannelWriter.deferFlushes();
       try {
         if (registration.done.get()) return;
         if (!registration.handler.onReadable()) reason = "the session ended";
@@ -482,6 +494,8 @@ public final class ConnectionSelector implements AutoCloseable {
         reason = "an error while relaying";
         fault = true;
       } finally {
+        // Before the congestion check below, which reads what this pass left unsent.
+        ChannelWriter.flushDeferred();
         IN_WORKER.remove();
         registration.busy.set(false);
       }

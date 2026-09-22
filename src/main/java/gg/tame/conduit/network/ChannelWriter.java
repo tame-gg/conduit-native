@@ -84,14 +84,54 @@ final class ChannelWriter extends OutputStream {
   }
 
   /**
+   * Writers flushed during the current selector worker's pass, sent when the pass is over; null on
+   * any other thread, where a flush goes out at once.
+   *
+   * <p>A relay flushes after every packet, and every flush was a {@code write} call of its own: a
+   * chunk batch from a backend was a system call and a TCP segment per packet. One pass relays every
+   * packet that arrived together, so it sends them together.
+   */
+  private static final ThreadLocal<java.util.Set<ChannelWriter>> DEFERRED = new ThreadLocal<>();
+
+  /** From here until {@link #flushDeferred}, flushes on this thread only mark their writer. */
+  static void deferFlushes() { DEFERRED.set(new java.util.LinkedHashSet<>()); }
+
+  /** Sends everything flushed since {@link #deferFlushes}, and stops deferring. */
+  static void flushDeferred() {
+    java.util.Set<ChannelWriter> deferred = DEFERRED.get();
+    DEFERRED.remove();
+    if (deferred == null) return;
+    for (ChannelWriter writer : deferred) writer.flushNow();
+  }
+
+  /**
    * Sends what it can now and leaves the rest to the selector. It does not wait for the peer, so a
    * flush returning is not the bytes having arrived -- which is already true of a buffered stream
    * over a socket, and is what lets the caller go back to relaying.
    */
-  @Override public synchronized void flush() throws IOException {
-    if (broken) throw new IOException(failure);
-    drainLocked();
-    if (sent < filled) wantsWritability.run();
+  @Override public void flush() throws IOException {
+    java.util.Set<ChannelWriter> deferred = DEFERRED.get();
+    if (deferred != null) {
+      if (broken) throw new IOException(failure);
+      deferred.add(this);
+      return;
+    }
+    synchronized (this) {
+      if (broken) throw new IOException(failure);
+      drainLocked();
+      if (sent < filled) wantsWritability.run();
+    }
+  }
+
+  /** A deferred flush: a failure here is the connection's, and ends it as a failed drain would. */
+  private synchronized void flushNow() {
+    if (broken) return;
+    try {
+      drainLocked();
+      if (sent < filled) wantsWritability.run();
+    } catch (IOException gone) {
+      fail(gone.getMessage());
+    }
   }
 
   /** The selector, on a channel that has become writable again. */
