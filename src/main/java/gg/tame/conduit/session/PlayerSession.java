@@ -1372,7 +1372,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       if (translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator via) {
         via.backendEntered(ConnectionState.CONFIGURATION);
       }
-      if (forwardLoginSuccess && protocol.hasConfiguration()) expectClientLoginAck = true;
+      if (forwardLoginSuccess && protocol.hasConfiguration()) {
+        expectClientLoginAck = true;
+        // From here Conduit reads the client as configuring, so Via has to as well, now rather than
+        // when the client's own acknowledgement arrives: anything Conduit sends the backend first is
+        // built with the client's Configuration ids. The first join announced the proxy's channels
+        // in that gap, and Via, still reading the client as logging in, passed a 26.2 client's
+        // plugin message (id 0x02) to a 1.20.4 backend untouched -- Finish Configuration there,
+        // with 34 bytes after it, and the backend closed the connection. A switch arms its session
+        // the same way; see armViaConfigurationBridge.
+        advanceTranslatorPastClientLogin(translator);
+      }
     }
     // Legacy client + modern backend: Conduit absorbs Configuration; client stays LOGIN→PLAY.
     if (!protocol.hasConfiguration() && backendDefinition.hasConfiguration()
@@ -1607,13 +1617,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     if (loginAck) {
       expectClientLoginAck = false;
       // Withheld from the backend, because Conduit acknowledged that login itself and a second
-      // acknowledgement is a stray packet. Shown to the translator anyway: this is the packet it
-      // learns the client has left Login from, and it has no other source for that. Without it
-      // the translator keeps reading the client as if it were still logging in, and the first
-      // Configuration packet the client sends is transformed in the wrong state -- a 1.21 client's
-      // config plugin message carries id 0x02, which is Finish Configuration on a 1.20.4 backend,
-      // and the backend closes the connection over the 24 bytes that followed it.
-      feedTranslatorClientLoginAck(packet);
+      // acknowledgement is a stray packet. Withheld from the translator too: it was moved past
+      // Login when Conduit was (see completeBackendLogin), and shown this one as well it would read
+      // id 0x03 as the client finishing Configuration.
       return true;
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
@@ -1744,15 +1750,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * Advances the translator's view of the client past Login, without putting anything on a wire.
    *
    * <p>The translator moves the client between states by watching the packets that cause those
-   * transitions. Conduit consumes this one, so the transition has to be handed over explicitly,
-   * and this is the only place it can be: the packet exists here and nowhere else.
+   * transitions. Conduit consumes the client's Login Acknowledged, so the transition is handed
+   * over with one of its own, at the moment Conduit itself starts reading the client as configuring.
    */
-  private void feedTranslatorClientLoginAck(byte[] packet) {
+  private void advanceTranslatorPastClientLogin(ProtocolTranslator translator) {
     if (!(translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator via)) return;
     synchronized (translatorLock) {
       try {
-        via.clientToBackend(ConnectionState.LOGIN, packet);
-      } catch (RuntimeException failure) {
+        via.clientToBackend(ConnectionState.LOGIN, PlayPackets.loginAcknowledged(protocol));
+      } catch (IOException | RuntimeException failure) {
         ProtocolTrace.note("translator rejected the client's login acknowledgement: " + failure);
         return;
       }
