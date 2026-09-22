@@ -148,6 +148,7 @@ public final class AllTests {
     BungeeCordChannelTests.run();
     BungeeCordRegistrationTests.run();
     ServerboundPluginMessageTests.run();
+    BungeeCordSubchannelTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

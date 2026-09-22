@@ -140,6 +140,15 @@ public final class BungeeCordMessages {
           out.writeUTF("GetServer");
           out.writeUTF(sender.currentServer().name());
         });
+        case "GetPlayerServer" -> {
+          // Where someone else is: what a queue or hub plugin asks before it moves anyone.
+          String who = in.readUTF();
+          player(who).ifPresent(target -> reply(sender, channel, out -> {
+            out.writeUTF("GetPlayerServer");
+            out.writeUTF(target.username());
+            out.writeUTF(target.currentServer().name());
+          }));
+        }
         case "UUID" -> reply(sender, channel, out -> {
           out.writeUTF("UUID");
           out.writeUTF(undashed(sender.uniqueId()));
@@ -176,6 +185,12 @@ public final class BungeeCordMessages {
         case "KickPlayer" -> {
           String who = in.readUTF();
           String reason = in.readUTF();
+          player(who).ifPresent(target -> target.disconnect(reason));
+        }
+        case "KickPlayerRaw" -> {
+          // KickPlayer's JSON form, as MessageRaw is Message's.
+          String who = in.readUTF();
+          Text reason = gg.tame.conduit.text.TextCodec.fromJson(in.readUTF());
           player(who).ifPresent(target -> target.disconnect(reason));
         }
         case "Forward" -> {
