@@ -99,6 +99,26 @@ public final class PlayPackets {
       return MinecraftInput.string(input, 256);
     }
   }
+  /**
+   * A 1.19.3+ serverbound chat message, as far as Conduit reads one: its text, whether the client
+   * signed it, how many messages it acknowledges, and where the text ends -- everything after that is
+   * kept byte for byte when the text is replaced.
+   */
+  public record SignedChat(String message, boolean signed, int acknowledged, int afterMessage) {}
+  /** Every release from 1.19.3 lays these fields out alike; what later ones append is not read. */
+  public static SignedChat signedChat(byte[] packet) throws IOException {
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      MinecraftInput.varInt(input);
+      String message = MinecraftInput.string(input, 256);
+      int afterMessage = packet.length - input.available();
+      input.readLong();                            // timestamp
+      input.readLong();                            // salt
+      boolean signed = input.readBoolean();
+      if (signed) input.skipNBytes(256);
+      int acknowledged = MinecraftInput.varInt(input);
+      return new SignedChat(message, signed, acknowledged, afterMessage);
+    }
+  }
   public static TabRequest tabRequest(ProtocolDefinition protocol, byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);

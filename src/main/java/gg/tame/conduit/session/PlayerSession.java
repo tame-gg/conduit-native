@@ -497,15 +497,21 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   }
   /** A pre-1.19 chat line toward the backend, as if the client had typed it. */
   private boolean sendChatLineToServer(String line) {
+    var bytes = new java.io.ByteArrayOutputStream();
+    try (var output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND));
+      gg.tame.conduit.protocol.MinecraftOutput.string(output, line);
+    } catch (IOException impossible) {
+      return false;
+    }
+    return sendToServer(bytes.toByteArray());
+  }
+  /** A Play packet in the client's own dialect, sent to the backend as if the client had; false when it could not be. */
+  private boolean sendToServer(byte[] packet) {
     BackendConnection current = backend;
     if (current == null || closed || clientState.state() != ConnectionState.PLAY) return false;
     try {
-      var bytes = new java.io.ByteArrayOutputStream();
-      try (var output = new java.io.DataOutputStream(bytes)) {
-        gg.tame.conduit.protocol.MinecraftOutput.varInt(output, protocol.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND));
-        gg.tame.conduit.protocol.MinecraftOutput.string(output, line);
-      }
-      byte[] outbound = towardBackend(ConnectionState.PLAY, bytes.toByteArray());
+      byte[] outbound = towardBackend(ConnectionState.PLAY, packet);
       if (outbound == null) return false;
       current.writeUncompressed(outbound);
       flushTranslatorExtras(current);
@@ -513,6 +519,47 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     } catch (IOException | RuntimeException failed) {
       return false;
     }
+  }
+  /**
+   * A 1.19.3+ client's chat line, put to PlayerChatEvent like an older client's. True when the
+   * client's packet is not to be relayed as it stands.
+   *
+   * <p>Withholding a signed message is safe for the chain it belongs to: the next one carries a later
+   * index, which is all a server asks of it. What would break is the count of messages the withheld
+   * one acknowledged, which the server tracks and the next message builds on, so that count goes to
+   * the server alone as a Message Acknowledgment. The text of a signed message cannot be changed
+   * without its signature failing, so a rewrite is carried out only for an unsigned one -- a client
+   * with chat signing off, or an offline-mode proxy's players -- and otherwise logged and not done.
+   */
+  private boolean relayModernChat(byte[] packet) throws IOException {
+    if (!runtime.events().listening(gg.tame.conduit.api.event.player.PlayerChatEvent.class)) return false;
+    PlayPackets.SignedChat line = PlayPackets.signedChat(packet);
+    var chat = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerChatEvent(this, line.message()));
+    if (chat.cancelled()) {
+      if (line.acknowledged() > 0
+          && protocol.defines(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT)) {
+        var bytes = new java.io.ByteArrayOutputStream();
+        try (var output = new java.io.DataOutputStream(bytes)) {
+          gg.tame.conduit.protocol.MinecraftOutput.varInt(output,
+              protocol.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT));
+          gg.tame.conduit.protocol.MinecraftOutput.varInt(output, line.acknowledged());
+        }
+        sendToServer(bytes.toByteArray());
+      }
+      return true;
+    }
+    if (chat.message().equals(line.message())) return false;
+    if (line.signed()) {
+      gg.tame.conduit.log.ConduitLog.warn("A plugin rewrote " + username() + "'s chat, which the client signed; the backend got it unchanged");
+      return false;
+    }
+    var bytes = new java.io.ByteArrayOutputStream();
+    try (var output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, PlayPackets.packetId(packet));
+      gg.tame.conduit.protocol.MinecraftOutput.string(output, chat.message());
+      output.write(packet, line.afterMessage(), packet.length - line.afterMessage());
+    }
+    return sendToServer(bytes.toByteArray());
   }
   @Override public void sendPluginMessage(String channel, byte[] data) {
     try {
@@ -1609,6 +1656,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       gg.tame.conduit.log.ConduitLog.warn("A plugin rewrote /" + command + " for a client whose commands may be signed; the backend got it unchanged");
       commands.finished(this, "/" + command, forwarded);
       return false;
+    }
+    if (clientState.state() == ConnectionState.PLAY && !protocol.capabilities().legacyPlayChat()
+        && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT)) {
+      return relayModernChat(packet);
     }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_TAB_COMPLETE_REQUEST)) {
       PlayPackets.TabRequest request = PlayPackets.tabRequest(protocol, packet);

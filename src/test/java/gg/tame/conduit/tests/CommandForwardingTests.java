@@ -13,6 +13,7 @@ import static gg.tame.conduit.tests.NativeApiTests.waitFor;
 import gg.tame.conduit.api.command.CommandManager;
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
 import gg.tame.conduit.config.AuthenticationSettings;
+import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.tests.NativeApiTests.Backend;
 import gg.tame.conduit.tests.NativeApiTests.Client;
 import gg.tame.conduit.tests.NativeApiTests.Fixture;
@@ -33,7 +34,93 @@ public final class CommandForwardingTests {
     aNativeCommandThatIsNotThereGoesToTheBackend();
     aVelocityCommandTheSourceMayNotUseGoesToTheBackend();
     listenersRewriteAndForwardCommands();
+    aModernClientsChatReachesListeners();
     System.out.println("CommandForwardingTests OK");
+  }
+
+  /**
+   * A 1.20.4 client's chat raises PlayerChatEvent. A withheld line reaches the backend only as the
+   * acknowledgement count it carried; a rewrite is carried out for an unsigned line and not for a
+   * signed one; a line nobody touched arrives byte for byte.
+   */
+  private static void aModernClientsChatReachesListeners() throws Exception {
+    gg.tame.conduit.protocol.ProtocolDefinition p = gg.tame.conduit.protocol.ProtocolDefinition.forVersion(765);
+    var play = gg.tame.conduit.protocol.ConnectionState.PLAY;
+    var config = gg.tame.conduit.protocol.ConnectionState.CONFIGURATION;
+    var in = gg.tame.conduit.protocol.PacketDirection.CLIENT_TO_SERVER;
+    var out = gg.tame.conduit.protocol.PacketDirection.SERVER_TO_CLIENT;
+    int configOut = p.id(config, out, gg.tame.conduit.protocol.PacketKind.CONFIGURATION_PLUGIN_MESSAGE);
+    byte finishOut = (byte) p.id(config, out, gg.tame.conduit.protocol.PacketKind.CONFIGURATION_FINISH);
+    byte finishIn = (byte) p.id(config, in, gg.tame.conduit.protocol.PacketKind.CONFIGURATION_FINISH);
+    int chatId = p.id(play, in, gg.tame.conduit.protocol.PacketKind.PLAY_CHAT);
+    int ackId = p.id(play, in, gg.tame.conduit.protocol.PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT);
+    try (java.net.ServerSocket listener = new java.net.ServerSocket(0)) {
+      ModLoaderTests.Mock backend = new ModLoaderTests.Mock(listener, "chat", new byte[0], configOut, finishOut, finishIn);
+      DisplayApiTests.platform("chat-backend", backend);
+      gg.tame.conduit.config.ConduitConfiguration configuration = new gg.tame.conduit.config.ConduitConfiguration(
+          new java.net.InetSocketAddress("127.0.0.1", ModLoaderTests.reservePort()), 8192,
+          gg.tame.conduit.config.ForwardingMode.NONE, java.util.Optional.empty(),
+          List.of(new gg.tame.conduit.config.BackendServer("lobby", new java.net.InetSocketAddress("127.0.0.1", listener.getLocalPort()))),
+          List.of("lobby"), List.of());
+      try (gg.tame.conduit.network.MinecraftProxy proxy = new gg.tame.conduit.network.MinecraftProxy(configuration)) {
+        NativeApiTests.Recorder recorder = new NativeApiTests.Recorder();
+        proxy.runtime().events().register(new NativeApiTests.TestPlugin("chat"), recorder);
+        recorder.hook = event -> {
+          if (!(event instanceof gg.tame.conduit.api.event.player.PlayerChatEvent chat)) return;
+          if (chat.message().startsWith("drop")) chat.setCancelled(true);
+          if (chat.message().startsWith("rewrite")) chat.setMessage("rewritten");
+        };
+        DisplayApiTests.platform("chat-serve", () -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (java.net.Socket client = new java.net.Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(15_000);
+          java.io.InputStream input = client.getInputStream();
+          java.io.OutputStream output = client.getOutputStream();
+          MinecraftFrames.write(output, new gg.tame.conduit.protocol.Handshake(765, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(output, ModLoaderTests.loginStart());
+          require(MinecraftFrames.read(input, 8192)[0] == 0x02, "Login Success");
+          MinecraftFrames.write(output, new byte[] {0x03});
+          ModLoaderTests.readConfiguration(input, finishOut);
+          MinecraftFrames.write(output, new byte[] {finishIn});
+          while (MinecraftFrames.read(input, 1 << 20)[0] != 0x29) { }
+          byte[] kept = modernChat(chatId, "kept", false, 1);
+          MinecraftFrames.write(output, kept);
+          MinecraftFrames.write(output, modernChat(chatId, "drop acknowledging", true, 2));
+          MinecraftFrames.write(output, modernChat(chatId, "drop silently", false, 0));
+          MinecraftFrames.write(output, modernChat(chatId, "rewrite unsigned", false, 3));
+          byte[] signed = modernChat(chatId, "rewrite signed", true, 4);
+          MinecraftFrames.write(output, signed);
+          byte[] end = modernChat(chatId, "end", false, 0);
+          MinecraftFrames.write(output, end);
+          require(waitFor(() -> backend.received.stream().anyMatch(packet -> java.util.Arrays.equals(packet, end)), 10_000),
+              "the last line reached the backend");
+          List<byte[]> seen;
+          synchronized (backend.received) { seen = List.copyOf(backend.received); }
+          List<byte[]> chats = seen.stream().filter(packet -> packet[0] == (byte) chatId || packet[0] == (byte) ackId).toList();
+          require(chats.size() == 5, "kept, one acknowledgement, the rewrite, the signed line and the end: " + chats.size());
+          require(java.util.Arrays.equals(chats.get(0), kept), "an untouched line arrives byte for byte");
+          require(java.util.Arrays.equals(chats.get(1), new byte[] {(byte) ackId, 2}), "a withheld line leaves only its acknowledgement count");
+          require(java.util.Arrays.equals(chats.get(2), modernChat(chatId, "rewritten", false, 3)), "an unsigned line is rewritten");
+          require(java.util.Arrays.equals(chats.get(3), signed), "a signed line is not");
+          require(recorder.of(gg.tame.conduit.api.event.player.PlayerChatEvent.class).size() == 6, "every line was put to listeners");
+        }
+      }
+    }
+  }
+
+  /** A 1.19.3+ serverbound chat line, signed with a dummy signature when asked. */
+  private static byte[] modernChat(int id, String message, boolean signed, int acknowledged) throws Exception {
+    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+    try (java.io.DataOutputStream output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, id);
+      gg.tame.conduit.protocol.MinecraftOutput.string(output, message);
+      output.writeLong(1_700_000_000_000L);
+      output.writeLong(42L);
+      output.writeBoolean(signed);
+      if (signed) output.write(new byte[256]);
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, acknowledged);
+      output.write(new byte[] {1, 2, 3});
+    }
+    return bytes.toByteArray();
   }
 
   private static void aNativeCommandThatIsNotThereGoesToTheBackend() throws Exception {

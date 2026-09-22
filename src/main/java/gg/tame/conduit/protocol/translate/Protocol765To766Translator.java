@@ -40,6 +40,8 @@ public final class Protocol765To766Translator implements ProtocolTranslator {
       PacketKind.CONFIGURATION_CLIENT_INFORMATION,
       PacketKind.PLAY_CLIENT_INFORMATION,
       PacketKind.PLAY_CHAT_COMMAND,
+      PacketKind.PLAY_CHAT,
+      PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT,
       PacketKind.PLAY_TAB_COMPLETE,
       PacketKind.PLAY_TAB_COMPLETE_REQUEST,
       PacketKind.PLAY_DISCONNECT,

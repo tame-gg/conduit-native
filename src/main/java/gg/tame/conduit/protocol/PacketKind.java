@@ -273,5 +273,11 @@ public enum PacketKind {
    * A sound that follows an entity. Named by registry id until 1.19.3, which let it carry the sound's
    * name inline; only that form is written by Conduit (DisplayPackets).
    */
-  PLAY_ENTITY_SOUND_EFFECT
+  PLAY_ENTITY_SOUND_EFFECT,
+  /**
+   * Serverbound Message Acknowledgment, 1.19.3+: how many chat messages the client has seen since it
+   * last said. Conduit sends one in place of a chat message a plugin withheld, which carried such a
+   * count of its own.
+   */
+  PLAY_CHAT_ACKNOWLEDGEMENT
 }
