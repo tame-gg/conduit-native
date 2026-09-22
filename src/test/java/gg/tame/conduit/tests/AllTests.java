@@ -147,6 +147,7 @@ public final class AllTests {
     BanWhitelistTests.run();
     BanUnbanTests.run();
     BanListCommandTests.run();
+    BanAlreadyBannedTests.run();
     BanMessageTests.run();
     StaffPermissionTests.run();
     StaffNotifyTests.run();

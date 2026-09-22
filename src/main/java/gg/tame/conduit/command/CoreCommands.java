@@ -320,7 +320,19 @@ public final class CoreCommands {
     String actor = source.username();
     BanList bans = runtime.bans();
 
-    if (BanList.looksLikeAddress(target)) {
+    // A second /gban used to replace the first and report "Banned" as though it were new. Someone
+    // already on the list is said to be, with the ban that stands; changing it is an unban first.
+    boolean address = BanList.looksLikeAddress(target);
+    Optional<BanList.Entry> existing = address ? bans.find(null, null, BanList.normalise(BanList.Kind.ADDRESS, target))
+        : bans.find(target, null, null);
+    if (existing.isPresent()) {
+      BanList.Entry standing = existing.get();
+      Messages.failure(source, target + " is already banned " + describeBan(standing) + " by " + standing.actor()
+          + ": " + standing.reason() + ". Use /gunban " + target + " first to change it.");
+      return;
+    }
+
+    if (address) {
       // Refused whole rather than banned around: the address ban would keep them out at their next login anyway.
       for (TrackedPlayer tracked : players.all()) {
         if (tracked instanceof gg.tame.conduit.api.player.Player api && api.remoteAddress().getHostAddress().equals(BanList.normalise(BanList.Kind.ADDRESS, target))
