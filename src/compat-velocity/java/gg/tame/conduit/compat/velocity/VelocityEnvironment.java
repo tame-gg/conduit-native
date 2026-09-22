@@ -108,7 +108,9 @@ final class VelocityEnvironment {
       future.get(waitMillis(), TimeUnit.MILLISECONDS);
       return true;
     } catch (TimeoutException slow) {
-      log.warning("Velocity plugins took over " + waitMillis() + " ms to handle " + what + "; continuing without them");
+      // What happens next is the caller's to say: a login is refused, a permission check says no.
+      // "Continuing without them" was printed over a login this refused, which read as let in.
+      log.warning("Velocity plugins took over " + waitMillis() + " ms to handle " + what + "; stopped waiting for them");
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
     } catch (Exception failed) {

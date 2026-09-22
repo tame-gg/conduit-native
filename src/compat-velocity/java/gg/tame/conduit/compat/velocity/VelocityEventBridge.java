@@ -94,6 +94,7 @@ final class VelocityEventBridge {
     LoginEvent login = new LoginEvent(environment.player(event.player()));
     // Refused rather than let in on a result nobody finished deciding: see onPreLogin.
     if (!environment.await(environment.events.fire(login), "LoginEvent")) {
+      environment.log.warning("Refused " + login.getPlayer().getUsername() + ": Velocity plugins did not decide on their login in time");
       event.deny(Texts.toConduit(VelocityEnvironment.LOGIN_UNDECIDED));
       return;
     }
@@ -183,10 +184,10 @@ final class VelocityEventBridge {
         if (!listening(PlayerEnteredConfigurationEvent.class) && !listening(PlayerConfigurationEvent.class)) return;
         event.holdFinish(environment.events.fire(new PlayerEnteredConfigurationEvent(player, connection))
             .thenCompose(entered -> environment.events.fire(new PlayerConfigurationEvent(player, connection)))
-            .orTimeout(VelocityEnvironment.WAIT_MS, TimeUnit.MILLISECONDS)
+            .orTimeout(VelocityEnvironment.waitMillis(), TimeUnit.MILLISECONDS)
             .exceptionally(slow -> {
               // A player who left meanwhile has no configuration left to finish.
-              if (player.isActive()) environment.log.warning("Velocity plugins took over " + VelocityEnvironment.WAIT_MS + " ms to handle "
+              if (player.isActive()) environment.log.warning("Velocity plugins took over " + VelocityEnvironment.waitMillis() + " ms to handle "
                   + player.getUsername() + "'s PlayerConfigurationEvent; finishing the configuration without them");
               return null;
             }));

@@ -72,6 +72,7 @@ final class VelocityConnectionBridge {
     // offered is "allowed", so carrying on with it when a ban plugin's database was slow to answer
     // admitted exactly the players that plugin was there to keep out.
     if (!environment.await(environment.events.fire(pre), "PreLoginEvent")) {
+      environment.log.warning("Refused " + pre.getUsername() + ": Velocity plugins did not decide on their login in time");
       event.deny(Texts.toConduit(VelocityEnvironment.LOGIN_UNDECIDED));
       return;
     }
