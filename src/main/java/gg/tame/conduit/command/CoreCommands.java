@@ -94,7 +94,7 @@ public final class CoreCommands {
         (source, arguments) -> gban(source, runtime, players, arguments),
         (source, arguments) -> completeGban(players, arguments)));
     manager.register(new RegisteredCommand("gunban", List.of("gpardon"), Permissions.GBAN,
-        (source, arguments) -> gunban(source, runtime, arguments),
+        (source, arguments) -> gunban(source, runtime, players, arguments),
         (source, arguments) -> completeBanned(runtime, arguments)));
     manager.register(new RegisteredCommand("gbanlist", List.of(), Permissions.GBAN,
         (source, arguments) -> gbanlist(source, runtime, arguments),
@@ -288,6 +288,7 @@ public final class CoreCommands {
     if (target instanceof gg.tame.conduit.api.player.Player api) {
       api.disconnect(reason);
       Messages.success(source, "Kicked " + target.username() + ".");
+      notifyStaff(source, players, "kicked " + target.username() + ": " + reason);
       return;
     }
     Messages.failure(source, "Unable to kick " + target.username() + ".");
@@ -333,6 +334,7 @@ public final class CoreCommands {
           screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
       Messages.success(source, "Banned address " + entry.value() + " " + describeBan(entry)
           + (kicked > 0 ? " (" + kicked + (kicked == 1 ? " player" : " players") + " kicked)" : "") + ".");
+      notifyStaff(source, players, "banned address " + entry.value() + " " + describeBan(entry) + ": " + reason);
       return;
     }
 
@@ -349,6 +351,7 @@ public final class CoreCommands {
         screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
     Messages.success(source, "Banned " + target + " " + describeBan(entry)
         + (kicked > 0 ? " and kicked them" : " (they are not online)") + ".");
+    notifyStaff(source, players, "banned " + target + " " + describeBan(entry) + ": " + reason);
   }
 
   /**
@@ -364,15 +367,40 @@ public final class CoreCommands {
   }
 
   /** {@code /gunban <player|address>}, which lifts a ban of any kind held against that word. */
-  private static void gunban(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
+  private static void gunban(CommandSource source, ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
     if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
     if (arguments.isEmpty()) {
       Messages.info(source, "Usage: /gunban <player|address>");
       return;
     }
     String target = arguments.getFirst();
-    if (runtime.bans().pardonAny(target)) Messages.success(source, "Unbanned " + target + ".");
-    else Messages.failure(source, target + " is not banned.");
+    if (runtime.bans().pardonAny(target)) {
+      Messages.success(source, "Unbanned " + target + ".");
+      notifyStaff(source, players, "unbanned " + target);
+    } else {
+      Messages.failure(source, target + " is not banned.");
+    }
+  }
+
+  /**
+   * Tells the staff online, and the console, that {@code source} kicked, banned or unbanned someone:
+   * {@code [Staff] Kyle banned Griefer permanently: griefing spawn}. Staff are the players who may
+   * kick or ban, and anyone given {@link Permissions#NOTIFY_MODERATION} to watch without acting. The
+   * one who did it already has their confirmation, so is not told twice; the console is told unless
+   * it did it, and so the line is in the log either way.
+   */
+  private static void notifyStaff(CommandSource source, PlayerManager players, String what) {
+    String line = source.username() + " " + what;
+    Text alert = Text.of("[Staff] ").color(Messages.WARN).append(Text.of(line).color(Messages.LABEL));
+    for (TrackedPlayer tracked : players.all()) {
+      if (!(tracked instanceof gg.tame.conduit.api.player.Player staff)) continue;
+      if (source instanceof gg.tame.conduit.api.player.Player actor && actor.uniqueId().equals(staff.uniqueId())) continue;
+      if (Permissions.allows(staff, Permissions.NOTIFY_MODERATION) || Permissions.allows(staff, Permissions.GKICK)
+          || Permissions.allows(staff, Permissions.GBAN)) {
+        staff.sendMessage(alert);
+      }
+    }
+    if (!(source instanceof ConsoleCommandSource)) gg.tame.conduit.log.ConduitLog.info("[Staff] " + line);
   }
 
   /** How many bans one page of {@code /gbanlist} shows, so a long list does not scroll out of chat. */

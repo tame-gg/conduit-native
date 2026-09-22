@@ -149,6 +149,7 @@ public final class AllTests {
     BanListCommandTests.run();
     BanMessageTests.run();
     StaffPermissionTests.run();
+    StaffNotifyTests.run();
     BungeeCordChannelTests.run();
     BungeeCordRegistrationTests.run();
     ServerboundPluginMessageTests.run();

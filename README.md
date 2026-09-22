@@ -654,6 +654,10 @@ installed; the console holds every node.
 A player may not `/gkick` or `/gban` another player who holds that same command's node, or
 `conduit.punish.exempt`, so staff cannot turn those on each other. The console always may.
 
+Staff are told when anyone is kicked, banned or unbanned (`[Staff] Kyle banned Griefer permanently: griefing`):
+every player who may kick or ban, and anyone given `conduit.notify.moderation` to watch without acting.
+The console is told too, so the line is in `logs/latest.log`.
+
 * `/send` (a player, `current`, or a whole server): `conduit.command.send`
 * `/glist`, `/plist`, `/find`, `/alert`, `/gkick`: `conduit.command.glist` / `plist` / `find` / `alert` / `gkick`
 * `/conduit` (`info`), `servers`, `plugins`, `uptime`, `metrics`, `health`: `conduit.command.info` / `servers` /
