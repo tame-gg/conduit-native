@@ -56,6 +56,7 @@ public final class StatusIsolationTests {
   public static void run() throws Exception {
     aBackendsIconNeverReachesTheServerList();
     theProxysOwnIconIsTheOnlyOneSent();
+    theOperatorCanSayTheNetworkPreventsChatReports();
     System.out.println("StatusIsolationTests OK");
   }
 
@@ -81,6 +82,26 @@ public final class StatusIsolationTests {
       String json = proxy.ping();
       require(json.contains("\"favicon\":\"" + PROXY_ICON + "\""), "the configured icon, got " + json);
       require(!json.contains(BACKEND_ICON), "and only that one, got " + json);
+    }
+  }
+
+  /**
+   * status.prevents-chat-reports, as Velocity-CTD's prevents-chat-reports: the operator vouches for
+   * the backends, so the mark is shown though this backend's answer does not carry it.
+   */
+  private static void theOperatorCanSayTheNetworkPreventsChatReports() throws Exception {
+    try (StatusBackend backend = new StatusBackend(BACKEND_STATUS);
+         Proxy proxy = new Proxy(backend, new StatusSettings(Text.of("conduit motd"), 77, Optional.empty(),
+             StatusSettings.FaviconPolicy.PLUGINS, StatusSettings.DEFAULT_PLAYER_SAMPLE, false, true))) {
+      require(backend.await(1), "the health probe pings the backend");
+      String json = proxy.ping();
+      require(json.contains("\"preventsChatReports\":true"), "the mark the operator asked for, got " + json);
+    }
+    try (StatusBackend backend = new StatusBackend(BACKEND_STATUS);
+         Proxy proxy = new Proxy(backend, new StatusSettings(Text.of("conduit motd"), 77, Optional.empty()))) {
+      require(backend.await(1), "the health probe pings the backend");
+      String json = proxy.ping();
+      require(!json.contains("preventsChatReports"), "and none by default, got " + json);
     }
   }
 

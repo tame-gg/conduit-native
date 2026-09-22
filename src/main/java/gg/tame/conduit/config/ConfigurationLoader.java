@@ -333,7 +333,8 @@ public final class ConfigurationLoader {
             .flatMap(file -> StatusSettings.favicon(configDirectory.resolve(file).normalize())),
         StatusSettings.FaviconPolicy.parse(optionalString(values, "status.favicon-policy", "plugins")),
         optionalInteger(values, "status.player-sample", StatusSettings.DEFAULT_PLAYER_SAMPLE),
-        optionalBoolean(values, "status.player-sample-server", false));
+        optionalBoolean(values, "status.player-sample-server", false),
+        optionalBoolean(values, "status.prevents-chat-reports", false));
   }
 
   private static TranslationSettings translation(Map<String, String> values) {

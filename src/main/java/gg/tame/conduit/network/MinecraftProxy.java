@@ -706,9 +706,11 @@ public final class MinecraftProxy implements AutoCloseable {
     // The one place the answer is written, so the policy holds for every plugin on every path --
     // a native listener, a Velocity ProxyPingEvent, or a chain of both.
     if (status.faviconPolicy() == StatusSettings.FaviconPolicy.PROXY_ONLY) ping.setFavicon(status.favicon());
-    // No Chat Reports clients mark the server safe only when every backend a player could be sent
-    // to has said so itself; the proxy relays signed chat as it comes, so the promise is theirs.
-    client.write(StatusResponder.response(protocol, request, ping, runtime.health().everyBackendPreventsChatReports()));
+    // No Chat Reports clients mark the server safe when the operator says the network prevents chat
+    // reports, as Velocity-CTD's prevents-chat-reports does, or when every backend a player could be
+    // sent to has said so itself.
+    client.write(StatusResponder.response(protocol, request, ping,
+        status.preventsChatReports() || runtime.health().everyBackendPreventsChatReports()));
     client.write(StatusResponder.pong(protocol, client.read(configuration.maxFrameBytes())));
   }
   /**

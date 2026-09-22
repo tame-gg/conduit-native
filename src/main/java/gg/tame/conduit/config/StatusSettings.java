@@ -19,7 +19,8 @@ import java.util.Optional;
  * number printed after the slash: Conduit has no join cap, and this is not one.
  */
 public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon,
-                             FaviconPolicy faviconPolicy, int playerSample, boolean playerSampleServer) {
+                             FaviconPolicy faviconPolicy, int playerSample, boolean playerSampleServer,
+                             boolean preventsChatReports) {
   /**
    * Who decides the icon a client is sent.
    *
@@ -53,7 +54,7 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
 
   /** The player sample as it was before it could be configured: twelve names, without their server. */
   public StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon, FaviconPolicy faviconPolicy) {
-    this(motd, displayMaxPlayers, favicon, faviconPolicy, DEFAULT_PLAYER_SAMPLE, false);
+    this(motd, displayMaxPlayers, favicon, faviconPolicy, DEFAULT_PLAYER_SAMPLE, false, false);
   }
 
   public static final String DEFAULT_MOTD = "Conduit";
@@ -91,7 +92,7 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
 
   public static StatusSettings defaults() {
     return new StatusSettings(Text.of(DEFAULT_MOTD), DEFAULT_DISPLAY_MAX_PLAYERS, Optional.empty(),
-        FaviconPolicy.PLUGINS, DEFAULT_PLAYER_SAMPLE, false);
+        FaviconPolicy.PLUGINS, DEFAULT_PLAYER_SAMPLE, false, false);
   }
 
   /**
