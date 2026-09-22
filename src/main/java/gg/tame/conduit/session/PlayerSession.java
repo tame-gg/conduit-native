@@ -630,6 +630,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     initial.setReadTimeoutMillis(0);
     synchronized (lock) { backend = initial; lifecycle.set(SessionLifecycle.CONNECTED); lock.notifyAll(); }
     players.add(this);
+    // A shutdown flags itself before it takes the list of players to turn away, so one that began
+    // while this login was dialling its first server -- a plugin can stop the proxy from Velocity's
+    // PostLoginEvent, which comes before that -- either has this player on its list or is seen here.
+    if (runtime.shuttingDown()) disconnect(runtime.gracefulShutdown().message());
     gg.tame.conduit.log.ConduitLog.info(origin() + " connected to the proxy");
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     long joined = System.nanoTime();

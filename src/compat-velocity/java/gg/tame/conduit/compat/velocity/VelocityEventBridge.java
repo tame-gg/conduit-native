@@ -45,7 +45,6 @@ import gg.tame.conduit.api.event.player.PlayerInitialServerEvent;
 import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent;
 import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent.KickResult;
 import gg.tame.conduit.api.event.player.PlayerLoginEvent;
-import gg.tame.conduit.api.event.player.PlayerPostLoginEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectEvent;
 import gg.tame.conduit.api.event.player.PlayerServerConnectedEvent;
 import gg.tame.conduit.api.event.player.PlayerSetupEvent;
@@ -102,16 +101,22 @@ final class VelocityEventBridge {
       event.deny(Texts.toConduit(login.getResult().getReasonComponent().orElse(net.kyori.adventure.text.Component.empty())));
     }
   }
+  /**
+   * Velocity's PostLoginEvent, then its PlayerChooseInitialServerEvent: the login is decided and no
+   * server has been chosen yet. Conduit's own PlayerPostLoginEvent comes only once a server has taken
+   * the player, and PostLoginEvent used to follow it -- after the choice it exists to come before, so
+   * an auth or queue plugin that set a player up in PostLoginEvent found nothing when asked where to
+   * send them. A player no server takes still gets DisconnectEvent with PRE_SERVER_JOIN, which is
+   * what Velocity reports for a player who had PostLoginEvent and never joined a server.
+   */
   @Subscribe public void onInitialServer(PlayerInitialServerEvent event) {
+    com.velocitypowered.api.proxy.Player player = environment.player(event.player());
+    if (listening(PostLoginEvent.class)) environment.fireAndWait(new PostLoginEvent(player));
     if (!listening(PlayerChooseInitialServerEvent.class)) return;
     RegisteredServer offered = event.initialServer().map(environment::server).orElse(null);
-    PlayerChooseInitialServerEvent choose = environment.fireAndWait(
-        new PlayerChooseInitialServerEvent(environment.player(event.player()), offered));
+    PlayerChooseInitialServerEvent choose = environment.fireAndWait(new PlayerChooseInitialServerEvent(player, offered));
     RegisteredServer chosen = choose.getInitialServer().orElse(null);
     if (chosen != null && !chosen.equals(offered)) event.setInitialServer(environment.nativeServer(chosen));
-  }
-  @Subscribe public void onPostLogin(PlayerPostLoginEvent event) {
-    if (listening(PostLoginEvent.class)) environment.fireAndWait(new PostLoginEvent(environment.player(event.player())));
   }
   /**
    * Every player set up gets one, refused logins included, and the adapter lets go of them here. A
