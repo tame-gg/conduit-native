@@ -5,6 +5,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.Suggestion;
 import com.mojang.brigadier.suggestion.Suggestions;
+import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import com.mojang.brigadier.tree.CommandNode;
 import com.mojang.brigadier.tree.LiteralCommandNode;
 import com.velocitypowered.api.command.BrigadierCommand;
@@ -183,18 +184,42 @@ final class VelocityCommandHost implements CommandManager {
       finally { INLINE.set(false); }
     }, environment.work);
   }
+  /** What {@link #offerSuggestions} finds, as replacements for the word being typed. */
   @Override public CompletableFuture<Suggestions> offerBrigadierSuggestions(CommandSource source, String cmdLine) {
-    throw Unsupported.api("CommandManager.offerBrigadierSuggestions");
+    int start = cmdLine.lastIndexOf(' ') + 1;
+    return offerSuggestions(source, cmdLine).thenApply(found -> {
+      SuggestionsBuilder builder = new SuggestionsBuilder(cmdLine, start);
+      for (String text : found) builder.suggest(text);
+      return builder.build();
+    });
   }
 
   private gg.tame.conduit.api.command.CommandSource nativeSource(CommandSource source) {
     if (source instanceof VelocityPlayer player) return player.nativePlayer();
     if (source instanceof VelocityConsole) return environment.conduit.console();
-    throw new IllegalArgumentException("Conduit runs commands only as a player or the console, not " + source);
+    return new PluginSource(source);
   }
   private CommandSource velocitySource(gg.tame.conduit.api.command.CommandSource source) {
     if (source instanceof gg.tame.conduit.api.player.Player player) return environment.player(player);
+    if (source instanceof PluginSource plugin) return plugin.velocity();
     return environment.console;
+  }
+
+  /**
+   * A command source a plugin made itself -- a chat bridge's, a scheduled job's -- as a source Conduit
+   * can run a command as. These used to be refused outright. Replies and permission checks go to
+   * the plugin's own object, and a Velocity command's body is handed that object back, so whoever
+   * ran the command sees its output where they expect it.
+   */
+  private record PluginSource(CommandSource velocity) implements gg.tame.conduit.api.command.CommandSource {
+    @Override public String username() { return velocity.getClass().getSimpleName(); }
+    @Override public void sendMessage(String message) { velocity.sendMessage(Component.text(message)); }
+    @Override public void sendMessage(gg.tame.conduit.api.text.Text text) { velocity.sendMessage(Texts.toAdventure(text)); }
+    @Override public boolean hasPermission(String permission) { return velocity.hasPermission(permission); }
+    @Override public Boolean permissionValue(String permission) {
+      com.velocitypowered.api.permission.Tristate value = velocity.getPermissionValue(permission);
+      return value == com.velocitypowered.api.permission.Tristate.UNDEFINED ? null : value.asBoolean();
+    }
   }
 
   /**

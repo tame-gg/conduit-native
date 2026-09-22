@@ -302,9 +302,10 @@ become section codes (RGB as the nearest named colour), and clicks and hovers ar
 | Registering an alias the same plugin already holds replaces its command (mclo.gs registers each Brigadier subcommand under one meta); another plugin's alias throws | Supported | VCT (`/vre`, `reregister:true`), mclo.gs |
 | An alias that starts with `/` is registered like any other: exactly one slash is taken off what a player or the console types, and the rest must match an alias exactly, so `//lpv` reaches `/lpv` and never `lpv`. It is in the command tree sent to 1.13+ clients, so they accept `//lpv`. | Supported | VCT (`/vt`), LLT (`//lpx`), LuckPerms (`//lpv info` from the console) |
 | An alias that contains a space, or is slashes alone, is accepted but not registered, with an info line in the log: Conduit's command line splits on spaces, so nobody could type it | Partial | |
-| `executeAsync` as a player or the console: fires `CommandExecuteEvent` first, and returns false when there is no proxy command of that name | Partial: an unknown command is not forwarded to the backend | VCT |
+| `executeAsync` as a player, the console or a `CommandSource` a plugin implements itself: fires `CommandExecuteEvent` first, and returns false when there is no proxy command of that name. A plugin's own source gets the command's replies and answers its permission checks, and a Velocity command's body is handed that same object | Partial: an unknown command is not forwarded to the backend | VCT (`psource:`) |
 | `executeImmediatelyAsync`, `offerSuggestions` | Supported | VCT |
-| `offerBrigadierSuggestions`; `CommandMeta` hints | Unsupported (throws); hints are ignored | |
+| `offerBrigadierSuggestions`: what `offerSuggestions` finds, each replacing the word being typed (from the last space); no tooltips | Supported | VCT (`psource:`) |
+| `CommandMeta` hints | Ignored | |
 | When a command's `hasPermission` (a Brigadier command's `requires`) is false for the source, the proxy acts as if it had no such command: a player's command goes on to their backend, as on Velocity, and `executeAsync` completes false. The command stays in the command tree clients are sent, which is not filtered per player. LuckPerms' `/lpv` alias is such a command for players, since it lets only the console run it. | Supported | `CommandForwardingTests` |
 
 **Name conflicts.**

@@ -355,6 +355,20 @@ public final class VelocityCompatTests {
                   .thenCombine(proxy.getCommandManager().executeImmediatelyAsync(source, "vt hello"), (all, immediate) -> all + ":" + immediate)
                   .thenCombine(proxy.getCommandManager().offerSuggestions(source, "vtest h"), (all, suggestions) -> all + ":" + suggestions)
                   .thenAccept(results -> signal("exec:" + results));
+              case "pluginsource" -> {
+                // A source of the plugin's own, as a chat bridge makes: it runs commands and gets their replies.
+                java.util.List<String> heard = new java.util.concurrent.CopyOnWriteArrayList<>();
+                CommandSource bridge = new CommandSource() {
+                  @Override public com.velocitypowered.api.permission.Tristate getPermissionValue(String permission) {
+                    return com.velocitypowered.api.permission.Tristate.TRUE;
+                  }
+                  @Override public void sendMessage(Component message) { heard.add(plain(message)); }
+                };
+                proxy.getCommandManager().executeAsync(bridge, "vtest hello")
+                    .thenCombine(proxy.getCommandManager().offerBrigadierSuggestions(source, "vtest h"),
+                        (ran, found) -> ran + ":" + heard + ":" + found.getList().stream().map(s -> s.getText() + "@" + s.getRange().getStart()).toList())
+                    .thenAccept(results -> signal("psource:" + results));
+              }
               default -> source.sendMessage(Component.text("usage"));
             }
           }
@@ -647,6 +661,8 @@ public final class VelocityCompatTests {
           alice.awaitText("native ok");
           alice.chat("/vtest exec");
           awaitSignal("exec:true:true:false:true:[hello]");
+          alice.chat("/vtest pluginsource");
+          awaitSignal("psource:true:[hello console via vtest]:[hello@6]");
 
           // Chat from a pre-1.19 client can be refused.
           alice.chat("forbidden");
