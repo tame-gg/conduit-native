@@ -224,6 +224,12 @@ public final class VelocityCompatTests {
           signal("config:" + config.isOnlineMode() + ":" + config.getAttemptConnectionOrder() + ":" + config.getServers().size()
               + ":" + proxy.getVersion().getName() + ":" + (proxy.getBoundAddress().getPort() > 0));
           signal("serverlist:" + config.getShowMaxPlayers() + ":" + plain(config.getMotd()) + ":" + config.getFavicon().map(Favicon::getBase64Url).orElse("none"));
+          // Settings for features Conduit lacks answer as Velocity does with them off, and the
+          // console shrugs off what it cannot show, as Adventure's no-op defaults do.
+          proxy.getConsoleCommandSource().showTitle(net.kyori.adventure.title.Title.title(Component.text("t"), Component.empty()));
+          proxy.getConsoleCommandSource().sendActionBar(Component.text("a"));
+          signal("offconfig:" + config.isQueryEnabled() + ":" + config.getCompressionThreshold() + ":" + config.getCommandRatelimit()
+              + ":" + config.isAnnounceForge() + ":" + config.shouldPreventClientProxyConnections());
           signal("tasks:" + proxy.getScheduler().tasksByPlugin(this).size());
           proxy.getPluginManager().getPlugin("vtest").orElseThrow().getExecutorService().execute(() -> signal("executor"));
           signal("classpath:" + extendClasspath());
@@ -557,7 +563,7 @@ public final class VelocityCompatTests {
         awaitSignal("init:true:true:true");
         awaitSignal("plugins:true:true:true:true");
         for (String expected : List.of("reregister:true", "register:true:true:false", "config:false:[lobby]:2:Conduit:true", "tasks:2", "classpath:true",
-            "serverlist:77:conduit motd:" + FAVICON)) {
+            "serverlist:77:conduit motd:" + FAVICON, "offconfig:false:-1:0:false:false")) {
           require(signals.contains(expected), expected + " in " + signals);
         }
         awaitSignal("executor");

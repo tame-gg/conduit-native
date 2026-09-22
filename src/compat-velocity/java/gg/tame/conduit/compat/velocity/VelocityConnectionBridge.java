@@ -163,6 +163,7 @@ final class VelocityConnectionBridge {
         catch (RuntimeException failed) { environment.log.log(java.util.logging.Level.WARNING, "A login plugin message consumer failed", failed); }
       }, environment.work);
     }
-    @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("LoginPhaseConnection.getIdentifiedKey"); }
+    /** Null, as for a connection that sent none: Conduit does not keep the client's chat key. */
+    @Override public IdentifiedKey getIdentifiedKey() { return null; }
   }
 }

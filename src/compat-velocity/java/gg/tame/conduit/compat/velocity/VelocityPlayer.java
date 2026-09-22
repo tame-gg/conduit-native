@@ -129,10 +129,12 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   /** The settings the client last sent, as its release has them; the vanilla client's defaults before it has. */
   @Override public PlayerSettings getPlayerSettings() { return new Settings(player.settings().orElse(ClientSettings.defaults())); }
   @Override public boolean hasSentPlayerSettings() { return player.settings().isPresent(); }
-  @Override public Optional<ModInfo> getModInfo() { throw Unsupported.api("Player.getModInfo"); }
+  /** Empty: Conduit does not read a modded client's mod list, so it cannot say which mods it has. */
+  @Override public Optional<ModInfo> getModInfo() { return Optional.empty(); }
   /** What the client last sent on the brand channel; null until it has. */
   @Override public String getClientBrand() { return player.clientBrand().orElse(null); }
-  @Override public IdentifiedKey getIdentifiedKey() { throw Unsupported.api("Player.getIdentifiedKey"); }
+  /** Null, the documented answer for a player without one: Conduit does not keep the client's chat key. */
+  @Override public IdentifiedKey getIdentifiedKey() { return null; }
   @Override public List<GameProfile.Property> getGameProfileProperties() { return getGameProfile().getProperties(); }
   @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { throw Unsupported.api("Player.setGameProfileProperties"); }
   // Titles, action bar, boss bars and the tab-list header, through Conduit's own display.

@@ -244,6 +244,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   @Override public InetSocketAddress boundAddress() { return boundAddress; }
   /** The listener's real address, which differs from the configured one when that asked for port 0. */
   public void bindListener(InetSocketAddress address) { if (address != null) this.boundAddress = address; }
+  @Override public int compressionThreshold() { return configuration.compressionThreshold(); }
   @Override public boolean onlineMode() {
     return configuration.authentication().mode() == gg.tame.conduit.config.AuthenticationMode.ONLINE;
   }

@@ -51,6 +51,11 @@ public interface ConduitProxy {
   /** Whether players are authenticated with Mojang (online mode) rather than trusted by name. */
   boolean onlineMode();
   /**
+   * Packets this many bytes or larger are compressed on the way to players; -1 when the link to
+   * players is not compressed. This default says it is not.
+   */
+  default int compressionThreshold() { return -1; }
+  /**
    * Stops the proxy the way the operator would: players are moved or kicked as configured, then
    * {@code ProxyShutdownEvent} fires and every plugin is disabled. Returns at once; the shutdown
    * runs on its own thread, so a plugin may call this from anywhere, including its own listener.
