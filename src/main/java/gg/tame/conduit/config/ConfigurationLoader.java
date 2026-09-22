@@ -273,7 +273,8 @@ public final class ConfigurationLoader {
         optionalString(values, "bans.temporary", BanSettings.DEFAULT_TEMPORARY),
         // Blank is allowed here: a network may not want a permanent ban to say so.
         values.containsKey("bans.permanent") ? values.get("bans.permanent") : BanSettings.DEFAULT_PERMANENT,
-        optionalString(values, "bans.default-reason", BanSettings.DEFAULT_REASON));
+        optionalString(values, "bans.default-reason", BanSettings.DEFAULT_REASON),
+        optionalString(values, "bans.permanent-duration", BanSettings.DEFAULT_PERMANENT_DURATION));
   }
 
   private static RoutingSettings routingSettings(Map<String, String> values) {

@@ -34,20 +34,21 @@ public final class BanMessageTests {
   public static void main(String[] arguments) throws Exception { run(); }
 
   public static void run() throws Exception {
-    theDefaultReadsAsItAlwaysHas();
+    theDefaultNamesReasonActorAndDuration();
     aTemplateFillsItsPlaceholders();
     aBansReasonComposesWithTheTemplate();
     System.out.println("BanMessageTests OK");
   }
 
-  private static void theDefaultReadsAsItAlwaysHas() throws Exception {
+  private static void theDefaultNamesReasonActorAndDuration() throws Exception {
     BanSettings bans = load(BASE).ops().bans();
     require(bans.equals(BanSettings.defaults()), "no [bans] section is the defaults");
-    require(bans.render("griefing", "Op", Optional.empty()).equals("&cgriefing\n&7This ban is permanent."),
-        "a permanent ban reads as it did before");
-    require(bans.render("griefing", "Op", Optional.of("2d 3h")).equals("&cgriefing\n&7Expires in 2d 3h"),
-        "a temporary ban reads as it did before");
-    require(bans.render(null, "Op", Optional.empty()).startsWith("&cBanned from this network.\n"),
+    require(bans.render("griefing", "Op", Optional.empty()).equals(
+            "&cYou have been banned from this network.\n\n&7Reason: &fgriefing\n&7Banned By: &fOp\n&7Duration: &fPermanent"),
+        "a permanent ban says so, on its own line under the reason and who banned them");
+    require(bans.render("griefing", "Op", Optional.of("2d 3h")).endsWith("&7Duration: &f2d 3h"),
+        "a temporary ban gives the time left");
+    require(bans.render(null, "Op", Optional.empty()).contains("&7Reason: &fNo reason given\n"),
         "no reason is the built-in one");
   }
 

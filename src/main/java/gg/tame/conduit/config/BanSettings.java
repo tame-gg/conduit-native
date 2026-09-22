@@ -10,29 +10,35 @@ import java.util.Optional;
  * gives {@code /gban} lands in {@code {reason}}, so a network can word its ban screen once and every
  * ban after that keeps the wording. A ban given no reason fills in {@code default-reason}.
  *
- * <p>The placeholders are {@code {reason}}, {@code {actor}} (who banned them), {@code {remaining}}
+ * <p>The placeholders are {@code {reason}}, {@code {actor}} (who banned them), {@code {duration}}
+ * (how long is left, or {@code permanent-duration} for a ban that never ends), {@code {remaining}}
  * (how long is left, or nothing for a permanent ban) and {@code {expiry}}, which is
  * {@code temporary} with its own {@code {remaining}} filled in, or {@code permanent}. The reader keeps
  * a quoted {@code \n} as the two characters it is written as, so they are read as a line break here.
- *
- * <p>Every default is the screen Conduit showed before any of this was configurable, so a file with
- * no {@code [bans]} section kicks exactly as it did.
  */
-public record BanSettings(String message, String temporary, String permanent, String defaultReason) {
-  public static final String DEFAULT_MESSAGE = "&c{reason}\\n&7{expiry}";
+public record BanSettings(String message, String temporary, String permanent, String defaultReason, String permanentDuration) {
+  public static final String DEFAULT_MESSAGE =
+      "&cYou have been banned from this network.\\n\\n&7Reason: &f{reason}\\n&7Banned By: &f{actor}\\n&7Duration: &f{duration}";
   public static final String DEFAULT_TEMPORARY = "Expires in {remaining}";
   public static final String DEFAULT_PERMANENT = "This ban is permanent.";
-  public static final String DEFAULT_REASON = "Banned from this network.";
+  public static final String DEFAULT_REASON = "No reason given";
+  public static final String DEFAULT_PERMANENT_DURATION = "Permanent";
 
   public BanSettings {
     if (message == null || message.isBlank()) message = DEFAULT_MESSAGE;
     if (temporary == null || temporary.isBlank()) temporary = DEFAULT_TEMPORARY;
     if (permanent == null) permanent = DEFAULT_PERMANENT;
     if (defaultReason == null || defaultReason.isBlank()) defaultReason = DEFAULT_REASON;
+    if (permanentDuration == null || permanentDuration.isBlank()) permanentDuration = DEFAULT_PERMANENT_DURATION;
+  }
+
+  /** Every setting but {@code permanent-duration}, which then takes its default. */
+  public BanSettings(String message, String temporary, String permanent, String defaultReason) {
+    this(message, temporary, permanent, defaultReason, null);
   }
 
   public static BanSettings defaults() {
-    return new BanSettings(DEFAULT_MESSAGE, DEFAULT_TEMPORARY, DEFAULT_PERMANENT, DEFAULT_REASON);
+    return new BanSettings(DEFAULT_MESSAGE, DEFAULT_TEMPORARY, DEFAULT_PERMANENT, DEFAULT_REASON, DEFAULT_PERMANENT_DURATION);
   }
 
   /** The reason a ban is recorded with: what the operator typed, or {@code default-reason}. */
@@ -51,6 +57,7 @@ public record BanSettings(String message, String temporary, String permanent, St
     String expiry = remaining.isPresent() ? temporary.replace("{remaining}", left) : permanent;
     return lines(message)
         .replace("{expiry}", lines(expiry))
+        .replace("{duration}", remaining.orElse(permanentDuration))
         .replace("{remaining}", left)
         .replace("{actor}", actor == null ? "" : actor)
         .replace("{reason}", reasonOr(reason));
