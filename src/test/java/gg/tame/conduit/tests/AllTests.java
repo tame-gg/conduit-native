@@ -129,6 +129,7 @@ public final class AllTests {
     VelocityTextTests.run();
     VelocitySoundTests.run();
     VelocityLifecycleTests.run();
+    VelocityInjectionTests.run();
     LoginLifecycleTests.run();
     VelocityEventsTests.run();
     ServerKickTests.run();

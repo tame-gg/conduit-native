@@ -136,6 +136,7 @@ logger named after the class it is injected into, not the plugin's Conduit logge
 | `ComponentLogger` (Adventure), `java.util.logging.Logger`, `EventManager`, `CommandManager`, `PluginManager`, `Scheduler` | Supported | VCT (ComponentLogger, EventManager, PluginManager, CommandManager, Scheduler directly and through Guice) |
 | `com.google.inject.Injector`: `getInstance`, `createChildInjector` with the plugin's own modules and `@Named` bindings | Supported | VCT (`guice:`), MiniMOTD |
 | The plugin's own concrete classes, built the same way, as bStats' `Metrics.Factory` is | Supported | VCT, velocity-hub |
+| The plugin's main class, injected into itself or into one of its own classes, directly or through the `Injector` and its child injectors: the one instance Conduit built, which `EventManager.register` and `PluginManager.fromInstance` recognise. Asked for from inside its own constructor, before that instance exists, it fails the load | Supported | `VelocityInjectionTests` |
 | Loggers write to the plugin's Conduit logger `plugin.<id>`. `@DataDirectory` is `<plugins dir>/<id>`. | Supported | VCT |
 | Any other type in the main class's own injection (Guice `Provider`s, `@Named` qualifiers, interfaces the plugin binds in its own modules) | Unsupported: the plugin is rejected with a message that names the type. Through the `Injector`, Guice's own rules apply. | VCT `badinject` |
 

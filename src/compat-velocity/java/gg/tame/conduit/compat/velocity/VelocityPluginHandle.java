@@ -45,6 +45,12 @@ final class VelocityPluginHandle extends ConduitPlugin {
   private volatile VelocityPluginHost.Container container;
   /** Built the first time the plugin asks for one; it caches the plugin's classes, so it goes at release. */
   private Injector injector;
+  /**
+   * The main class's one instance, from the moment its constructor returns: its own {@code @Inject}
+   * members, and whatever they build, may already ask for it, and only this object is the plugin that
+   * {@code EventManager.register} and {@code PluginManager.fromInstance} recognise.
+   */
+  private volatile Object plugin;
 
   VelocityPluginHandle(VelocityEnvironment environment, VelocityPluginHost.Description description, VelocityClassLoader loader, Class<?> mainClass) {
     this.environment = environment;
@@ -95,6 +101,7 @@ final class VelocityPluginHandle extends ConduitPlugin {
     environment.channels.release(current);
     current.shutdownExecutor();
     synchronized (this) { injector = null; }
+    plugin = null;
   }
 
   /** Builds {@code type} as Guice would a class with an @Inject constructor: arguments, then @Inject fields and methods. */
@@ -108,6 +115,7 @@ final class VelocityPluginHandle extends ConduitPlugin {
         arguments[index] = resolve(container, constructor.getParameterTypes()[index], constructor.getParameterAnnotations()[index], depth);
       }
       Object instance = constructor.newInstance(arguments);
+      if (depth == 0 && type == mainClass) plugin = instance;
       // As Guice does: superclass members first, fields before methods; final instance fields are
       // set too, static members are left alone.
       List<Class<?>> hierarchy = new ArrayList<>();
@@ -156,6 +164,7 @@ final class VelocityPluginHandle extends ConduitPlugin {
       throw new IllegalStateException("a Path is injected only with @DataDirectory");
     }
     if (type == Injector.class) return injector(container);
+    if (type == mainClass) return plugin();
     // The plugin's own concrete classes are built on demand, as Guice does: bStats' Metrics.Factory,
     // which almost every plugin bundles, is injected this way.
     if (type.getClassLoader() instanceof VelocityClassLoader && !type.isInterface() && !Modifier.isAbstract(type.getModifiers())) {
@@ -198,10 +207,23 @@ final class VelocityPluginHandle extends ConduitPlugin {
             if (service.getKey() != java.util.logging.Logger.class) bind((Class<Object>) service.getKey()).toInstance(service.getValue());
           }
           bind(Path.class).annotatedWith(DataDirectory.class).toInstance(data);
+          // Through a provider, not toInstance: Guice injects the members of an instance it is bound
+          // to, and the plugin's were injected once already.
+          bind((Class<Object>) mainClass).toProvider((com.google.inject.Provider<Object>) VelocityPluginHandle.this::plugin);
         }
       });
     }
     return injector;
+  }
+
+  /** The plugin's main instance, for anything that injects the main class. */
+  private Object plugin() {
+    Object instance = plugin;
+    if (instance == null) {
+      throw new IllegalStateException("Velocity plugin " + velocityDescription.getId() + ": " + mainClass.getName()
+          + " is asked for while its own constructor is still running, so there is no instance to give yet");
+    }
+    return instance;
   }
 
   /** By name: plugins mark injection with javax, jakarta or Guice's @Inject. */
