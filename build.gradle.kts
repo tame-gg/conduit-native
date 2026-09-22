@@ -42,23 +42,26 @@ sourceSets.main { java.srcDir("src/compat-velocity/java") }
 // fetches and merges into the jar. Nothing reads a developer's lib/ to decide what a release needs.
 val velocityRuntime = configurations.create("velocityRuntime") {
   isCanBeConsumed = false
-  // Guava, and the failureaccess and listenablefuture stubs that come with it, are already in the
-  // Via set at the newer version both ask for. Two copies of a library in one jar is one silently
-  // shadowing the other, which the jar build refuses outright.
-  exclude(group = "com.google.guava")
 }
+// Guava, and the failureaccess and listenablefuture stubs that come with it, are already in the
+// Via set at the newer version both ask for. Two copies of a library in one jar is one silently
+// shadowing the other, which the jar build refuses outright. The exclude goes on each dependency
+// and not on velocityRuntime itself: a configuration's excludes apply to every configuration that
+// extends it, so one there also took the Guava that implementation names directly, and the adapter,
+// which uses it, stopped compiling under Gradle.
+fun ExternalModuleDependency.withoutGuava() { exclude(group = "com.google.guava") }
 // The adapter compiles, and a Gradle run runs, against the same set the release jar ships.
 configurations.named("implementation") { extendsFrom(velocityRuntime) }
 
 dependencies {
-  velocityRuntime("com.velocitypowered:velocity-api:$velocityVersion")
+  velocityRuntime("com.velocitypowered:velocity-api:$velocityVersion") { withoutGuava() }
   // night-config's TOML reader, which Velocity's proxy carries and its POM does not name.
-  velocityRuntime("com.electronwill.night-config:toml:3.8.4")
+  velocityRuntime("com.electronwill.night-config:toml:3.8.4") { withoutGuava() }
   // An SLF4J binding, so plugin and library logging lands in java.util.logging with Conduit's own.
-  velocityRuntime("org.slf4j:slf4j-jdk14:2.0.17")
+  velocityRuntime("org.slf4j:slf4j-jdk14:2.0.17") { withoutGuava() }
   // The Gson the Velocity plugins were tested against; velocity-api's POM asks for an older one,
   // and nothing else here raises it.
-  velocityRuntime("com.google.code.gson:gson:2.11.0")
+  velocityRuntime("com.google.code.gson:gson:2.11.0") { withoutGuava() }
 }
 
 // The files velocityRuntime resolves to, pinned by SHA-256: one `<repository path>\t<sha256>` a line.
