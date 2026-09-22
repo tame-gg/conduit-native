@@ -332,6 +332,8 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/send current <server>` — move yourself
 * `/glist`, `/plist <server>`, `/find <player>`, `/alert <message>`, `/ping`, `/hub`, `/gkick <player> [reason]`
 * `/gban <player|address> [duration] [reason]` — ban from the whole network; no duration means permanent
+  (in online mode a name is looked up at Mojang first: a name no account has is refused, and a real
+  one's account UUID is banned with it, so a name change does not get round the ban)
 * `/gunban <player|address>` — lift it
 * `/gbanlist [page]` — every ban in force: the reason, who made it and how long it has left
 * `/gwhitelist <on|off|add|remove|list|clear|status>` — close the network to all but a list

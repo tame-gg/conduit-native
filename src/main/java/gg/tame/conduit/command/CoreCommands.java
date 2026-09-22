@@ -355,14 +355,59 @@ public final class CoreCommands {
       Messages.failure(source, api.username() + " cannot be banned by another player.");
       return;
     }
+    // An online player's account is banned alongside their name, so a name change does not undo
+    // it. An offline one's is asked of Mojang: a name no account has is refused, and a real one's
+    // account is banned too. Only where Conduit authenticates with Mojang, since an offline-mode
+    // player's UUID is not Mojang's and a Mojang UUID would match nobody there.
+    if (onlineTarget.isPresent()) {
+      banName(source, players, bans, screen, target, reason, actor, expiresAt, Optional.of(onlineTarget.get().uniqueId()), null);
+      return;
+    }
+    if (runtime.configuration().authentication().mode() != gg.tame.conduit.config.AuthenticationMode.ONLINE) {
+      banName(source, players, bans, screen, target, reason, actor, expiresAt, Optional.empty(), null);
+      return;
+    }
+    if (!gg.tame.conduit.auth.MojangProfiles.validName(target)) {
+      Messages.failure(source, target + " is not a valid Minecraft username.");
+      return;
+    }
+    Messages.info(source, "Looking up " + target + " at Mojang...");
+    final long until = expiresAt;
+    // Off the command's thread: the lookup can take seconds, and nothing else waits on it.
+    gg.tame.conduit.network.SocketThreads.start(() -> {
+      var result = gg.tame.conduit.auth.MojangProfiles.lookup(target);
+      switch (result) {
+        case gg.tame.conduit.auth.MojangProfiles.Result.Found found ->
+            banName(source, players, bans, screen, found.name(), reason, actor, until, Optional.of(found.account()), null);
+        case gg.tame.conduit.auth.MojangProfiles.Result.NotFound notFound ->
+            Messages.failure(source, target + " is not a Minecraft account, so nobody was banned.");
+        case gg.tame.conduit.auth.MojangProfiles.Result.Unavailable unavailable ->
+            banName(source, players, bans, screen, target, reason, actor, until, Optional.empty(),
+                "Mojang could not be asked (" + unavailable.why() + "), so only the name is banned");
+      }
+    });
+  }
+
+  /**
+   * Bans a name, and the account behind it when that is known, and says so. {@code caveat} is added to
+   * the confirmation when the account could not be banned for a reason the staff member should know.
+   */
+  private static void banName(CommandSource source, PlayerManager players, BanList bans, gg.tame.conduit.config.BanSettings screen,
+      String target, String reason, String actor, long expiresAt, Optional<java.util.UUID> account, String caveat) {
+    // Asked again: a lookup takes time, and someone else may have banned them meanwhile.
+    if (bans.find(target, account.orElse(null), null).isPresent()) {
+      Messages.failure(source, target + " is already banned. Use /gunban " + target + " first to change it.");
+      return;
+    }
     BanList.Entry entry = bans.ban(BanList.Kind.NAME, target, reason, actor, expiresAt);
-    // An online player's account is banned too, so a name change does not undo it. An offline one
-    // cannot be: Conduit does not look names up at Mojang, and a wrong UUID is worse than none.
-    onlineTarget.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt(), target));
-    int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target),
+    account.ifPresent(uuid -> bans.ban(BanList.Kind.ACCOUNT, uuid.toString(), reason, actor, entry.expiresAt(), target));
+    int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target)
+            || account.isPresent() && player.uniqueId().equals(account.get()),
         screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
     Messages.success(source, "Banned " + target + " " + describeBan(entry)
-        + (kicked > 0 ? " and kicked them" : " (they are not online)") + ".");
+        + (account.isPresent() ? ", account " + account.get() : "")
+        + (kicked > 0 ? ", and kicked them" : " (they are not online)") + "."
+        + (caveat == null ? "" : " " + caveat + "."));
     notifyStaff(source, players, "banned " + target + " " + describeBan(entry) + ": " + reason);
   }
 

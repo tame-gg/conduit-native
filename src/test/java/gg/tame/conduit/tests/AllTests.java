@@ -148,6 +148,7 @@ public final class AllTests {
     BanUnbanTests.run();
     BanListCommandTests.run();
     BanAlreadyBannedTests.run();
+    MojangProfilesTests.run();
     BanMessageTests.run();
     StaffPermissionTests.run();
     StaffNotifyTests.run();
