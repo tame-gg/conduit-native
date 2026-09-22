@@ -2906,6 +2906,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     outbound = resourcePacks.beforeWrite(writtenIn, outbound);
     if (outbound == null) return;
     display.beforeWrite(writtenIn, outbound);
+    if (writtenIn == ConnectionState.LOGIN) compressBeforeLoginSuccess(outbound);
     try {
       if (flush) client.write(outbound);
       else client.writeUnflushed(outbound);
@@ -2919,6 +2920,28 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     awaitingBackendJoinGame.written(outbound);
     display.afterWrite(writtenIn, outbound);
     resourcePacks.afterWrite(writtenIn, outbound);
+  }
+  /**
+   * Puts the client's link into the compressed format just ahead of its Login Success, the packet
+   * Set Compression has to come before. The backend's own Set Compression never reaches the client
+   * -- it is consumed on the backend link -- so without this every packet, chunk data included, went
+   * to players at full size: the proxy's costliest direction, sent several times over.
+   */
+  private void compressBeforeLoginSuccess(byte[] packet) throws IOException {
+    int threshold = configuration.compressionThreshold();
+    if (threshold < 0 || client.compressing()
+        || !protocol.is(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PlayPackets.peekId(packet), PacketKind.LOGIN_SUCCESS)
+        || !protocol.defines(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SET_COMPRESSION)) {
+      return;
+    }
+    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(8);
+    try (java.io.DataOutputStream output = new java.io.DataOutputStream(bytes)) {
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output,
+          protocol.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_SET_COMPRESSION));
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, threshold);
+    }
+    client.writeUnflushed(bytes.toByteArray());
+    client.enableCompression(threshold, configuration.maxFrameBytes());
   }
   @Override public String username() { return profile().username(); }
   @Override public boolean hasPermission(String permission) {

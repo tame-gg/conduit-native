@@ -23,6 +23,12 @@ host = "127.0.0.1"
 port = 25565
 # Largest packet Conduit will read before dropping the connection.
 max-frame-bytes = 1048576
+# Packets this many bytes or larger are compressed on the way to players, as a
+# vanilla server compresses them. -1 turns it off, which multiplies the bandwidth
+# players cost -- chunk data most of all. Lower is smaller on the wire and costs
+# more CPU; 0 compresses everything.
+# (restart) (default: 256)
+# compression-threshold = 256
 # Read a HAProxy PROXY protocol header before the handshake, so a reverse proxy in
 # front of Conduit -- TCPShield, HAProxy, a load balancer -- can say which player a
 # connection belongs to. Without it every player arrives wearing that service's

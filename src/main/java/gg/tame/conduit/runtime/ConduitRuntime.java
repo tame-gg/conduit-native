@@ -319,6 +319,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       ConduitConfiguration current = this.configuration;
       if (!Objects.equals(current.listener(), next.listener())) restart.add("listener.host / listener.port");
       if (current.maxFrameBytes() != next.maxFrameBytes()) restart.add("listener.max-frame-bytes");
+      if (current.compressionThreshold() != next.compressionThreshold()) restart.add("listener.compression-threshold");
       if (current.forwardingMode() != next.forwardingMode()) restart.add("forwarding.mode");
       if (!Objects.equals(current.forwardingSecretFile(), next.forwardingSecretFile())) restart.add("forwarding.secret-file");
       if (current.authentication().mode() != next.authentication().mode()) restart.add("authentication.mode");

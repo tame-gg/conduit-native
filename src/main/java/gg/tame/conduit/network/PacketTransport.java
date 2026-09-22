@@ -5,6 +5,7 @@ import gg.tame.conduit.crypto.AesCfb8;
 import gg.tame.conduit.crypto.CipherStreams;
 import gg.tame.conduit.metrics.ConduitMetrics;
 import gg.tame.conduit.protocol.MinecraftFrames;
+import gg.tame.conduit.protocol.PacketCompression;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -52,10 +53,25 @@ public final class PacketTransport {
   }
   public EncryptionState state() { return state; }
   public byte[] read(int maximumFrameBytes) throws IOException {
-    byte[] packet = MinecraftFrames.read(input, maximumFrameBytes);
+    byte[] frame = MinecraftFrames.read(input, maximumFrameBytes);
+    PacketCompression active = compression;
+    byte[] packet = active == null ? frame : active.unwrap(frame);
     ConduitMetrics.current().inbound(packet.length);
     return packet;
   }
+  /** Set once the peer has been sent Set Compression; every frame after that is in the compressed format. */
+  private volatile PacketCompression compression;
+  /**
+   * Every frame from here on, both ways, is in the compressed format: packets of {@code threshold}
+   * bytes or more deflated, the rest marked as not. For the caller to call straight after writing
+   * the Set Compression that tells the peer so, and before anything else is written.
+   */
+  public void enableCompression(int threshold, int maximumUncompressedBytes) {
+    PacketCompression enabled = new PacketCompression(maximumUncompressedBytes);
+    enabled.enable(threshold);
+    synchronized (writeLock) { compression = enabled; }
+  }
+  public boolean compressing() { return compression != null; }
   public void write(byte[] packet) throws IOException {
     writeUnflushed(packet);
     flush();
@@ -76,9 +92,11 @@ public final class PacketTransport {
     public int bytes() { return bytes; }
   }
   public void writeUnflushed(byte[] packet) throws IOException {
-    if (packet.length > MAX_WIRE_FRAME_BYTES) throw new FrameTooLargeException(packet.length);
     synchronized (writeLock) {
-      MinecraftFrames.writeUnflushed(output, packet);
+      PacketCompression active = compression;
+      byte[] framed = active == null ? packet : active.wrap(packet);
+      if (framed.length > MAX_WIRE_FRAME_BYTES) throw new FrameTooLargeException(framed.length);
+      MinecraftFrames.writeUnflushed(output, framed);
       ConduitMetrics.current().outbound(packet.length);
     }
   }

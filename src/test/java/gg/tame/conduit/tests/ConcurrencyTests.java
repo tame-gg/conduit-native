@@ -70,7 +70,82 @@ public final class ConcurrencyTests {
     everyBackendASessionOpensIsClosedWhenItEnds();
     silentLoginsHoldNoAuthenticationPermits();
     aFrameTooLargeForTheClientIsNotWritten();
+    theClientLinkIsCompressedFromLoginSuccess();
     System.out.println("ConcurrencyTests passed.");
+  }
+
+  /**
+   * With a compression threshold the client is sent Set Compression, then its Login Success and
+   * everything after in the compressed format, and what it sends back in that format reaches the
+   * backend as the packet it was. A packet at the threshold goes out deflated.
+   */
+  private static void theClientLinkIsCompressedFromLoginSuccess() throws Exception {
+    int threshold = 64;
+    java.util.concurrent.BlockingQueue<byte[]> atBackend = new java.util.concurrent.LinkedBlockingQueue<>();
+    byte[] large = legacyServerChat("x".repeat(400));
+    try (ServerSocket lobby = new ServerSocket(0)) {
+      Thread backend = Thread.startVirtualThread(() -> {
+        try {
+          // The proxy's health probe arrives first, as a status ping; the login is the other one.
+          Socket socket;
+          while (true) {
+            socket = lobby.accept();
+            if (Handshake.decode(MinecraftFrames.read(socket.getInputStream(), 4096)).nextState() == 2) break;
+            socket.close();
+          }
+          MinecraftFrames.read(socket.getInputStream(), 4096);
+          MinecraftFrames.write(socket.getOutputStream(), legacyLoginSuccess());
+          MinecraftFrames.write(socket.getOutputStream(), legacyJoinGame());
+          MinecraftFrames.write(socket.getOutputStream(), large);
+          while (true) atBackend.add(MinecraftFrames.read(socket.getInputStream(), 4096));
+        } catch (Exception ended) { }
+      });
+      ConduitConfiguration plain = configuration(
+          List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", lobby.getLocalPort()))),
+          List.of("lobby"), List.of("lobby"), SecuritySettings.defaults());
+      ConduitConfiguration configuration = new ConduitConfiguration(plain.listener(), plain.maxFrameBytes(),
+          plain.forwardingMode(), plain.forwardingSecretFile(), plain.backends(), plain.initialBackends(),
+          plain.fallbackBackends(), plain.authentication(), plain.forwardedPlayerAddress(), plain.ops(),
+          plain.proxyProtocol(), plain.forcedHosts(), threshold);
+      try (MinecraftProxy proxy = new MinecraftProxy(configuration)) {
+        Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+        try (Socket client = new Socket("127.0.0.1", proxy.port())) {
+          client.setSoTimeout(10_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+          byte[] setCompression = MinecraftFrames.read(client.getInputStream(), 4096);
+          try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(setCompression))) {
+            require(MinecraftInput.varInt(input) == 3 && MinecraftInput.varInt(input) == threshold,
+                "the first packet is Set Compression with the configured threshold: " + java.util.Arrays.toString(setCompression));
+          }
+          PacketCompression compression = new PacketCompression(1 << 20);
+          compression.enable(threshold);
+          byte[] loginSuccess = MinecraftFrames.read(client.getInputStream(), 4096);
+          require(loginSuccess[0] == 0, "a small Login Success is marked as not deflated");
+          require(PlayPackets.packetId(compression.unwrap(loginSuccess)) == 2, "then Login Success, compressed");
+          require(PlayPackets.packetId(compression.unwrap(MinecraftFrames.read(client.getInputStream(), 4096))) == 1,
+              "then Join Game, compressed");
+          byte[] deflated = MinecraftFrames.read(client.getInputStream(), 4096);
+          require(deflated[0] != 0 && deflated.length < large.length, "a packet over the threshold is deflated: " + deflated.length);
+          require(java.util.Arrays.equals(compression.unwrap(deflated), large), "and inflates to what the backend sent");
+          MinecraftFrames.write(client.getOutputStream(), compression.wrap(legacyChat("hello")));
+          // Behind whatever the proxy itself sent the backend first, such as a brand.
+          List<String> seen = new ArrayList<>();
+          boolean arrived = false;
+          long deadline = System.nanoTime() + 10_000_000_000L;
+          while (!arrived && System.nanoTime() < deadline) {
+            byte[] packet = atBackend.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (packet == null) continue;
+            arrived = java.util.Arrays.equals(packet, legacyChat("hello"));
+            seen.add(java.util.Arrays.toString(packet));
+          }
+          require(arrived, "the client's compressed chat reaches the backend as it was: " + seen);
+        } finally {
+          serving.interrupt();
+        }
+      }
+      backend.interrupt();
+    }
   }
 
   /**

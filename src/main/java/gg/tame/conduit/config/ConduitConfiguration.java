@@ -12,7 +12,23 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
                                   List<String> fallbackBackends, AuthenticationSettings authentication,
                                   Optional<java.net.InetAddress> forwardedPlayerAddress,
                                   OpsSettings ops, boolean proxyProtocol,
-                                  gg.tame.conduit.routing.ForcedHosts forcedHosts) {
+                                  gg.tame.conduit.routing.ForcedHosts forcedHosts,
+                                  int compressionThreshold) {
+  /** What {@code listener.compression-threshold} is when the file does not say. */
+  public static final int DEFAULT_COMPRESSION_THRESHOLD = 256;
+  /**
+   * Every setting but the client link's compression, which is off: what a test reads off the wire is
+   * then the packet itself. A configuration file gets {@link #DEFAULT_COMPRESSION_THRESHOLD}.
+   */
+  public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
+                             Optional<Path> forwardingSecretFile, List<BackendServer> backends,
+                             List<String> initialBackends, List<String> fallbackBackends,
+                             AuthenticationSettings authentication,
+                             Optional<java.net.InetAddress> forwardedPlayerAddress, OpsSettings ops,
+                             boolean proxyProtocol, gg.tame.conduit.routing.ForcedHosts forcedHosts) {
+    this(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends, initialBackends, fallbackBackends,
+        authentication, forwardedPlayerAddress, ops, proxyProtocol, forcedHosts, -1);
+  }
   /** Every setting but the forced hosts, of which there are none. */
   public ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes, ForwardingMode forwardingMode,
                              Optional<Path> forwardingSecretFile, List<BackendServer> backends,
@@ -57,6 +73,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
   public ConduitConfiguration {
     if (listener.getPort() < 1 || listener.getPort() > 65535) throw new IllegalArgumentException("listener.port must be 1..65535");
     if (maxFrameBytes < 1 || maxFrameBytes > 8 * 1024 * 1024) throw new IllegalArgumentException("listener.max-frame-bytes must be 1..8388608");
+    if (compressionThreshold < -1) throw new IllegalArgumentException("listener.compression-threshold must be -1 (off) or at least 0");
     if (forwardingMode == ForwardingMode.MODERN && forwardingSecretFile.isEmpty()) throw new IllegalArgumentException("forwarding.secret-file is required for modern forwarding");
     // A secret file in another mode used to be refused. It is now the default in every mode: the
     // file is generated on first start so that turning modern forwarding on later is one line here
@@ -104,7 +121,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
   public ConduitConfiguration withOps(OpsSettings replacement) {
     return new ConduitConfiguration(listener, maxFrameBytes, forwardingMode, forwardingSecretFile, backends,
         initialBackends, fallbackBackends, authentication, forwardedPlayerAddress, replacement, proxyProtocol,
-        forcedHosts);
+        forcedHosts, compressionThreshold);
   }
 
   /** Whether a kick nobody handled moves the player on rather than off; see RoutingSettings. */
