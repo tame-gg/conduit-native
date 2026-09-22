@@ -156,6 +156,12 @@ display-max-players = 100
 # "Steve (lobby)". Off by default, so the list reads as it does on a single server.
 # player-sample-server = false
 
+# Players using the No Chat Reports mod see this server marked safe in their list
+# while every backend runs No Chat Reports itself and says so in its own server
+# list answer. Nothing to set here: one backend without it, or one health checks
+# have never reached, and the mark is not shown, since Conduit passes signed chat
+# on as it comes and cannot promise what a backend does not.
+
 # Turned on and off with /conduit maintenance. While it is on, players see motd in
 # the server list and kick-message if they try to join.
 [maintenance]

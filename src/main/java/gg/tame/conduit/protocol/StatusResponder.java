@@ -22,8 +22,18 @@ public final class StatusResponder {
   }
   /** The answer as the proxy and its plugins left it in {@code ping}. */
   public static byte[] response(ProtocolDefinition protocol, byte[] request, ServerListPingEvent ping) throws IOException {
-    return answer(protocol, request, json(ping.description(), ping.versionName(), ping.versionProtocol(),
-        ping.playersHidden(), ping.maxPlayers(), ping.onlinePlayers(), ping.samplePlayers(), ping.favicon(), ping.protocolVersion()));
+    return response(protocol, request, ping, false);
+  }
+  /**
+   * As above, saying the network prevents chat reports when {@code preventsChatReports}: the field
+   * No Chat Reports clients read to mark a server safe in their list. Others ignore it.
+   */
+  public static byte[] response(ProtocolDefinition protocol, byte[] request, ServerListPingEvent ping,
+                                boolean preventsChatReports) throws IOException {
+    String json = json(ping.description(), ping.versionName(), ping.versionProtocol(),
+        ping.playersHidden(), ping.maxPlayers(), ping.onlinePlayers(), ping.samplePlayers(), ping.favicon(), ping.protocolVersion());
+    if (preventsChatReports) json = json.substring(0, json.length() - 1) + ",\"preventsChatReports\":true}";
+    return answer(protocol, request, json);
   }
   /** Throws unless {@code request} is a status request, so nothing is asked of plugins for a malformed one. */
   public static void checkRequest(ProtocolDefinition protocol, byte[] request) throws IOException {

@@ -23,6 +23,7 @@ import gg.tame.conduit.protocol.BackendStatusProbe;
 import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.MinecraftFrames;
 import gg.tame.conduit.protocol.MinecraftOutput;
+import gg.tame.conduit.protocol.StatusResponder;
 import gg.tame.conduit.routing.ServerRegistry;
 import gg.tame.conduit.runtime.ConduitRuntime;
 import java.io.ByteArrayOutputStream;
@@ -67,6 +68,7 @@ public final class BackendPingTests {
 
   public static void run() throws Exception {
     healthProbeStillReadsVersionAndCounts();
+    chatReportSafetyIsClaimedOnlyWhenEveryBackendClaimsIt();
     Path root = TempFiles.dir("backend-ping");
     try (Backend unused = new Backend(json(RICH));
          ConduitRuntime runtime = new ConduitRuntime(VelocityCompatTests.configuration(List.of(unused.server("lobby"))), root.resolve("plugins"), root)) {
@@ -263,6 +265,48 @@ public final class BackendPingTests {
         require(asked.protocolVersion() == -1 && asked.requestedHost().equals("127.0.0.1"), "the health probe's handshake is unchanged, got " + asked);
       }
     }
+  }
+
+  /**
+   * No Chat Reports clients mark a server safe from "preventsChatReports" in its answer. The proxy
+   * passes signed chat on as it comes, so it may say so only when every backend says so itself: one
+   * that does not is somewhere a player could be reported under a badge that told them otherwise.
+   */
+  private static void chatReportSafetyIsClaimedOnlyWhenEveryBackendClaimsIt() throws Exception {
+    String safe = "{\"version\":{\"name\":\"Fabric 1.21.4\",\"protocol\":769},\"description\":\"\",\"preventsChatReports\":true}";
+    require(BackendStatusProbe.parse(safe).orElseThrow().preventsChatReports(), "the field is read");
+    require(!BackendStatusProbe.parse(RICH).orElseThrow().preventsChatReports(), "and absent is not safe");
+
+    try (Backend ncr = new Backend(json(safe)); Backend plain = new Backend(json(RICH)); Backend ncr2 = new Backend(json(safe))) {
+      HealthSettings settings = new HealthSettings(true, 10_000, 1_000, 1, 1);
+      BackendServer never = new BackendServer("never", new InetSocketAddress("127.0.0.1", reservePort()));
+      try (BackendHealthService mixed = new BackendHealthService(new ServerRegistry(
+          VelocityCompatTests.configuration(List.of(ncr.server("a"), plain.server("b")))), settings);
+           BackendHealthService allSafe = new BackendHealthService(new ServerRegistry(
+          VelocityCompatTests.configuration(List.of(ncr.server("a"), ncr2.server("b")))), settings);
+           BackendHealthService unanswered = new BackendHealthService(new ServerRegistry(
+          VelocityCompatTests.configuration(List.of(ncr.server("a"), never))), settings)) {
+        require(!allSafe.everyBackendPreventsChatReports(), "nothing is claimed before any backend has answered");
+        mixed.probeOnce(); allSafe.probeOnce(); unanswered.probeOnce();
+        require(!mixed.everyBackendPreventsChatReports(), "one backend without it is enough to say nothing");
+        require(!unanswered.everyBackendPreventsChatReports(), "nor is a backend that has never answered taken on trust");
+        require(allSafe.everyBackendPreventsChatReports(), "every backend saying it is");
+      }
+    }
+
+    ServerListPingEvent ping = new ServerListPingEvent(new InetSocketAddress("127.0.0.1", 1), java.util.Optional.empty(), 25565, 769,
+        Text.of("motd"), 20, 0, List.of(), "Conduit", 769, java.util.Optional.empty());
+    var table = gg.tame.conduit.protocol.ProtocolDefinition.forVersion(765);
+    require(answerOf(StatusResponder.response(table, new byte[] {0x00}, ping, true)).get("preventsChatReports") == Boolean.TRUE,
+        "the proxy's own answer carries it when claimed");
+    require(!answerOf(StatusResponder.response(table, new byte[] {0x00}, ping, false)).containsKey("preventsChatReports"),
+        "and leaves it out otherwise");
+  }
+
+  private static java.util.Map<?, ?> answerOf(byte[] packet) throws Exception {
+    String json = gg.tame.conduit.protocol.MinecraftInput.string(
+        new java.io.DataInputStream(new java.io.ByteArrayInputStream(packet, 1, packet.length - 1)), 1 << 16);
+    return (java.util.Map<?, ?>) gg.tame.conduit.protocol.text.ComponentCodec.parseJson(json);
   }
 
   // ---------------------------------------------------------------- Velocity

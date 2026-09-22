@@ -55,9 +55,17 @@ public final class BackendStatusProbe {
 
   private BackendStatusProbe() {}
 
-  public record Advertisement(int protocol, String name, int onlinePlayers, int maxPlayers, long latencyMillis) {
+  /**
+   * {@code preventsChatReports} is what a backend running the No Chat Reports mod adds to its answer,
+   * and what that mod's clients read to mark a server safe in their list.
+   */
+  public record Advertisement(int protocol, String name, int onlinePlayers, int maxPlayers, long latencyMillis,
+                              boolean preventsChatReports) {
     public Advertisement {
       if (name == null) name = "unknown";
+    }
+    public Advertisement(int protocol, String name, int onlinePlayers, int maxPlayers, long latencyMillis) {
+      this(protocol, name, onlinePlayers, maxPlayers, latencyMillis, false);
     }
   }
 
@@ -163,7 +171,8 @@ public final class BackendStatusProbe {
       // Only an icon a client would draw: anything else in that field is not an icon.
       Optional<String> favicon = root.get("favicon") instanceof String icon && icon.startsWith("data:image/png;base64,")
           ? Optional.of(icon) : Optional.empty();
-      return Optional.of(new Answer(new Advertisement(protocol.intValue(), name, online, max, latencyMillis),
+      boolean preventsChatReports = Boolean.TRUE.equals(root.get("preventsChatReports"));
+      return Optional.of(new Answer(new Advertisement(protocol.intValue(), name, online, max, latencyMillis, preventsChatReports),
           description == null ? Text.empty() : TextCodec.fromTree(description), favicon, sample));
     } catch (StackOverflowError nested) {
       // A backend can nest a description as deep as its answer is long; the parsers recurse.

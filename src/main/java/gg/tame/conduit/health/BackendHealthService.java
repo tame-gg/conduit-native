@@ -216,6 +216,22 @@ public final class BackendHealthService implements AutoCloseable {
     return Optional.ofNullable(advertisements.get(ServerRegistry.normalize(name)));
   }
 
+  /**
+   * Whether every backend's latest answer said it prevents chat reports, which is when the proxy may
+   * tell No Chat Reports clients the same. A promise about the whole network: one backend that
+   * accepts signed chat, or has never answered a probe, is somewhere a player could be reported,
+   * so the proxy says nothing. A backend that goes down keeps the last answer it gave.
+   */
+  public boolean everyBackendPreventsChatReports() {
+    List<BackendServer> servers = registry.all();
+    if (servers.isEmpty()) return false;
+    for (BackendServer server : servers) {
+      BackendStatusProbe.Advertisement ad = advertisements.get(ServerRegistry.normalize(server.name()));
+      if (ad == null || !ad.preventsChatReports()) return false;
+    }
+    return true;
+  }
+
   public ServerStatus toServerStatus(String name) {
     BackendHealthSnapshot snap = snapshot(name);
     Optional<BackendStatusProbe.Advertisement> ad = advertisement(name);
