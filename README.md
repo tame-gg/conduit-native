@@ -328,6 +328,7 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/glist`, `/plist <server>`, `/find <player>`, `/alert <message>`, `/ping`, `/hub`, `/gkick <player> [reason]`
 * `/gban <player|address> [duration] [reason]` — ban from the whole network; no duration means permanent
 * `/gunban <player|address>` — lift it
+* `/gbanlist [page]` — every ban in force: the reason, who made it and how long it has left
 * `/gwhitelist <on|off|add|remove|list|clear|status>` — close the network to all but a list
 * `/conduit` — the subcommands you may run; `/conduit info` is the branded version line plus current server and counts
 * `/conduit servers` — name + Online/Offline status (more detail than `/server`, still compact)
@@ -655,7 +656,7 @@ A player may not `/gkick` or `/gban` another player who holds that same command'
 * `/conduit reload`, `maintenance`, `drain` and `undrain`, `doctor`, `diagnostics`, `attack`, `cache`, `dump`,
   `heap`: `conduit.command.reload` / `maintenance` / `drain` / `doctor` / `diagnostics` / `attack` / `cache` /
   `dump` / `heap`
-* `/gban` and `/gunban`: `conduit.command.gban`; `/gwhitelist`: `conduit.command.gwhitelist`
+* `/gban`, `/gunban` and `/gbanlist`: `conduit.command.gban`; `/gwhitelist`: `conduit.command.gwhitelist`
 * `conduit.maintenance.bypass`, `conduit.drain.bypass`: past maintenance, onto a draining server
 * `conduit.whitelist.bypass`: in while the whitelist is on, without being on it
 * `conduit.admin`: stands for every `conduit.` node above, except one the permissions plugin denies

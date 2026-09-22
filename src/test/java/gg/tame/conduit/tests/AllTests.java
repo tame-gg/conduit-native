@@ -146,6 +146,7 @@ public final class AllTests {
     ServerResourcePackTests.run();
     BanWhitelistTests.run();
     BanUnbanTests.run();
+    BanListCommandTests.run();
     BanMessageTests.run();
     StaffPermissionTests.run();
     BungeeCordChannelTests.run();

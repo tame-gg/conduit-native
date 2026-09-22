@@ -54,7 +54,7 @@ public final class CoreCommands {
   private static final java.util.Map<String, String> ALIASES = java.util.Map.of("version", "info", "attackmode", "attack");
   private static final Set<String> RESERVED = Set.of(
       "server", "send", "glist", "plist", "find", "alert", "ping", "hub", "gkick", "conduit",
-      "gban", "gunban", "gpardon", "gwhitelist", "gwl");
+      "gban", "gunban", "gpardon", "gbanlist", "gwhitelist", "gwl");
   private CoreCommands() {}
 
   public static void register(CommandManager manager, ServerRegistry registry, PlayerManager players) {
@@ -96,6 +96,9 @@ public final class CoreCommands {
     manager.register(new RegisteredCommand("gunban", List.of("gpardon"), Permissions.GBAN,
         (source, arguments) -> gunban(source, runtime, arguments),
         (source, arguments) -> completeBanned(runtime, arguments)));
+    manager.register(new RegisteredCommand("gbanlist", List.of(), Permissions.GBAN,
+        (source, arguments) -> gbanlist(source, runtime, arguments),
+        (source, arguments) -> List.of()));
     manager.register(new RegisteredCommand("gwhitelist", List.of("gwl"), Permissions.GWHITELIST,
         (source, arguments) -> gwhitelist(source, runtime, players, arguments),
         (source, arguments) -> completeWhitelist(runtime, players, arguments)));
@@ -370,6 +373,53 @@ public final class CoreCommands {
     String target = arguments.getFirst();
     if (runtime.bans().pardonAny(target)) Messages.success(source, "Unbanned " + target + ".");
     else Messages.failure(source, target + " is not banned.");
+  }
+
+  /** How many bans one page of {@code /gbanlist} shows, so a long list does not scroll out of chat. */
+  private static final int BANS_PER_PAGE = 8;
+
+  /**
+   * {@code /gbanlist [page]}: every ban in force, newest first, with its reason, who made it and how
+   * long it has left. An account ban made alongside a name ban is that name's, and is not listed twice.
+   */
+  private static void gbanlist(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    List<BanList.Entry> shown = new ArrayList<>();
+    for (BanList.Entry entry : runtime.bans().active()) {
+      if (entry.kind() == BanList.Kind.ACCOUNT && !entry.alias().isEmpty()) continue;
+      shown.add(entry);
+    }
+    if (shown.isEmpty()) {
+      Messages.info(source, "Nobody is banned.");
+      return;
+    }
+    int pages = (shown.size() + BANS_PER_PAGE - 1) / BANS_PER_PAGE;
+    int page = 1;
+    if (!arguments.isEmpty()) {
+      try { page = Integer.parseInt(arguments.getFirst()); }
+      catch (NumberFormatException notANumber) { Messages.failure(source, "Usage: /gbanlist [page]"); return; }
+    }
+    if (page < 1 || page > pages) {
+      Messages.failure(source, "There " + (pages == 1 ? "is 1 page" : "are " + pages + " pages") + " of bans.");
+      return;
+    }
+    long now = System.currentTimeMillis();
+    source.sendMessage(Text.of("Bans (" + shown.size() + ")").color(Messages.BRAND).bold()
+        .append(Text.of("  page " + page + "/" + pages).color(Messages.OTHER)));
+    for (BanList.Entry entry : shown.subList((page - 1) * BANS_PER_PAGE, Math.min(shown.size(), page * BANS_PER_PAGE))) {
+      String kind = switch (entry.kind()) {
+        case NAME -> "";
+        case ADDRESS -> " (address)";
+        case ACCOUNT -> " (account)";
+      };
+      source.sendMessage(Text.of(entry.value()).color(Messages.BODY)
+          .append(Text.of(kind + "  " + BanList.describeDuration(now - entry.createdAt()) + " ago").color(Messages.OTHER)));
+      source.sendMessage(Text.of("  Reason: ").color(Messages.LABEL).append(Text.of(entry.reason()).color(Messages.BODY)));
+      source.sendMessage(Text.of("  Banned by: ").color(Messages.LABEL).append(Text.of(entry.actor()).color(Messages.BODY))
+          .append(Text.of("  Duration: ").color(Messages.LABEL)).append(Text.of(entry.remaining(now).map(left -> left + " left")
+              .orElse("Permanent")).color(Messages.BODY)));
+    }
+    if (page < pages) Messages.info(source, "Next: /gbanlist " + (page + 1));
   }
 
   /** How a ban reads in a confirmation and in the list. */
@@ -682,6 +732,7 @@ public final class CoreCommands {
         entry(Permissions.GKICK, "/gkick <player> [reason]", "disconnect someone once"),
         entry(Permissions.GBAN, "/gban <player|address> [duration] [reason]", "keep them out; no duration is permanent"),
         entry(Permissions.GBAN, "/gunban <player|address>", "lift a ban"),
+        entry(Permissions.GBAN, "/gbanlist [page]", "who is banned, by whom, and for how long"),
         entry(Permissions.GWHITELIST, "/gwhitelist <on|off|add|remove|list|clear|status>", "close the network to a list")));
     helpGroup(source, "Proxy status", List.of(
         entry(Permissions.INFO, "/conduit info", "version, your server, player counts"),
