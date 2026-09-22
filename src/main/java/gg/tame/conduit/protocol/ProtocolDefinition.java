@@ -806,6 +806,11 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x10,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CLIENT_INFORMATION, 0x0E,
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_CLIENT_INFORMATION, 0x00,
+      // The serverbound plugin message, from the minecraft.wiki packet list for protocol 776. Conduit
+      // writes it on the player's behalf (the BungeeCord channel registration, a plugin's message to
+      // the server); without it every such message toward a 26.2 backend was silently not sent.
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE, 0x16,
+      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_PLUGIN_MESSAGE, 0x02,
       // Written by Conduit itself on a plugin's behalf (DisplayPackets). minecraft-data has no 26.2
       // release, so these are positions in the minecraft.wiki clientbound Play packet list for protocol
       // 776. Every Play id above sits at its position in that same list, and these equal 26.1's
