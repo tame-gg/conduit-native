@@ -1802,12 +1802,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * reason: without them a backend plugin never reaches its proxy half.
    */
   private void announceProxyChannels() {
-    java.util.List<String> channels = new java.util.ArrayList<>(runtime.proxyChannels());
+    // The channels the client itself announced lead, since a backend after the first one is never
+    // told them otherwise. They go the way the proxy's own do -- in the client's dialect, through
+    // the translator -- and not as a packet built for the backend and written past it: that one was
+    // written in Configuration to a backend a 1.8 client's switch had already taken into Play, which
+    // a 1.20.4 backend read as Play packet 0x01 with the channel list left over, and closed.
+    java.util.Set<String> channels = new java.util.LinkedHashSet<>(registeredChannels.channels());
+    channels.addAll(runtime.proxyChannels());
     if (runtime.configuration().ops().messaging().bungeeCordChannel()) {
       channels.add(clientProtocol < 393 ? gg.tame.conduit.messaging.BungeeCordMessages.LEGACY_CHANNEL
           : gg.tame.conduit.messaging.BungeeCordMessages.MODERN_CHANNEL);
     }
-    announceProxyChannels(channels);
+    announceProxyChannels(java.util.List.copyOf(channels));
   }
 
   /** Registers these channels with the backend the player is on now, in the client's release's names. */
@@ -1816,17 +1822,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     String register = clientProtocol < 393 ? gg.tame.conduit.modded.RegisteredChannels.LEGACY_REGISTER
         : gg.tame.conduit.modded.RegisteredChannels.REGISTER;
     sendPluginMessageToServer(register, String.join("\0", channels).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-  }
-
-  /** Tells a backend the channels the client announced; registration is per connection, not per player. */
-  private void replayRegisteredChannels(BackendConnection target, ConnectionState state, ProtocolDefinition definition) {
-    if (target == null || (state == ConnectionState.CONFIGURATION && !definition.hasConfiguration())) return;
-    try {
-      var packet = registeredChannels.replay(definition, state);
-      if (packet.isPresent()) target.writeUncompressed(packet.get());
-    } catch (IOException exception) {
-      System.err.println("Could not replay registered channels to " + target.server().name() + ": " + exception.getMessage());
-    }
   }
 
   /**
@@ -2548,7 +2543,6 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       completeBackendLogin(next, false, pending);
       enforceDeadline(deadline, "login");
       replayClientInformation(next, ConnectionState.CONFIGURATION, pending);
-      replayRegisteredChannels(next, ConnectionState.CONFIGURATION, pending.definition());
 
       // COMMIT: only now pause the old backend reader and involve the client.
       synchronized (lock) {
@@ -2731,11 +2725,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // Not replayed yet when the translator is still waiting for the new backend's Join Game; the
       // read loop does it as soon as that arrives.
       if (!awaitingBackendJoinGame.holding()) replayClientInformation(backend, ConnectionState.PLAY);
-      // A backend with a Configuration phase was already told above; one without has no phase to
-      // be told in, and its Play state only exists after the commit.
-      if (!backendDefinition.hasConfiguration()) replayRegisteredChannels(backend, ConnectionState.PLAY, backendDefinition);
       discard(previous);
       // Held back with the Client Information replay while the new backend's Join Game is awaited.
+      // It carries the channels the client registered, too.
       if (!awaitingBackendJoinGame.holding()) announceProxyChannels();
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {

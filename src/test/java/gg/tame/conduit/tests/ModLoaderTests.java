@@ -367,9 +367,14 @@ public final class ModLoaderTests {
           require(modded.host.get() != null && modded.host.get().endsWith(FmlAddressMarkers.FORGE),
               "the switch handshake carries the client's token too (got " + printable(modded.host.get()) + ")");
           // Registration is per connection: the new backend was never told what the client announced
-          // on the first one, so every mod and plugin channel went dark after a /server.
-          byte[] replayed = payload(modded.received, configIn, "minecraft:register");
-          require(replayed != null && Set.of(new String(replayed, UTF8).split("\0")).equals(Set.of("neoforge:main", "fml:handshake")),
+          // on the first one, so every mod and plugin channel went dark after a /server. It is told
+          // once the switch is done, as a message from the client, with the proxy's own channels.
+          int playIn = p.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE);
+          byte[] replayed = null;
+          for (long until = System.nanoTime() + 5_000_000_000L; replayed == null && System.nanoTime() < until; Thread.sleep(20)) {
+            replayed = payload(modded.received, playIn, "minecraft:register");
+          }
+          require(replayed != null && Set.of(new String(replayed, UTF8).split("\0")).containsAll(Set.of("neoforge:main", "fml:handshake")),
               "the channels the client registered are announced to the new backend");
         }
         serving.interrupt();
@@ -382,36 +387,25 @@ public final class ModLoaderTests {
   }
 
   /**
-   * The switch above shows the new backend is never told what the client registered. This is the
-   * half of the fix that can live in {@code modded/}: remember the announcement, rebuild it for the
-   * next backend. The session-side call sites are a diff.
+   * What the switch above relies on: the channels a client announced are remembered, so the session
+   * can announce them to each backend it moves the player to.
    */
   private static void registeredChannelsCanBeReplayed() throws Exception {
-    ProtocolDefinition modern = ProtocolDefinition.forVersion(PROTOCOL);
     RegisteredChannels registered = new RegisteredChannels();
     require(!registered.observe("minecraft:brand", new byte[0]), "brand is not a registration");
-    require(registered.replay(modern, ConnectionState.CONFIGURATION).isEmpty(), "nothing to replay before anything is registered");
+    require(registered.channels().isEmpty(), "nothing to replay before anything is registered");
 
     require(registered.observe("minecraft:register", "neoforge:main\0fml:handshake\0plugin:chat".getBytes(UTF8)), "register observed");
-    byte[] packet = registered.replay(modern, ConnectionState.CONFIGURATION).orElseThrow();
-    require(packet[0] == (byte) modern.id(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_PLUGIN_MESSAGE),
-        "the replay is a Configuration plugin message in the client's direction");
-    PluginMessage decoded = PluginMessage.decodeBody(Arrays.copyOfRange(packet, 1, packet.length), 8192);
-    require(decoded.channel().equals("minecraft:register"), "on the channel the client used");
-    require(Set.of(new String(decoded.data(), UTF8).split("\0")).equals(Set.of("neoforge:main", "fml:handshake", "plugin:chat")),
-        "carrying every channel the client announced");
+    require(registered.channels().equals(Set.of("neoforge:main", "fml:handshake", "plugin:chat")),
+        "every channel the client announced is kept");
 
     registered.observe("minecraft:unregister", "fml:handshake".getBytes(UTF8));
     require(!registered.channels().contains("fml:handshake"), "an unregistered channel is forgotten");
 
-    // Pre-1.13 names its register channel differently and has no Configuration phase.
+    // Pre-1.13 names its register channel differently.
     RegisteredChannels legacy = new RegisteredChannels();
-    legacy.observe("REGISTER", "FML|HS\0FML".getBytes(UTF8));
-    ProtocolDefinition old = ProtocolDefinition.forVersion(340);
-    require(legacy.replay(old, ConnectionState.CONFIGURATION).isEmpty(), "1.12 has no Configuration phase to replay into");
-    byte[] play = legacy.replay(old, ConnectionState.PLAY).orElseThrow();
-    require(PluginMessage.decodeBody(Arrays.copyOfRange(play, 1, play.length), 8192).channel().equals("REGISTER"),
-        "the client's own register channel name is echoed, not a version rule");
+    require(legacy.observe("REGISTER", "FML|HS\0FML".getBytes(UTF8)), "a legacy register is observed");
+    require(legacy.channels().equals(Set.of("FML|HS", "FML")), "and its channels kept");
 
     // The client fills this set, so it is bounded.
     RegisteredChannels flood = new RegisteredChannels();
