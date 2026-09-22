@@ -256,7 +256,8 @@ public final class ConfigurationLoader {
   private static OpsSettings ops(Map<String, String> values, Path configDirectory) {
     int schema = optionalInteger(values, "ops.schema-version", OpsSettings.CURRENT_SCHEMA);
     return new OpsSettings(schema, maintenance(values), health(values), versions(values), shutdown(values), security(values), modded(values), translation(values), status(values, configDirectory),
-        metrics(values), updates(values), messaging(values), routingSettings(values), bans(values));
+        metrics(values), updates(values), messaging(values), routingSettings(values), bans(values),
+        new PermissionSettings(Set.copyOf(optionalList(values, "permissions.operators"))));
   }
 
   private static MetricsSettings metrics(Map<String, String> values) {

@@ -16,7 +16,8 @@ public record OpsSettings(
     UpdateSettings updates,
     MessagingSettings messaging,
     RoutingSettings routing,
-    BanSettings bans
+    BanSettings bans,
+    PermissionSettings permissions
 ) {
   public static final int CURRENT_SCHEMA = 5;
 
@@ -35,6 +36,16 @@ public record OpsSettings(
     if (messaging == null) messaging = MessagingSettings.defaults();
     if (routing == null) routing = RoutingSettings.defaults();
     if (bans == null) bans = BanSettings.defaults();
+    if (permissions == null) permissions = PermissionSettings.defaults();
+  }
+
+  /** Every setting but the operators list, which then takes its default. */
+  public OpsSettings(int schemaVersion, MaintenanceSettings maintenance, HealthSettings health, VersionGateSettings versions,
+                     ShutdownSettings shutdown, SecuritySettings security, ModdedSettings modded, TranslationSettings translation,
+                     StatusSettings status, MetricsSettings metrics, UpdateSettings updates, MessagingSettings messaging,
+                     RoutingSettings routing, BanSettings bans) {
+    this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, updates,
+        messaging, routing, bans, null);
   }
 
   /** Every setting but the ban screen, which then takes its default. */
@@ -43,7 +54,7 @@ public record OpsSettings(
                      StatusSettings status, MetricsSettings metrics, UpdateSettings updates, MessagingSettings messaging,
                      RoutingSettings routing) {
     this(schemaVersion, maintenance, health, versions, shutdown, security, modded, translation, status, metrics, updates,
-        messaging, routing, null);
+        messaging, routing, null, null);
   }
 
   /** Every setting but the routing ones, which then take their defaults. */
@@ -95,6 +106,7 @@ public record OpsSettings(
         UpdateSettings.defaults(),
         MessagingSettings.defaults(),
         RoutingSettings.defaults(),
-        BanSettings.defaults());
+        BanSettings.defaults(),
+        PermissionSettings.defaults());
   }
 }

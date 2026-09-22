@@ -173,6 +173,13 @@ allowlist = []
 # temporary = "Expires in {remaining}"
 # permanent = "This ban is permanent."
 
+# Who may run Conduit's admin commands (/gban, /gkick, /conduit reload, ...) in-game
+# while no permissions plugin such as LuckPerms is installed: names or UUIDs. Once
+# one is installed, it alone decides. In offline mode anyone can claim a name, so
+# use UUIDs there. (example)
+# [permissions]
+# operators = ["YourName"]
+
 
 # ============================================================================
 #  VERSIONS  --  which clients may join, and how their packets are translated

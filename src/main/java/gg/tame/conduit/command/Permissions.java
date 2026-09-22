@@ -39,6 +39,8 @@ public final class Permissions {
   public static final String CACHE = "conduit.command.cache";
   public static final String GBAN = "conduit.command.gban";
   public static final String GWHITELIST = "conduit.command.gwhitelist";
+  /** Held by players no other player may kick or ban, whatever that player may do. */
+  public static final String PUNISH_EXEMPT = "conduit.punish.exempt";
   /** Held by the people who must still get in when the whitelist is on, such as the staff turning it on. */
   public static final String WHITELIST_BYPASS = "conduit.whitelist.bypass";
 

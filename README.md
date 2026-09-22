@@ -641,7 +641,12 @@ Pipeline (already framed / decompressed / decrypted):
 ### Permission nodes
 
 Asked through `PermissionProvider`, which a permissions plugin replaces (LuckPerms does, through the
-Velocity layer). The default grants a player no node; the console holds every node.
+Velocity layer). The default grants a player no node, except that the operators named in
+`[permissions] operators` (names or UUIDs) hold every `conduit.` node until a permissions plugin is
+installed; the console holds every node.
+
+A player may not `/gkick` or `/gban` another player who holds that same command's node, or
+`conduit.punish.exempt`, so staff cannot turn those on each other. The console always may.
 
 * `/send` (a player, `current`, or a whole server): `conduit.command.send`
 * `/glist`, `/plist`, `/find`, `/alert`, `/gkick`: `conduit.command.glist` / `plist` / `find` / `alert` / `gkick`

@@ -59,7 +59,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final ModdedService modded;
   private final ConduitEventManager events = new ConduitEventManager();
   private final ConduitScheduler scheduler = new ConduitScheduler();
-  private static final PermissionProvider DEFAULT_PERMISSIONS = new DefaultPermissionProvider();
+  private final PermissionProvider DEFAULT_PERMISSIONS = new DefaultPermissionProvider(() -> configuration().ops().permissions());
   /** Provider and owner change together, so a disable can never reset another plugin's provider. */
   private volatile PermissionGrant permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
   private final gg.tame.conduit.command.ConsoleCommandSource console = new gg.tame.conduit.command.ConsoleCommandSource();

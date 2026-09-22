@@ -278,6 +278,10 @@ public final class CoreCommands {
     }
     TrackedPlayer target = found.get();
     String reason = arguments.size() == 1 ? "Kicked by an operator." : String.join(" ", arguments.subList(1, arguments.size()));
+    if (target instanceof gg.tame.conduit.api.player.Player api && protectedFrom(source, api, Permissions.GKICK)) {
+      Messages.failure(source, target.username() + " cannot be kicked by another player.");
+      return;
+    }
     if (target instanceof gg.tame.conduit.api.player.Player api) {
       api.disconnect(reason);
       Messages.success(source, "Kicked " + target.username() + ".");
@@ -313,6 +317,14 @@ public final class CoreCommands {
     BanList bans = runtime.bans();
 
     if (BanList.looksLikeAddress(target)) {
+      // Refused whole rather than banned around: the address ban would keep them out at their next login anyway.
+      for (TrackedPlayer tracked : players.all()) {
+        if (tracked instanceof gg.tame.conduit.api.player.Player api && api.remoteAddress().getHostAddress().equals(BanList.normalise(BanList.Kind.ADDRESS, target))
+            && protectedFrom(source, api, Permissions.GBAN)) {
+          Messages.failure(source, api.username() + " is on that address and cannot be banned by another player.");
+          return;
+        }
+      }
       BanList.Entry entry = bans.ban(BanList.Kind.ADDRESS, target, reason, actor, expiresAt);
       int kicked = kickMatching(players, player -> player.remoteAddress().getHostAddress().equals(entry.value()),
           screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
@@ -321,15 +333,31 @@ public final class CoreCommands {
       return;
     }
 
+    Optional<TrackedPlayer> onlineTarget = players.getByUsername(target);
+    if (onlineTarget.isPresent() && onlineTarget.get() instanceof gg.tame.conduit.api.player.Player api && protectedFrom(source, api, Permissions.GBAN)) {
+      Messages.failure(source, api.username() + " cannot be banned by another player.");
+      return;
+    }
     BanList.Entry entry = bans.ban(BanList.Kind.NAME, target, reason, actor, expiresAt);
     // An online player's account is banned too, so a name change does not undo it. An offline one
     // cannot be: Conduit does not look names up at Mojang, and a wrong UUID is worse than none.
-    Optional<TrackedPlayer> online = players.getByUsername(target);
-    online.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt()));
+    onlineTarget.ifPresent(player -> bans.ban(BanList.Kind.ACCOUNT, player.uniqueId().toString(), reason, actor, entry.expiresAt()));
     int kicked = kickMatching(players, player -> player.username().equalsIgnoreCase(target),
         screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
     Messages.success(source, "Banned " + target + " " + describeBan(entry)
         + (kicked > 0 ? " and kicked them" : " (they are not online)") + ".");
+  }
+
+  /**
+   * Whether {@code target} is out of {@code source}'s reach: a player may not kick or ban another who
+   * holds that same power, or {@link Permissions#PUNISH_EXEMPT}, so staff cannot turn it on each
+   * other. The console is never stopped, and nor is a player acting on themselves. Only an online
+   * player can be asked; a ban by name on someone offline goes ahead.
+   */
+  private static boolean protectedFrom(CommandSource source, gg.tame.conduit.api.player.Player target, String power) {
+    if (!(source instanceof gg.tame.conduit.api.player.Player actor)) return false;
+    if (actor.uniqueId().equals(target.uniqueId())) return false;
+    return Permissions.allows(target, power) || Permissions.allows(target, Permissions.PUNISH_EXEMPT);
   }
 
   /** {@code /gunban <player|address>}, which lifts a ban of any kind held against that word. */
