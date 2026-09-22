@@ -161,6 +161,17 @@ motd = "Conduit — under maintenance"
 # Names that may still join while it is on.
 allowlist = []
 
+# What a banned player is shown, on joining and when /gban kicks them. The reason
+# given to /gban fills {reason}, so the wording here is kept for every ban. Also
+# {actor} (who banned them), {remaining} (time left) and {expiry}, which is
+# temporary or permanent below. \n is a line break. Unset, it reads as it
+# always has.
+# [bans]
+# message = "&c{reason}\n&7{expiry}"
+# temporary = "Expires in {remaining}"
+# permanent = "This ban is permanent."
+# default-reason = "Banned from this network."
+
 
 # ============================================================================
 #  VERSIONS  --  which clients may join, and how their packets are translated
