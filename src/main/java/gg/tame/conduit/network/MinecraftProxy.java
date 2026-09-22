@@ -27,6 +27,7 @@ import gg.tame.conduit.log.ConduitLog;
 import gg.tame.conduit.login.EncryptionHandshake;
 import gg.tame.conduit.login.LoginDisconnect;
 import gg.tame.conduit.login.LoginPipeline;
+import gg.tame.conduit.login.PlayerProfile;
 import gg.tame.conduit.metrics.ConduitMetrics;
 import gg.tame.conduit.protocol.Handshake;
 import gg.tame.conduit.protocol.ProtocolDefinition;
@@ -54,6 +55,8 @@ public final class MinecraftProxy implements AutoCloseable {
   private static final int MAX_CONNECTIONS = 2048;
   private static final int MAX_CONCURRENT_AUTH = 32;
   private static final int ENCRYPTION_RESPONSE_TIMEOUT_MS = 30_000;
+  /** How long a login that has proved its key waits for a free permit before it is refused. */
+  private static final long AUTH_PERMIT_WAIT_MS = 10_000;
   /**
    * How long after its handshake a connection may still be read from before it reaches Play, or its
    * status exchange ends. Long enough for the encryption response, which waits on the client's own
@@ -603,31 +606,42 @@ public final class MinecraftProxy implements AutoCloseable {
   }
   private void authenticateOnline(PacketTransport transport, ProtocolDefinition protocol, LoginPipeline pipeline, String address,
                                   PlayerAuthenticator authenticator) throws IOException, AuthenticationException {
-    if (!authPermits.tryAcquire()) throw new AuthenticationException("authentication busy");
+    EncryptionHandshake handshake = new EncryptionHandshake(rsaKeys);
+    transport.beginNegotiation();
+    transport.write(handshake.request(protocol).encode(protocol));
+    ConduitLog.info("Encryption request sent.");
+    byte[] response;
+    // The client answers this one only after its own round trip to the session service, which is
+    // slower than anything else in a login and has nothing to do with a stalling connection.
+    transport.setReadTimeoutMillis(ENCRYPTION_RESPONSE_TIMEOUT_MS);
+    try { response = transport.read(configuration.maxFrameBytes()); }
+    catch (IOException exception) { throw new AuthenticationException("missing encryption response", exception); }
+    byte[] secret;
+    try { secret = handshake.sharedSecret(protocol, response); }
+    catch (AuthenticationException exception) { throw exception; }
+    catch (Exception exception) { throw new AuthenticationException("invalid encryption response", exception); }
+    transport.enableEncryption(secret);
+    ConduitLog.info("Client encryption enabled.");
+    String hash = handshake.serverHash(secret);
+    // The permit bounds the proxy's own calls to the session service, and nothing else. Taken
+    // before the encryption request, it was held through the whole wait for the client's
+    // response, so a handful of connections that took the request and never answered it held
+    // every permit, and each real player behind them was refused "Failed to verify username".
     try {
-      EncryptionHandshake handshake = new EncryptionHandshake(rsaKeys);
-      transport.beginNegotiation();
-      transport.write(handshake.request(protocol).encode(protocol));
-      ConduitLog.info("Encryption request sent.");
-      byte[] response;
-      // The client answers this one only after its own round trip to the session service, which is
-      // slower than anything else in a login and has nothing to do with a stalling connection.
-      transport.setReadTimeoutMillis(ENCRYPTION_RESPONSE_TIMEOUT_MS);
-      try { response = transport.read(configuration.maxFrameBytes()); }
-      catch (IOException exception) { throw new AuthenticationException("missing encryption response", exception); }
-      byte[] secret;
-      try { secret = handshake.sharedSecret(protocol, response); }
-      catch (AuthenticationException exception) { throw exception; }
-      catch (Exception exception) { throw new AuthenticationException("invalid encryption response", exception); }
-      transport.enableEncryption(secret);
-      ConduitLog.info("Client encryption enabled.");
-      String hash = handshake.serverHash(secret);
-      var authenticated = authenticator.verify(new SessionQuery(pipeline.player().username(), hash, Optional.of(address)));
-      pipeline.adopt(authenticated);
-      ConduitMetrics.current().authentication();
-      ConduitLog.info("Session verified for " + authenticated.username() + " (" + authenticated.uniqueId() + ").");
-      ConduitLog.info(authenticated.summary());
-    } finally { authPermits.release(); }
+      if (!authPermits.tryAcquire(AUTH_PERMIT_WAIT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        throw new AuthenticationException("authentication busy");
+      }
+    } catch (InterruptedException interrupted) {
+      Thread.currentThread().interrupt();
+      throw new AuthenticationException("interrupted waiting to authenticate", interrupted);
+    }
+    PlayerProfile authenticated;
+    try { authenticated = authenticator.verify(new SessionQuery(pipeline.player().username(), hash, Optional.of(address))); }
+    finally { authPermits.release(); }
+    pipeline.adopt(authenticated);
+    ConduitMetrics.current().authentication();
+    ConduitLog.info("Session verified for " + authenticated.username() + " (" + authenticated.uniqueId() + ").");
+    ConduitLog.info(authenticated.summary());
   }
   /**
    * A table to answer a status ping with when the client's own protocol has none.

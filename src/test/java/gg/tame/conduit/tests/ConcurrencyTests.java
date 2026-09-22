@@ -68,7 +68,49 @@ public final class ConcurrencyTests {
     aCrowdOfSessionsLeavesNothingBehind();
     framesAreNotAllocatedBeforeTheyArrive();
     everyBackendASessionOpensIsClosedWhenItEnds();
+    silentLoginsHoldNoAuthenticationPermits();
     System.out.println("ConcurrencyTests passed.");
+  }
+
+  /**
+   * A connection that takes the encryption request and never answers it must not cost the next
+   * login anything. The session-service permits used to be taken before the request and held
+   * through the wait for the response, so 32 silent connections from one address refused every
+   * online-mode login on the network.
+   */
+  private static void silentLoginsHoldNoAuthenticationPermits() throws Exception {
+    // Never dialled: every login here stops at its encryption request.
+    ConduitConfiguration configuration = configuration(
+        List.of(new BackendServer("lobby", new InetSocketAddress("127.0.0.1", reservePort()))), List.of("lobby"), List.of("lobby"),
+        new SecuritySettings(new SecuritySettings.ThrottleSettings(true, 1_000, 60_000, 500, 32, 64, 5_000),
+            SecuritySettings.BotFilterSettings.defaults(),
+            SecuritySettings.ChannelGuardSettings.defaults(),
+            SecuritySettings.AttackModeSettings.defaults()));
+    gg.tame.conduit.auth.PlayerAuthenticator online = new gg.tame.conduit.auth.PlayerAuthenticator() {
+      @Override public gg.tame.conduit.config.AuthenticationMode mode() { return gg.tame.conduit.config.AuthenticationMode.ONLINE; }
+      @Override public PlayerProfile verify(gg.tame.conduit.auth.SessionQuery query) throws gg.tame.conduit.auth.AuthenticationException {
+        throw new gg.tame.conduit.auth.AuthenticationException("not reached");
+      }
+    };
+    List<Socket> silent = new ArrayList<>();
+    try (MinecraftProxy proxy = new MinecraftProxy(configuration, online, gg.tame.conduit.crypto.RsaKeys.generate())) {
+      Thread serving = Thread.startVirtualThread(() -> { try { proxy.serve(); } catch (Exception ignored) { } });
+      try {
+        // One more than there are permits: the last must still be asked for its key.
+        for (int index = 0; index < 33; index++) {
+          Socket client = new Socket("127.0.0.1", proxy.port());
+          silent.add(client);
+          client.setSoTimeout(10_000);
+          MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
+          MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
+          require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 1,
+              "login " + (index + 1) + " was sent an encryption request, not refused");
+        }
+      } finally {
+        for (Socket client : silent) client.close();
+        serving.interrupt();
+      }
+    }
   }
 
   /**
