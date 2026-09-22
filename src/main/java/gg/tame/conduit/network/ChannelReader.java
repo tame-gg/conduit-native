@@ -32,6 +32,13 @@ final class ChannelReader extends InputStream {
   /** Enough for the largest frame a client sends in ordinary play, grown when one is not. */
   private static final int INITIAL_CAPACITY = 8192;
   private static final int SCRATCH_BYTES = 16384;
+  /**
+   * A buffer grown past this goes back to {@link #INITIAL_CAPACITY} once it is empty. Grown only, one
+   * large frame -- a modded registry sync, a batch of chunks -- held its size for the life of the
+   * connection, and a proxy full of players who had each once been sent one held all of them.
+   * Ordinary chunk traffic stays under it, so this is not a reallocation per chunk.
+   */
+  private static final int SHRINK_ABOVE = 256 * 1024;
 
   private final SocketChannel channel;
   private final ByteBuffer scratch = ByteBuffer.allocate(SCRATCH_BYTES);
@@ -149,6 +156,10 @@ final class ChannelReader extends InputStream {
     int count = Math.min(length, tail - head);
     System.arraycopy(buffer, head, destination, offset, count);
     head += count;
+    if (head == tail && buffer.length > SHRINK_ABOVE) {
+      buffer = new byte[INITIAL_CAPACITY];
+      head = tail = 0;
+    }
     return count;
   }
 

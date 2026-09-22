@@ -210,6 +210,8 @@ final class ChannelWriter extends OutputStream {
     if (sent == filled) {
       sent = filled = 0;
       stalledSince = 0;
+      // Back to its starting size once a burst has gone out: see ChannelReader's SHRINK_ABOVE.
+      if (pending.length > 256 * 1024) pending = new byte[8192];
       released();
       return;
     }
