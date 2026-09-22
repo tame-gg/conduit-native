@@ -146,6 +146,7 @@ public final class AllTests {
     BanWhitelistTests.run();
     BanMessageTests.run();
     BungeeCordChannelTests.run();
+    BungeeCordRegistrationTests.run();
     System.out.println("All Conduit foundation tests passed.");
   }
   private static void decodeFramesWithoutOverAllocation() {

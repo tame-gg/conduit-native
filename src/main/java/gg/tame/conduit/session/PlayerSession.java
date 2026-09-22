@@ -1719,6 +1719,24 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerSettingsChangedEvent(this));
   }
+  /**
+   * Tells the backend this connection listens on the BungeeCord channel, as a proxy that answers it.
+   *
+   * <p>A Paper or Spigot backend sends a plugin message only on a channel the connection has
+   * registered, and drops anything else without a word. A vanilla client never registers
+   * {@code bungeecord:main}, so without this every hub and queue plugin's request to the proxy was
+   * dropped on the backend and never reached Conduit. Sent after each backend join, since a
+   * registration belongs to one backend connection, and only while Conduit answers the channel.
+   */
+  private void announceProxyChannels() {
+    if (!runtime.configuration().ops().messaging().bungeeCordChannel()) return;
+    boolean legacy = clientProtocol < 393;
+    String channel = legacy ? gg.tame.conduit.messaging.BungeeCordMessages.LEGACY_CHANNEL
+        : gg.tame.conduit.messaging.BungeeCordMessages.MODERN_CHANNEL;
+    sendPluginMessageToServer(legacy ? gg.tame.conduit.modded.RegisteredChannels.LEGACY_REGISTER
+        : gg.tame.conduit.modded.RegisteredChannels.REGISTER, channel.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
   /** Tells a backend the channels the client announced; registration is per connection, not per player. */
   private void replayRegisteredChannels(BackendConnection target, ConnectionState state, ProtocolDefinition definition) {
     if (target == null || (state == ConnectionState.CONFIGURATION && !definition.hasConfiguration())) return;
@@ -2025,6 +2043,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // sends on the player's behalf, and it goes through the same translator that had no
     // world to translate it against until this packet arrived.
     replayClientInformation(current, ConnectionState.PLAY);
+    announceProxyChannels();
   }
   private ConnectionState brandState(ConnectionState backendState) {
     if (backendState == ConnectionState.PLAY) return ConnectionState.PLAY;
@@ -2392,6 +2411,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     firstConnected = null;
     loggedBackend = first.getName();
     gg.tame.conduit.log.ConduitLog.info(origin() + " joined backend '" + first.getName() + "'");
+    announceProxyChannels();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first));
   }
 
@@ -2632,6 +2652,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // be told in, and its Play state only exists after the commit.
       if (!backendDefinition.hasConfiguration()) replayRegisteredChannels(backend, ConnectionState.PLAY, backendDefinition);
       discard(previous);
+      // Held back with the Client Information replay while the new backend's Join Game is awaited.
+      if (!awaitingBackendJoinGame.holding()) announceProxyChannels();
       gg.tame.conduit.metrics.ConduitMetrics.current().serverSwitch(System.nanoTime() - started);
       if (targetView != null) {
         loggedBackend = targetView.getName();
