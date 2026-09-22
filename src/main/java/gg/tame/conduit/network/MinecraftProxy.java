@@ -54,6 +54,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class MinecraftProxy implements AutoCloseable {
   private static final int MAX_CONNECTIONS = 2048;
   private static final int MAX_CONCURRENT_AUTH = 32;
+  /**
+   * Connections the operating system may hold for the accept loop. Left to the JDK it is 50, and a
+   * network's worth of players rejoining at once after a restart overflowed it: the rest were
+   * dropped at the SYN and each waited out a TCP retransmit, a second or more, before trying again.
+   * The operating system caps it at its own maximum.
+   */
+  private static final int ACCEPT_BACKLOG = 1024;
   private static final int ENCRYPTION_RESPONSE_TIMEOUT_MS = 30_000;
   /** How long a login that has proved its key waits for a free permit before it is refused. */
   private static final long AUTH_PERMIT_WAIT_MS = 10_000;
@@ -95,7 +102,7 @@ public final class MinecraftProxy implements AutoCloseable {
   public MinecraftProxy(ConduitConfiguration configuration, PlayerAuthenticator authenticator, KeyPair rsaKeys,
                         Path pluginsDirectory, ServerSocketChannel listener) throws IOException {
     this.configuration = configuration; this.authenticator = authenticator; this.rsaKeys = rsaKeys;
-    this.forwarder = Forwarders.create(configuration); this.listener = listener; listener.bind(configuration.listener());
+    this.forwarder = Forwarders.create(configuration); this.listener = listener; listener.bind(configuration.listener(), ACCEPT_BACKLOG);
     Path configDir = pluginsDirectory.getParent() == null ? Path.of(".") : pluginsDirectory.getParent();
     this.runtime = new ConduitRuntime(configuration, pluginsDirectory, configDir);
     runtime.bindListener((java.net.InetSocketAddress) listener.getLocalAddress());
