@@ -71,8 +71,23 @@ public final class BackendHealthService implements AutoCloseable {
     drained.remove(key);
   }
 
+  /**
+   * Every server at once, and back when the slowest has answered or timed out. One after another, a
+   * round took a whole timeout per backend that was down, and every other backend's verdict waited
+   * behind it: three dead servers at the default timeout were a round of several seconds.
+   */
   public void probeOnce() {
-    for (BackendServer server : registry.all()) probe(server);
+    java.util.List<Thread> probes = new java.util.ArrayList<>();
+    for (BackendServer server : registry.all()) {
+      probes.add(gg.tame.conduit.network.SocketThreads.start(() -> {
+        try { probe(server); }
+        catch (RuntimeException failed) { ConduitLog.warn("Probing " + server.name() + " failed: " + failed); }
+      }));
+    }
+    for (Thread probe : probes) {
+      try { probe.join(); }
+      catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); return; }
+    }
   }
 
   /** Apply a probe outcome without network I/O (tests and injected results). */
