@@ -1736,14 +1736,24 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * {@code bungeecord:main}, so without this every hub and queue plugin's request to the proxy was
    * dropped on the backend and never reached Conduit. Sent after each backend join, since a
    * registration belongs to one backend connection, and only while Conduit answers the channel.
+   * The channels plugins listen on ({@code ConduitProxy#listenOnChannel}) go with it, for the same
+   * reason: without them a backend plugin never reaches its proxy half.
    */
   private void announceProxyChannels() {
-    if (!runtime.configuration().ops().messaging().bungeeCordChannel()) return;
-    boolean legacy = clientProtocol < 393;
-    String channel = legacy ? gg.tame.conduit.messaging.BungeeCordMessages.LEGACY_CHANNEL
-        : gg.tame.conduit.messaging.BungeeCordMessages.MODERN_CHANNEL;
-    sendPluginMessageToServer(legacy ? gg.tame.conduit.modded.RegisteredChannels.LEGACY_REGISTER
-        : gg.tame.conduit.modded.RegisteredChannels.REGISTER, channel.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    java.util.List<String> channels = new java.util.ArrayList<>(runtime.proxyChannels());
+    if (runtime.configuration().ops().messaging().bungeeCordChannel()) {
+      channels.add(clientProtocol < 393 ? gg.tame.conduit.messaging.BungeeCordMessages.LEGACY_CHANNEL
+          : gg.tame.conduit.messaging.BungeeCordMessages.MODERN_CHANNEL);
+    }
+    announceProxyChannels(channels);
+  }
+
+  /** Registers these channels with the backend the player is on now, in the client's release's names. */
+  public void announceProxyChannels(java.util.List<String> channels) {
+    if (channels.isEmpty()) return;
+    String register = clientProtocol < 393 ? gg.tame.conduit.modded.RegisteredChannels.LEGACY_REGISTER
+        : gg.tame.conduit.modded.RegisteredChannels.REGISTER;
+    sendPluginMessageToServer(register, String.join("\0", channels).getBytes(java.nio.charset.StandardCharsets.UTF_8));
   }
 
   /** Tells a backend the channels the client announced; registration is per connection, not per player. */

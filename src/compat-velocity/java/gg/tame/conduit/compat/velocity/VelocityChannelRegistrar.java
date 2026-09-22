@@ -20,9 +20,14 @@ final class VelocityChannelRegistrar implements ChannelRegistrar {
   private record Registration(ChannelIdentifier identifier, Set<VelocityPluginHost.Container> owners, boolean unowned) {}
   private static final StackWalker WALKER = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
   private final VelocityPluginHost plugins;
+  /** Read when a channel comes or goes, since the environment finishes building after this does. */
+  private final VelocityEnvironment environment;
   private final ConcurrentHashMap<String, Registration> channels = new ConcurrentHashMap<>();
 
-  VelocityChannelRegistrar(VelocityPluginHost plugins) { this.plugins = plugins; }
+  VelocityChannelRegistrar(VelocityEnvironment environment) {
+    this.environment = environment;
+    this.plugins = environment.plugins;
+  }
 
   @Override public void register(ChannelIdentifier... identifiers) {
     VelocityPluginHost.Container caller = caller();
@@ -32,10 +37,15 @@ final class VelocityChannelRegistrar implements ChannelRegistrar {
         if (caller != null) owners.add(caller);
         return new Registration(identifier, Set.copyOf(owners), caller == null || known != null && known.unowned);
       });
+      // Registering is what lets a backend's messages on the channel reach the plugin, so every
+      // backend is told the proxy listens on it: Paper drops a message on a channel nobody registered.
+      environment.conduit.listenOnChannel(identifier.getId());
     }
   }
   @Override public void unregister(ChannelIdentifier... identifiers) {
-    for (ChannelIdentifier identifier : identifiers) channels.remove(identifier.getId());
+    for (ChannelIdentifier identifier : identifiers) {
+      if (channels.remove(identifier.getId()) != null) environment.conduit.stopListeningOnChannel(identifier.getId());
+    }
   }
   /** The identifier a plugin registered for {@code channel}, or null when none did. */
   ChannelIdentifier find(String channel) {
@@ -51,6 +61,7 @@ final class VelocityChannelRegistrar implements ChannelRegistrar {
         owners.remove(plugin);
         return owners.isEmpty() && !registration.unowned ? null : new Registration(registration.identifier, Set.copyOf(owners), registration.unowned);
       });
+      if (!channels.containsKey(id)) environment.conduit.stopListeningOnChannel(id);
     }
   }
   /** The plugin whose class is nearest the top of the calling stack, or null when no plugin's is on it. */

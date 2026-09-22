@@ -63,6 +63,16 @@ public interface ConduitProxy {
   default void shutdown(Text reason) { shutdown(); }
   boolean shuttingDown();
   /**
+   * Tells every backend a player joins that the proxy listens on this plugin channel, and tells the
+   * backends players are on now. A Paper or Spigot backend sends a plugin message only on a channel
+   * the connection registered, so a plugin that wants to hear its backend half on a channel of its
+   * own calls this first; without it the backend drops the message and {@code PluginMessageEvent}
+   * never fires. This default does nothing.
+   */
+  default void listenOnChannel(String channel) { }
+  /** Undoes {@link #listenOnChannel} for backends joined from now on. This default does nothing. */
+  default void stopListeningOnChannel(String channel) { }
+  /**
    * The server-list answer as the operator configured it ({@code [status]} in conduit.toml), for a
    * plugin that wants to start from it. What a given client is actually sent can differ: see
    * {@code ServerListPingEvent}. This default answers with Conduit's built-in defaults.

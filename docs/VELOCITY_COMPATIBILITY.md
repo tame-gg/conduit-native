@@ -367,7 +367,7 @@ plugin's own events. Verified by VCT: priority order, `EventTask.async`, `Contin
 | API | Status | Verified by |
 |---|---|---|
 | `Scheduler.buildTask` (Runnable or Consumer), `delay`, `repeat`, `clearDelay`, `clearRepeat`, `schedule`, `ScheduledTask.cancel`, `status`, `tasksByPlugin`. Conduit's scheduler keeps the time, so tasks die with the plugin; bodies run on adapter threads, and a repeating task skips a run instead of overlapping itself. | Supported | VCT |
-| `ChannelRegistrar.register/unregister` (`MinecraftChannelIdentifier`, `LegacyChannelIdentifier`). The registering plugin is found from its code on the calling stack, and when Conduit disables it its channels are unregistered, unless another enabled plugin registered them too. | Supported | VCT, VLT |
+| `ChannelRegistrar.register/unregister` (`MinecraftChannelIdentifier`, `LegacyChannelIdentifier`). The registering plugin is found from its code on the calling stack, and when Conduit disables it its channels are unregistered, unless another enabled plugin registered them too. Every backend a player joins is told the connection listens on each registered channel, as is the backend a player is on when one is registered, since a Paper backend sends only on registered channels. | Supported | VCT, VLT, `ProxyChannelRegistrationTests`, ajQueue |
 | `PluginManager`: `fromInstance`, `getPlugin`, `getPlugins` (Velocity plugins only), `isLoaded`, `addToClasspath` | Supported | VCT |
 | `PluginContainer`: `getDescription`, `getInstance`, `getExecutorService` (shut down at disable) | Supported | VCT |
 | `ConsoleCommandSource`: has every permission; messages go to Conduit's console | Supported | VCT (runs a command as the console) |

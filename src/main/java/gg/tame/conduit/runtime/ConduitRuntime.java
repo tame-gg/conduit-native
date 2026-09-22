@@ -159,6 +159,20 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   @Override public PluginManager plugins() { return plugins; }
   @Override public Scheduler scheduler() { return scheduler; }
   @Override public PermissionProvider permissions() { return permissions.provider(); }
+  /** The channels plugins listen on, announced to every backend alongside Conduit's own. */
+  private final java.util.Set<String> proxyChannels = java.util.concurrent.ConcurrentHashMap.newKeySet();
+  @Override public void listenOnChannel(String channel) {
+    if (channel == null || channel.isBlank()) throw new IllegalArgumentException("a channel is required");
+    if (!proxyChannels.add(channel)) return;
+    // The players already on a backend joined before this channel existed, so their backends are
+    // told now; everyone who joins a backend later is told with the rest.
+    for (Player player : players().all()) {
+      if (player instanceof gg.tame.conduit.session.PlayerSession session) session.announceProxyChannels(java.util.List.of(channel));
+    }
+  }
+  @Override public void stopListeningOnChannel(String channel) { if (channel != null) proxyChannels.remove(channel); }
+  /** What plugins listen on, for a backend a player has just joined. */
+  public java.util.Set<String> proxyChannels() { return java.util.Set.copyOf(proxyChannels); }
   @Override public void setPermissionProvider(gg.tame.conduit.api.plugin.Plugin owner, PermissionProvider provider) {
     synchronized (this) {
       if (owner == null || provider == null) throw new IllegalArgumentException("owner and provider are required");
