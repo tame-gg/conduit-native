@@ -63,7 +63,7 @@ public final class ViaUpdater {
     return override.endsWith("/") ? override.substring(0, override.length() - 1) : override.strip();
   }
   /** Names Conduit and nothing else: no user, no machine, no path. */
-  private static final String USER_AGENT = "Conduit/0.9.5 (+https://github.com/tame-gg/conduit-native)";
+  private static final String USER_AGENT = "Conduit/0.9.6 (+https://github.com/tame-gg/conduit-native)";
   /** Where a superseded set is moved to, rather than deleted. */
   private static final String SUPERSEDED = "superseded";
 

@@ -13,7 +13,7 @@ $repo = Split-Path -Parent $PSScriptRoot
 $outDir = if ([System.IO.Path]::IsPathRooted($Out)) { $Out } else { Join-Path $repo $Out }
 $classes = Join-Path $repo "out"
 $lib = Join-Path $repo "lib"
-$version = "0.9.5"
+$version = "0.9.6"
 
 if (-not $SkipBuild) {
   Write-Host "building and testing..."
