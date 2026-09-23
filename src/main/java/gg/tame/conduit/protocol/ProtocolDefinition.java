@@ -771,7 +771,10 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_SOUND_EFFECT, 0x61,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x62,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x63,
-      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x16
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x16,
+      // Play Keep Alive, from minecraft-data's 1.20.1 protocol, so Player.ping() is measured here too.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE, 0x23,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE, 0x12
   );
   private static final ProtocolDefinition V26_2 = define(ProtocolVersion.MINECRAFT_26_2,
       new ProtocolCapabilities(true, true, true, true, true, true, true, true),
@@ -799,6 +802,10 @@ public final class ProtocolDefinition {
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_DISCONNECT, 2,
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KEEP_ALIVE, 4,
       ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_KEEP_ALIVE, 4,
+      // Play Keep Alive: 26.1's published ids, like every other Play id in this table. Without
+      // these Player.ping() stays -1 for a 26.2 client, since the latency clock never sees one.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE, 0x2C,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE, 0x1C,
       // Transfer: 26.1's published ids. Every other 26.2 id here equals 26.1's; these two were not
       // checked against a 26.2 list of their own.
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_TRANSFER, 0x0B,

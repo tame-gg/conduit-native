@@ -538,7 +538,10 @@ Known gaps:
   from. It stays a catalog entry.
 - **Protocol 776 (26.2)** and **763 (1.20.1)** have thin declared tables (38 and
   21 packets). 26.2 has no published packet data yet, so it cannot be enriched
-  by derivation the way the rest of the range was.
+  by derivation the way the rest of the range was. Both name the Play Keep
+  Alive (26.2 with 26.1's ids, 1.20.1 with minecraft-data's), since without it
+  `Player.ping()` was -1 for the whole session; `PlayerLatencyTests` checks
+  every codec for it.
 - **393 and 404 have verified pairings.** Codec status for 404 remains
   `DERIVED` (inherited packet ids); the *pairing* axes are
   `DIRECT_VERIFIED` / `TRANSLATED_VERIFIED`.

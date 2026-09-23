@@ -27,8 +27,24 @@ public final class PlayerLatencyTests {
   public static void main(String[] arguments) throws Exception { run(); }
 
   public static void run() throws Exception {
+    everyCodecNamesThePlayKeepAlive();
     theKeepAliveRoundTripIsThePlayersPing();
     System.out.println("PlayerLatencyTests OK");
+  }
+
+  /**
+   * The clock can only measure a keep-alive it can recognise. 26.2 and 1.20.1 once had declared
+   * tables without one, and every player on them was "unknown" for the whole session.
+   */
+  private static void everyCodecNamesThePlayKeepAlive() {
+    for (var entry : gg.tame.conduit.protocol.ProtocolDefinition.all().entrySet()) {
+      var codec = entry.getValue();
+      for (var direction : gg.tame.conduit.protocol.PacketDirection.values()) {
+        require(codec.defines(gg.tame.conduit.protocol.ConnectionState.PLAY, direction,
+                gg.tame.conduit.protocol.PacketKind.PLAY_KEEP_ALIVE),
+            "protocol " + entry.getKey() + " (" + codec.version().displayName() + ") has no " + direction + " Play keep-alive");
+      }
+    }
   }
 
   /** 1.8.9 keep-alive: id 0x00 both ways, with a VarInt body. */
