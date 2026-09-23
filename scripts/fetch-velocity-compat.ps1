@@ -21,7 +21,7 @@ if (-not $LibDir) { $LibDir = Join-Path $root "lib" }
 New-Item -ItemType Directory -Path $LibDir -Force | Out-Null
 
 # Downloads name Conduit's development scripts and nothing else: no user, machine or path.
-$userAgent = "Conduit-Development/0.9.6-SNAPSHOT"
+$userAgent = "Conduit-Development/0.9.7-SNAPSHOT"
 # Tried in order. Central serves everything but velocity-api and its Brigadier fork, which Velocity
 # publishes to Paper's repository alone. The hash decides whether an answer is the right file, so a
 # repository that serves something else at the same path falls through to the next one.

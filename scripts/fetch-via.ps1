@@ -8,7 +8,7 @@ $lib = Join-Path $root "lib\via"
 New-Item -ItemType Directory -Force -Path $lib | Out-Null
 
 # Downloads name Conduit's development scripts and nothing else: no user, machine or path.
-$userAgent = "Conduit-Development/0.9.6-SNAPSHOT"
+$userAgent = "Conduit-Development/0.9.7-SNAPSHOT"
 $viaRepo = "https://repo.viaversion.com/everything"
 $maven = "https://repo1.maven.org/maven2"
 
