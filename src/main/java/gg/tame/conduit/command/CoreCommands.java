@@ -355,6 +355,10 @@ public final class CoreCommands {
       Messages.failure(source, api.username() + " cannot be banned by another player.");
       return;
     }
+    if (onlineTarget.isEmpty() && protectedOffline(source, runtime, target, null)) {
+      Messages.failure(source, target + " cannot be banned by another player.");
+      return;
+    }
     // An online player's account is banned alongside their name, so a name change does not undo
     // it. An offline one's is asked of Mojang: a name no account has is refused, and a real one's
     // account is banned too. Only where Conduit authenticates with Mojang, since an offline-mode
@@ -377,8 +381,14 @@ public final class CoreCommands {
     gg.tame.conduit.network.SocketThreads.start(() -> {
       var result = gg.tame.conduit.auth.MojangProfiles.lookup(target);
       switch (result) {
-        case gg.tame.conduit.auth.MojangProfiles.Result.Found found ->
+        case gg.tame.conduit.auth.MojangProfiles.Result.Found found -> {
+          // Asked again by account: a staff member who changed their name is still the same one.
+          if (protectedOffline(source, runtime, found.name(), found.account())) {
+            Messages.failure(source, found.name() + " cannot be banned by another player.");
+          } else {
             banName(source, players, bans, screen, found.name(), reason, actor, until, Optional.of(found.account()), null);
+          }
+        }
         case gg.tame.conduit.auth.MojangProfiles.Result.NotFound notFound ->
             Messages.failure(source, target + " is not a Minecraft account, so nobody was banned.");
         case gg.tame.conduit.auth.MojangProfiles.Result.Unavailable unavailable ->
@@ -415,12 +425,23 @@ public final class CoreCommands {
    * Whether {@code target} is out of {@code source}'s reach: a player may not kick or ban another who
    * holds that same power, or {@link Permissions#PUNISH_EXEMPT}, so staff cannot turn it on each
    * other. The console is never stopped, and nor is a player acting on themselves. Only an online
-   * player can be asked; a ban by name on someone offline goes ahead.
+   * player can be asked this; someone offline is {@link #protectedOffline} instead.
    */
   private static boolean protectedFrom(CommandSource source, gg.tame.conduit.api.player.Player target, String power) {
     if (!(source instanceof gg.tame.conduit.api.player.Player actor)) return false;
     if (actor.uniqueId().equals(target.uniqueId())) return false;
     return Permissions.allows(target, power) || Permissions.allows(target, Permissions.PUNISH_EXEMPT);
+  }
+
+  /**
+   * The same question about someone offline, whom the provider cannot be asked about: what they held
+   * when last seen, or the {@code [permissions]} operators, which hold every node without logging in.
+   */
+  private static boolean protectedOffline(CommandSource source, ConduitRuntime runtime, String username, java.util.UUID account) {
+    if (!(source instanceof gg.tame.conduit.api.player.Player actor)) return false;
+    if (actor.username().equalsIgnoreCase(username) || actor.uniqueId().equals(account)) return false;
+    return runtime.protectedPlayers().contains(username, account)
+        || runtime.configuration().ops().permissions().isOperator(username, account);
   }
 
   /** {@code /gunban <player|address>}, which lifts a ban of any kind held against that word. */

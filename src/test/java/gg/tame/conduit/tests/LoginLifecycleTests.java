@@ -143,7 +143,8 @@ public final class LoginLifecycleTests {
       refusedByMaintenance(proxy, "Guest");
       require(table.asked.stream().anyMatch(line -> line.startsWith("Staff:")) && table.asked.stream().allMatch(line -> line.endsWith(":loaded")),
           "the provider was asked only about players it had loaded in PlayerSetupEvent, got " + table.asked);
-      require(table.asked.stream().noneMatch(line -> line.startsWith("Listed:")), "the allowlist is decided without asking");
+      // Only about the bypass: who is out of /gban's reach is noted after every login, that one included.
+      require(table.asked.stream().noneMatch(line -> line.startsWith("Listed:" + BYPASS)), "the allowlist is decided without asking");
       require(waitFor(() -> proxy.recorder.of(PlayerDisconnectEvent.class).size() == 4, 10_000), "everyone left");
       require(waitFor(table.loaded::isEmpty, 10_000), "the plugin released every player, the refused one included, left " + table.loaded);
       require(lobby.logins.get() == 3, "only the three let through reached a backend");

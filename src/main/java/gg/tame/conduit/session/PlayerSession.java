@@ -686,6 +686,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     long joined = System.nanoTime();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
     runtime.revealNodes(this);
+    runtime.noteProtection(this);
     // The client is in Configuration from its Login Success on; the reader below relays the server's
     // phase, up to the Finish Configuration that waits for what plugins start here. A phase plugins
     // hear about ends before the player counts as on the server, as the Velocity events have it.
@@ -848,6 +849,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     gg.tame.conduit.log.ConduitLog.info(last == null
         ? origin() + " disconnected from the proxy"
         : origin() + " left backend '" + last + "' (disconnected from the proxy)");
+    // Before plugins hear they left: a Velocity permission function is dropped on that event.
+    if (status == gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN) runtime.noteProtection(this);
     try {
       if (displaced && status != gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.SUCCESSFUL_LOGIN) {
         status = gg.tame.conduit.api.event.player.PlayerDisconnectEvent.LoginStatus.CONFLICTING_LOGIN;

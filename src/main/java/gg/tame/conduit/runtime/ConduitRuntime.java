@@ -51,6 +51,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final MaintenanceService maintenance;
   private final gg.tame.conduit.ops.BanList bans;
   private final gg.tame.conduit.ops.Whitelist whitelist;
+  private final gg.tame.conduit.ops.ProtectedPlayers protectedPlayers;
   private final gg.tame.conduit.messaging.BungeeCordMessages bungeeCord =
       new gg.tame.conduit.messaging.BungeeCordMessages(this);
   private final VersionGate versionGate;
@@ -92,6 +93,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     // written the moment a command changes them, so nothing here is touched by a reload.
     this.bans = new gg.tame.conduit.ops.BanList(this.configDirectory);
     this.whitelist = new gg.tame.conduit.ops.Whitelist(this.configDirectory);
+    this.protectedPlayers = new gg.tame.conduit.ops.ProtectedPlayers(this.configDirectory);
     this.versionGate = new VersionGate(configuration.versions());
     this.gracefulShutdown = new GracefulShutdown(configuration.shutdown());
     this.security = new SecurityService(configuration.security());
@@ -118,6 +120,23 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   public MaintenanceService maintenance() { return maintenance; }
   public gg.tame.conduit.ops.BanList bans() { return bans; }
   public gg.tame.conduit.ops.Whitelist whitelist() { return whitelist; }
+  public gg.tame.conduit.ops.ProtectedPlayers protectedPlayers() { return protectedPlayers; }
+  /**
+   * Records whether {@code player} is out of other staff's reach, for a {@code /gban} made while they
+   * are offline, when the provider cannot be asked about them. Called at login and as they leave, so
+   * a node granted or taken mid-session is seen by the time it could matter. A provider that fails is
+   * left unanswered: what was last recorded stands.
+   */
+  public void noteProtection(Player player) {
+    try {
+      boolean held = gg.tame.conduit.command.Permissions.allows(player, gg.tame.conduit.command.Permissions.GKICK)
+          || gg.tame.conduit.command.Permissions.allows(player, gg.tame.conduit.command.Permissions.GBAN)
+          || gg.tame.conduit.command.Permissions.allows(player, gg.tame.conduit.command.Permissions.PUNISH_EXEMPT);
+      protectedPlayers.remember(player.uniqueId(), player.username(), held);
+    } catch (RuntimeException | LinkageError failed) {
+      gg.tame.conduit.log.ConduitLog.warn("permission provider failed deciding whether " + player.username() + " is protected from /gban: " + failed);
+    }
+  }
   /** The channel backend plugins reach the proxy on; see BungeeCordMessages. */
   public gg.tame.conduit.messaging.BungeeCordMessages bungeeCord() { return bungeeCord; }
   public VersionGate versionGate() { return versionGate; }

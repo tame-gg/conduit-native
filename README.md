@@ -654,7 +654,10 @@ Velocity layer). The default grants a player no node, except that the operators 
 installed; the console holds every node.
 
 A player may not `/gkick` or `/gban` another player who holds that same command's node, or
-`conduit.punish.exempt`, so staff cannot turn those on each other. The console always may.
+`conduit.punish.exempt`, so staff cannot turn those on each other. The console always may. A
+permissions plugin answers only for the players it has loaded, so who held those nodes is recorded
+at each login and leave in `protected-players.txt`, and `/gban` on someone offline is refused by that
+record (or by `[permissions] operators`) rather than going ahead because nobody could be asked.
 
 Staff are told when anyone is kicked, banned or unbanned (`[Staff] Kyle banned Griefer permanently: griefing`):
 every player who may kick or ban, and anyone given `conduit.notify.moderation` to watch without acting.

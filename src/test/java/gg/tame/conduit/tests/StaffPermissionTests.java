@@ -99,6 +99,16 @@ public final class StaffPermissionTests {
         require(proxy.runtime.bans().find("mod", null, null).isEmpty(), "nor ban another who may ban");
         require(proxy.runtime.player("vip").isPresent(), "nor kick a player holding conduit.punish.exempt");
 
+        // Offline, the provider cannot be asked about vip; what they held when they left answers.
+        vip.close();
+        require(waitFor(() -> proxy.runtime.player("vip").isEmpty(), 10_000), "vip left");
+        proxy.runtime.commands().execute(staffPlayer, "gban vip");
+        require(proxy.runtime.bans().find("vip", null, null).isEmpty(), "nor ban an exempt player who is offline");
+        proxy.runtime.commands().execute(staffPlayer, "gban guest2");
+        require(proxy.runtime.bans().find("guest2", null, null).isPresent(), "but may ban an offline player without the power");
+        proxy.runtime.commands().execute(proxy.runtime.console(), "gban vip");
+        require(proxy.runtime.bans().find("vip", null, null).isPresent(), "the console may ban anyone offline");
+
         proxy.runtime.commands().execute(proxy.runtime.console(), "gkick mod");
         require(waitFor(() -> proxy.runtime.player("mod").isEmpty(), 10_000), "the console may kick anyone");
       }
