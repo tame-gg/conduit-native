@@ -160,6 +160,8 @@ public final class LoginLifecycleTests {
         require(waitFor(() -> story(proxy, "Listed").contains("PlayerPostLoginEvent"), 10_000), "the allowlist still works");
       }
 
+      // Listed's leave asks the provider in force who is out of /gban's reach; let it go before the next one arrives.
+      require(proxy.recorder.await(PlayerDisconnectEvent.class, 2), "Staff and Listed left");
       // The plugin that granted the bypass is gone, and Conduit's default is back in its place.
       Plugin perms = new TestPlugin("perms");
       TablePermissions table = new TablePermissions(Map.of("Keeper", Set.of(BYPASS)));
