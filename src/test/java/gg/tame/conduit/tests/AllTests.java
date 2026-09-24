@@ -93,6 +93,7 @@ public final class AllTests {
     RecipeListRepairTests.run();
     ViaIntegrationTests.run();
     ViaSwitchBridgeTests.run();
+    ViaJoinGameOnlineModeTests.run();
     CompatibilityProbeTests.run();
     Protocol777Tests.run();
     SwitchJoinGateTests.run();

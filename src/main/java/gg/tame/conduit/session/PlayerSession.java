@@ -2703,6 +2703,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         ? ConnectionState.CLOSED
         : clientState.state();
     byte[] outbound = ProtocolProfileAdapter.backendToClient(protocol, adaptAs, packet, profile());
+    // Join Game's online-mode flag is the exception: Via passes on the offline backend's false, and a
+    // 26.x client then draws no player-list faces. The rewrite checks the id against the client's own
+    // table and touches only the second-to-last byte after both trailing bytes read as booleans.
+    if (adaptAs == ConnectionState.CLOSED && clientState.state() == ConnectionState.PLAY) {
+      outbound = gg.tame.conduit.protocol.JoinGame.markOnlineMode(protocol, outbound, profile());
+    }
     if (clientState.state() == ConnectionState.LOGIN) rememberClientUuid(outbound);
     // Last stop before the socket: a recipe list the client cannot parse costs the whole session,
     // and a correct one passes through this untouched.

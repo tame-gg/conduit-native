@@ -16,7 +16,8 @@ import java.io.IOException;
  *
  * <p>Conduit performed the Mojang session handshake itself, so for an authenticated profile the
  * flag is true from the client's point of view; the backend simply has no way to know that. It is
- * never set for an unauthenticated (offline-mode) session.
+ * never set for an unauthenticated (offline-mode) session. The rewrite also runs on the Via path,
+ * after translation, against the client's own packet table.
  *
  * <p>{@code onlineMode} and {@code enforcesSecureChat} are the last two fields the client writes,
  * both single-byte booleans, so the flag is the second-to-last byte. That avoids decoding
