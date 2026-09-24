@@ -1,0 +1,73 @@
+# Builds and tests every push and pull request. It never publishes: releases are cut by hand
+# (scripts/release-check.ps1, then gh release create). The jar it builds is kept as a workflow
+# artifact for trying a change, not as a release.
+#
+# Windows, because the build scripts are PowerShell and the JDK-8334574 workaround
+# (network/SocketThreads) is Windows behaviour that the suite has to run against.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    # The full suite takes about 13 minutes on a desktop; a hosted runner is slower.
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@v7
+
+      # 25 runs the scripts, as it does locally. 21 is what build.gradle.kts asks its toolchain for.
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: |
+            21
+            25
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      # lib/ holds the Velocity plugin runtime (config/velocity-runtime.lock) and lib/via the Via set
+      # (scripts/fetch-via.ps1, mirrored in via-bundled.properties). No restore-keys: test.ps1 puts every
+      # jar in lib/via on the class path, so a cache from an older pin would leave two Vias there.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            lib/*.jar
+            lib/via/*.jar
+          key: lib-${{ hashFiles('config/velocity-runtime.lock', 'scripts/fetch-via.ps1', 'src/main/resources/gg/tame/conduit/via-bundled.properties') }}
+
+      # test.ps1 compiles with plain javac and never goes through Gradle, so a Gradle-only break needs this.
+      - name: Gradle compile
+        run: .\gradlew.bat compileJava --no-daemon "-Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64"
+
+      # Windows PowerShell's download progress bar slows Invoke-WebRequest to a crawl.
+      - name: Tests (AllTests)
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          & .\scripts\test.ps1
+
+      # -SkipBuild: the classes and tests are the ones just run. It still starts the packaged jar in an
+      # empty folder (ReleaseJarTests), and writes Conduit's Corresponding Source into dist/source.
+      - name: Package jar
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          & .\scripts\build-jar.ps1 -SkipBuild
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: conduit-${{ github.sha }}
+          path: dist/
+          retention-days: 14
