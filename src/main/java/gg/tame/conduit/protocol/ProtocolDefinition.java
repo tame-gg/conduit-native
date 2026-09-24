@@ -38,6 +38,8 @@ public final class ProtocolDefinition {
   public String source() { return source; }
   public boolean hasConfiguration() { return capabilities.configurationPhase(); }
   public boolean loginShouldAuthenticate() { return capabilities.loginShouldAuthenticate(); }
+  /** 1.7 prefixes the login encryption byte arrays with a short; 1.8 (47) switched to VarInts. */
+  public boolean shortLoginByteArrays() { return version.number() < 47; }
   public boolean knownPacks() { return capabilities.knownPacks(); }
   public int id(ConnectionState state, PacketDirection direction, PacketKind kind) {
     int id = lookup(state, direction, kind);
@@ -318,7 +320,7 @@ public final class ProtocolDefinition {
   );
   /** Protocol 766 = Minecraft 1.20.5/1.20.6. IDs from public PrismarineJS minecraft-data. */
   private static final ProtocolDefinition V1_20_5 = define(ProtocolVersion.MINECRAFT_1_20_5,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       ConnectionState.AWAITING_HANDSHAKE, PacketDirection.CLIENT_TO_SERVER, PacketKind.HANDSHAKE, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_REQUEST, 0,
       ConnectionState.STATUS, PacketDirection.CLIENT_TO_SERVER, PacketKind.STATUS_PING, 1,

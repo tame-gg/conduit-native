@@ -21,4 +21,8 @@ public final class MinecraftOutput {
   public static void bytes(DataOutput output, byte[] value) throws IOException {
     varInt(output, value.length); output.write(value);
   }
+  /** 1.7 login byte arrays: a big-endian short length instead of a VarInt. */
+  public static void shortBytes(DataOutput output, byte[] value) throws IOException {
+    output.writeShort(value.length); output.write(value);
+  }
 }

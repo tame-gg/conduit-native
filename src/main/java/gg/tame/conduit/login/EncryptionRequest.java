@@ -16,7 +16,7 @@ import java.security.PublicKey;
 
 /**
  * Clientbound login encryption request ({@code minecraft:hello}).
- * Protocol 776 adds Should Authenticate after the verify token; 765 does not.
+ * Protocol 766 (1.20.5) adds Should Authenticate after the verify token; 765 does not.
  */
 public record EncryptionRequest(String serverId, byte[] publicKey, byte[] verifyToken, boolean shouldAuthenticate) {
   public byte[] encode(ProtocolDefinition protocol) throws IOException {
@@ -24,8 +24,13 @@ public record EncryptionRequest(String serverId, byte[] publicKey, byte[] verify
     try (DataOutputStream output = new DataOutputStream(bytes)) {
       MinecraftOutput.varInt(output, protocol.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST));
       MinecraftOutput.string(output, serverId);
-      MinecraftOutput.bytes(output, publicKey);
-      MinecraftOutput.bytes(output, verifyToken);
+      if (protocol.shortLoginByteArrays()) {
+        MinecraftOutput.shortBytes(output, publicKey);
+        MinecraftOutput.shortBytes(output, verifyToken);
+      } else {
+        MinecraftOutput.bytes(output, publicKey);
+        MinecraftOutput.bytes(output, verifyToken);
+      }
       if (protocol.loginShouldAuthenticate()) output.writeBoolean(shouldAuthenticate);
     }
     return bytes.toByteArray();
@@ -37,8 +42,9 @@ public record EncryptionRequest(String serverId, byte[] publicKey, byte[] verify
         throw new IOException("expected encryption request");
       }
       String serverId = MinecraftInput.string(input, 20);
-      byte[] publicKey = MinecraftInput.bytes(input, 1024);
-      byte[] verifyToken = MinecraftInput.bytes(input, 32);
+      boolean legacy = protocol.shortLoginByteArrays();
+      byte[] publicKey = legacy ? MinecraftInput.shortBytes(input, 1024) : MinecraftInput.bytes(input, 1024);
+      byte[] verifyToken = legacy ? MinecraftInput.shortBytes(input, 32) : MinecraftInput.bytes(input, 32);
       boolean shouldAuthenticate = false;
       if (protocol.loginShouldAuthenticate()) {
         if (input.available() < 1) throw new IOException("truncated encryption request: missing should-authenticate");

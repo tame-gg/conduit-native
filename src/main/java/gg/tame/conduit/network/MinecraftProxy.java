@@ -648,7 +648,7 @@ public final class MinecraftProxy implements AutoCloseable {
     try { response = transport.read(configuration.maxFrameBytes()); }
     catch (IOException exception) { throw new AuthenticationException("missing encryption response", exception); }
     byte[] secret;
-    try { secret = handshake.sharedSecret(protocol, response); }
+    try { secret = handshake.sharedSecret(protocol, response, pipeline.profileKey()); }
     catch (AuthenticationException exception) { throw exception; }
     catch (Exception exception) { throw new AuthenticationException("invalid encryption response", exception); }
     transport.enableEncryption(secret);

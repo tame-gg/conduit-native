@@ -810,7 +810,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21,
       765,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21; capabilities inherited from 1.20.4",
       List.of(
@@ -906,7 +906,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_3 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_3,
       767,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.3; capabilities inherited from 1.21",
       List.of(
@@ -979,7 +979,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_4 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_4,
       768,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.4; capabilities inherited from 1.21.3",
       List.of(
@@ -991,7 +991,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_5 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_5,
       769,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.5; capabilities inherited from 1.21.4",
       List.of(
@@ -1054,7 +1054,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_6 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_6,
       770,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.6; capabilities inherited from 1.21.5",
       List.of(
@@ -1081,7 +1081,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_8 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_8,
       771,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.8; capabilities inherited from 1.21.6",
       List.of(
@@ -1091,7 +1091,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_10 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_10,
       772,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.10; capabilities inherited from 1.21.8",
       List.of(
@@ -1148,7 +1148,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V1_21_11 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_1_21_11,
       773,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 1.21.11; capabilities inherited from 1.21.10",
       List.of(
@@ -1158,7 +1158,7 @@ public final class ProtocolRevisions {
   public static final ProtocolRevision V26_1 = new ProtocolRevision(
       ProtocolVersion.MINECRAFT_26_1,
       774,
-      new ProtocolCapabilities(true, false, true, false, true, true, true, true),
+      new ProtocolCapabilities(true, true, true, false, true, true, true, true),
       CodecStatus.DERIVED,
       "published packet ids for 26.1; capabilities inherited from 1.21.11",
       List.of(

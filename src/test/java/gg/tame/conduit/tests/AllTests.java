@@ -491,10 +491,61 @@ public final class AllTests {
     String hash = gg.tame.conduit.crypto.ServerHash.of("", secret, keys.getPublic());
     require(hash.equals(gg.tame.conduit.crypto.ServerHash.of("", secret, keys.getPublic())), "server hash must be deterministic");
   }
+  /** 1.7 short-prefixed arrays, and the 1.19-1.19.2 response that signs the token instead of encrypting it. */
+  private static void legacyAndSignedEncryption() throws Exception {
+    java.security.KeyPair proxyKeys = gg.tame.conduit.crypto.RsaKeys.generate();
+    ProtocolDefinition v5 = ProtocolDefinition.forVersion(5);
+    gg.tame.conduit.login.EncryptionHandshake legacy = new gg.tame.conduit.login.EncryptionHandshake(proxyKeys);
+    byte[] hello = legacy.request(v5).encode(v5);
+    int keyLength = proxyKeys.getPublic().getEncoded().length;
+    require(hello[0] == 1 && hello[1] == 0 && (hello[2] & 0xff) == (keyLength >> 8) && (hello[3] & 0xff) == (keyLength & 0xff), "1.7 hello key length is a short");
+    byte[] secret = new byte[16];
+    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
+    java.io.DataOutputStream out = new java.io.DataOutputStream(bytes);
+    out.writeByte(1);
+    gg.tame.conduit.protocol.MinecraftOutput.shortBytes(out, gg.tame.conduit.crypto.RsaKeys.encrypt(proxyKeys.getPublic(), secret));
+    gg.tame.conduit.protocol.MinecraftOutput.shortBytes(out, gg.tame.conduit.crypto.RsaKeys.encrypt(proxyKeys.getPublic(), legacy.request(v5).verifyToken()));
+    require(legacy.sharedSecret(v5, bytes.toByteArray()).length == 16, "1.7 response with short lengths");
+
+    ProtocolDefinition v760 = ProtocolDefinition.forVersion(760);
+    java.security.KeyPair playerKeys = gg.tame.conduit.crypto.RsaKeys.generate();
+    gg.tame.conduit.login.EncryptionHandshake signed = new gg.tame.conduit.login.EncryptionHandshake(proxyKeys);
+    byte[] token = signed.request(v760).verifyToken();
+    long salt = 0x1234_5678_9abc_def0L;
+    java.security.Signature signer = java.security.Signature.getInstance("SHA256withRSA");
+    signer.initSign(playerKeys.getPrivate());
+    signer.update(token);
+    signer.update(java.nio.ByteBuffer.allocate(8).putLong(salt).array());
+    byte[] signature = signer.sign();
+    java.util.function.Function<byte[], byte[]> response = sig -> {
+      try {
+        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
+        java.io.DataOutputStream o = new java.io.DataOutputStream(b);
+        o.writeByte(1);
+        gg.tame.conduit.protocol.MinecraftOutput.bytes(o, gg.tame.conduit.crypto.RsaKeys.encrypt(proxyKeys.getPublic(), secret));
+        o.writeBoolean(false);
+        o.writeLong(salt);
+        gg.tame.conduit.protocol.MinecraftOutput.bytes(o, sig);
+        return b.toByteArray();
+      } catch (Exception e) { throw new RuntimeException(e); }
+    };
+    byte[] playerKey = playerKeys.getPublic().getEncoded();
+    require(signed.sharedSecret(v760, response.apply(signature), playerKey).length == 16, "1.19.2 signed response accepted");
+    byte[] forged = signature.clone(); forged[0] ^= 1;
+    try { signed.sharedSecret(v760, response.apply(forged), playerKey); throw new AssertionError("forged signature accepted"); }
+    catch (IllegalArgumentException expected) { }
+    try { signed.sharedSecret(v760, response.apply(signature), null); throw new AssertionError("signature without a key accepted"); }
+    catch (IllegalArgumentException expected) { }
+  }
   private static void encryptionHelloLayout() throws Exception {
     ProtocolDefinition v765 = ProtocolDefinition.forVersion(765);
     ProtocolDefinition v776 = ProtocolDefinition.forVersion(776);
-    require(!v765.loginShouldAuthenticate() && v776.loginShouldAuthenticate(), "should-authenticate is 26.2-only");
+    // 1.20.5 (766) added the field; a table without it sends a hello the client cannot decode.
+    for (ProtocolDefinition definition : ProtocolDefinition.all().values()) {
+      require(definition.loginShouldAuthenticate() == (definition.version().number() >= 766),
+          "should-authenticate from 766 on, got " + definition.loginShouldAuthenticate() + " for " + definition.version().number());
+    }
+    legacyAndSignedEncryption();
     require(v776.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST) == 1, "776 hello id");
     require(v765.id(ConnectionState.LOGIN, PacketDirection.SERVER_TO_CLIENT, PacketKind.LOGIN_ENCRYPTION_REQUEST) == 1, "765 hello id");
     require(!v776.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, 1, PacketKind.LOGIN_ENCRYPTION_REQUEST), "play id 1 is not hello");

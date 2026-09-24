@@ -18,9 +18,12 @@ public final class LoginPipeline {
   private volatile PlayerProfile player;
   /** Who logged in: the client's claim, or the session server's answer. {@link #player} differs only once a plugin replaced it. */
   private PlayerProfile account;
+  /** The 1.19-1.19.2 profile public key from Login Start, when the client sent one. */
+  private byte[] profileKey;
   public LoginPipeline(ProtocolSession session, ProtocolDefinition protocol) { this.session = session; this.protocol = protocol; }
   public PlayerProfile player() { if (player == null) throw new IllegalStateException("Login Start has not arrived"); return player; }
   public PlayerProfile account() { player(); return account; }
+  public byte[] profileKey() { return profileKey; }
   public void adopt(PlayerProfile authenticated) {
     if (player == null) throw new IllegalStateException("Login Start has not arrived");
     this.player = this.account = AuthenticatedPlayerProfile.freeze(player, authenticated);
@@ -34,7 +37,11 @@ public final class LoginPipeline {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       int id = MinecraftInput.varInt(input);
       byte[] body = input.readAllBytes();
-      if (direction == PacketDirection.CLIENT_TO_SERVER && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_START)) player = account = LoginStart.decode(body, protocol).unverifiedProfile();
+      if (direction == PacketDirection.CLIENT_TO_SERVER && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_START)) {
+        LoginStart start = LoginStart.decode(body, protocol);
+        player = account = start.unverifiedProfile();
+        profileKey = start.profileKey();
+      }
       else if (direction == PacketDirection.SERVER_TO_CLIENT && session.state() == ConnectionState.LOGIN && protocol.is(ConnectionState.LOGIN, direction, id, PacketKind.LOGIN_SUCCESS)) {
         if (protocol.hasConfiguration()) session.beginConfiguration();
         else session.enterPlayFromLogin();

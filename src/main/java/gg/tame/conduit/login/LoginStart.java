@@ -19,7 +19,9 @@ import java.util.UUID;
  * Login Start codec. Field layout follows the protocol definition:
  * modern: username + UUID; 1.13-era: username only.
  */
-public record LoginStart(String username, UUID clientUuid) {
+public record LoginStart(String username, UUID clientUuid, byte[] profileKey) {
+  public LoginStart(String username, UUID clientUuid) { this(username, clientUuid, null); }
+
   public static LoginStart decode(byte[] packetWithoutId) throws IOException {
     return decode(packetWithoutId, true);
   }
@@ -37,9 +39,11 @@ public record LoginStart(String username, UUID clientUuid) {
     }
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packetWithoutId))) {
       String username = username(input);
+      byte[] profileKey = null;
       if (ProtocolEras.loginStartSignature(number) && input.readBoolean()) {
         input.readLong();                                  // key expiry
-        skipBytes(input, MAX_PUBLIC_KEY_BYTES);            // public key
+        // Kept: a client with a key answers the encryption request with a signature it makes.
+        profileKey = MinecraftInput.bytes(input, MAX_PUBLIC_KEY_BYTES);
         skipBytes(input, MAX_KEY_SIGNATURE_BYTES);         // Mojang's signature over it
       }
       UUID uuid = null;
@@ -47,7 +51,7 @@ public record LoginStart(String username, UUID clientUuid) {
         uuid = new UUID(input.readLong(), input.readLong());
       }
       if (input.available() != 0) throw new IOException("Login Start contains unsupported extra fields");
-      return new LoginStart(username, uuid != null ? uuid : offlineUuid(username));
+      return new LoginStart(username, uuid != null ? uuid : offlineUuid(username), profileKey);
     }
   }
 
