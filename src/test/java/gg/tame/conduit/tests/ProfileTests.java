@@ -404,16 +404,16 @@ final class ProfileTests {
     int[] before = header(original);
     int[] after = header(merged);
     require(before[0] == 0x10 && after[0] == 0x10, "packet id preserved");
-    // 54 nodes and 15 root children, for 5 servers:
+    // 55 nodes and 15 root children, for 5 servers:
     //   5  the server-name literals, emitted once and shared by every parent that takes one
-    //   25 conduit: itself, 12 plain subcommands, drain, undrain, maintenance + on/off/status,
+    //   26 conduit: itself, 13 plain subcommands, drain, undrain, maintenance + on/off/status,
     //      attack + on/off/status, cache + invalidate
     //   1  glist, 1 plist, 2 find (+player), 2 alert (+message), 1 ping, 1 hub, 2 gkick (+player)
     //   1  server, 8 send (itself, current, one branch per server, the player argument)
     //   5  the /<server> shortcuts
     // Sharing is what keeps this linear in the server count: a copy of the names under each parent
     // made the packet grow with its square.
-    require(after[1] == before[1] + 54, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
+    require(after[1] == before[1] + 55, "node count grew by the proxy nodes, got " + (after[1] - before[1]));
     require(after[3] == before[3] + 15, "root gained exactly fifteen children");
     for (int index = 0; index < before[3]; index++) {
       require(rootChild(original, index) == rootChild(merged, index), "existing root child " + index + " unchanged");

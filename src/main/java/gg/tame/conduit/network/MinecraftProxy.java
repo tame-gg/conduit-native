@@ -155,6 +155,11 @@ public final class MinecraftProxy implements AutoCloseable {
     accepting = true;
     try { runtime.pluginRuntime().loadAll(); } catch (Exception exception) { ConduitLog.error("plugin load failed", exception); }
     runtime.started();
+    // Plugins are loaded and the listener is open: this is the moment players can join. Measured
+    // from the JVM's own start, so the number is what an operator waited for.
+    ConduitLog.info("Conduit booted in " + (System.currentTimeMillis()
+        - java.lang.management.ManagementFactory.getRuntimeMXBean().getStartTime()) + " ms");
+    gg.tame.conduit.ops.Alerts.send("Conduit " + gg.tame.conduit.Conduit.VERSION + " is up.");
     // Not try-with-resources. ExecutorService#close() waits for every submitted task without a
     // bound, and a task here is a whole player connection: one session parked in a socket read kept
     // serve() from returning, main from returning and the JVM from exiting, which on Windows is a
@@ -477,6 +482,7 @@ public final class MinecraftProxy implements AutoCloseable {
       catch (IOException ignored) { }
       ConduitLog.info(player.username() + " (" + player.remoteAddress().getHostAddress()
           + ") was refused: banned (" + ban.get().reason() + ")");
+      runtime.bans().refused(player.username(), player.remoteAddress().getHostAddress(), ban.get());
       player.leave(LoginStatus.CANCELLED_BY_PROXY);
       return;
     }
@@ -500,6 +506,7 @@ public final class MinecraftProxy implements AutoCloseable {
       return;
     }
     if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
+    runtime.addresses().record(player.uniqueId(), player.username(), player.remoteAddress().getHostAddress());
     // What plugins asked the client since the first exchange, answered before a backend is dialled.
     // The login is decided: nothing more can be asked, and the ids stay clear of the backend's queries.
     messages.exchange(transport, configuration.maxFrameBytes());
@@ -674,6 +681,15 @@ public final class MinecraftProxy implements AutoCloseable {
     // listener started with.
     var status = runtime.configuration().status();
     Text description = status.motd();
+    Optional<String> favicon = status.favicon();
+    // A hostname with its own look, from [status.host."..."]: the branded entry point a forced host
+    // routes, shown in the server list under that name.
+    String pingedHost = gg.tame.conduit.modded.FmlAddressMarkers.parse(handshake.requestedHost()).cleanHost();
+    var hostStatus = status.forHost(pingedHost);
+    if (hostStatus.isPresent()) {
+      if (hostStatus.get().motd().isPresent()) description = hostStatus.get().motd().get();
+      if (hostStatus.get().favicon().isPresent()) favicon = hostStatus.get().favicon();
+    }
     // Not the table that happens to be answering: that named one release out of the range Conduit
     // admits, so anything pinging with an old protocol number was told "Conduit 1.8.9".
     String versionName = gg.tame.conduit.version.SupportedVersions.versionName(runtime.versionGate(), clientProtocol);
@@ -699,13 +715,13 @@ public final class MinecraftProxy implements AutoCloseable {
     String host = gg.tame.conduit.modded.FmlAddressMarkers.parse(handshake.requestedHost()).cleanHost();
     ServerListPingEvent ping = runtime.events().fire(new ServerListPingEvent(remote,
         host.isEmpty() ? Optional.empty() : Optional.of(host), handshake.requestedPort(), clientProtocol, description,
-        status.displayMaxPlayers(), online.size(), sample, versionName, advertised, status.favicon()));
+        status.displayMaxPlayers(), online.size(), sample, versionName, advertised, favicon));
     // A client left with no answer at all shows the server as unreachable, which is what a plugin
     // cancelling this asks for.
     if (ping.cancelled()) return;
     // The one place the answer is written, so the policy holds for every plugin on every path --
     // a native listener, a Velocity ProxyPingEvent, or a chain of both.
-    if (status.faviconPolicy() == StatusSettings.FaviconPolicy.PROXY_ONLY) ping.setFavicon(status.favicon());
+    if (status.faviconPolicy() == StatusSettings.FaviconPolicy.PROXY_ONLY) ping.setFavicon(favicon);
     // No Chat Reports clients mark the server safe when the operator says the network prevents chat
     // reports, as Velocity-CTD's prevents-chat-reports does, or when every backend a player could be
     // sent to has said so itself.

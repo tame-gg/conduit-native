@@ -32,6 +32,7 @@ public final class AttackModeService {
     active = true;
     applyLive();
     ConduitMetrics.current().attackModeActivation();
+    gg.tame.conduit.ops.Alerts.send("Attack mode engaged: throttle and bot filter tightened.");
     return true;
   }
 
@@ -40,6 +41,7 @@ public final class AttackModeService {
     active = false;
     throttle.restoreEffectiveMaxAttempts();
     botFilter.restoreEffectiveThreshold();
+    gg.tame.conduit.ops.Alerts.send("Attack mode lifted.");
     return true;
   }
 

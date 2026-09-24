@@ -1,15 +1,14 @@
 # Conduit configuration.
 #
-# Grouped into areas, each under a ==== banner. A commented-out line says which of
-# two things it is:
+# The live lines are the ones most networks change. Everything else is commented
+# out at its default: uncomment a line to change it, leave it alone to keep the
+# default. A commented-out line says which of two things it is:
 #   (default: X)  what Conduit uses while the line stays commented out
 #   (example)     a value with no default; nothing happens until you write one
 #
 # Settings marked "restart" are read once at start. Everything else is re-read by
-# /conduit reload.
-#
-# Paths are relative to this file, so plugins/, via/ and forwarding.secret sit
-# beside it. Keep it in the folder you start Conduit from.
+# /conduit reload. Paths are relative to this file. The README explains every
+# setting in full.
 
 
 # ============================================================================
@@ -21,23 +20,14 @@
 # (restart)
 host = "127.0.0.1"
 port = 25565
-# Largest packet Conduit will read before dropping the connection.
-max-frame-bytes = 1048576
-# Packets this many bytes or larger are compressed on the way to players, as a
-# vanilla server compresses them. -1 turns it off, which multiplies the bandwidth
-# players cost -- chunk data most of all. Lower is smaller on the wire and costs
-# more CPU; 0 compresses everything.
+# Largest packet Conduit reads before dropping the connection. (default: 1048576)
+# max-frame-bytes = 1048576
+# Packets this size or larger are compressed on the way to players; -1 turns it off.
 # (restart) (default: 256)
 # compression-threshold = 256
-# Read a HAProxy PROXY protocol header before the handshake, so a reverse proxy in
-# front of Conduit -- TCPShield, HAProxy, a load balancer -- can say which player a
-# connection belongs to. Without it every player arrives wearing that service's
-# address, which is the address bans, the throttle and the logs then see.
-#
-# The header is NOT authenticated: with this on, anything that can open a connection
-# to the port above can claim any address, and walk through a ban or a rate limit
-# wearing it. Turn it on only when the port is firewalled to the service that sends
-# it -- for TCPShield, their published IP ranges and nothing else.
+# Read a HAProxy PROXY protocol header, so TCPShield, HAProxy or a load balancer in
+# front can say which player a connection belongs to. The header is NOT
+# authenticated: only turn this on when the port is firewalled to that service.
 # (restart) (default: false)
 # proxy-protocol = false
 
@@ -47,83 +37,65 @@ max-frame-bytes = 1048576
 host = "127.0.0.1"
 port = 25566
 
-# A second backend. (example)
+# A second backend, with a player cap. max-players is how many the proxy sends
+# there before it is full, whatever the backend itself allows; 0, the default, is
+# no limit. A full server is skipped on join and refused by /server. (example)
 # [servers.survival]
 # host = "127.0.0.1"
 # port = 25567
+# max-players = 40
 
 [routing]
 # Tried in order when a player joins.
 initial = ["lobby"]
 # Tried in order when the server a player is on goes away under them.
 fallback = ["lobby"]
-# When a backend kicks a player and no plugin decided what to do -- which is what a
-# server says as it shuts down -- move them to the next server that will take them
-# and tell them why, instead of disconnecting them from the network. Turn it off
-# where a kick is meant to be final and its screen is meant to be seen.
-fallback-on-kick = true
+# A player a backend kicks is moved to the next server that takes them, rather than
+# disconnected from the network. (default: true)
+# fallback-on-kick = true
 
-# One proxy, several front doors: a hostname a player typed in their server list
-# sends them to a particular backend. The name on the left is the address as the
-# client wrote it -- the port it named and any Forge marker are ignored, and case
-# does not matter. One server, or a list tried in order.
+# One proxy, several front doors: the address a player typed in their server list
+# sends them to a particular backend. Port and case are ignored. One server, or a
+# list tried in order.
 # A host nothing here matches follows routing.initial as usual.
 # [forced-hosts]
 # "lobby.example.com" = "lobby"
 # "pvp.example.com" = ["pvp", "lobby"]
 
 
-
 # ============================================================================
 #  IDENTITY AND TRUST  --  who the player is, and how a backend knows
 # ============================================================================
 
-# Who checks that a player is who they say they are. Conduit does it, because the
-# backends cannot: they run online-mode=false behind the proxy. If Conduit does
-# not check either, nobody does and anyone can join as anyone.
-#
-#   "online"   Conduit does the Mojang handshake itself and gets the real UUID,
-#              name and skin. What a public server wants.
-#   "offline"  the name the client sent is taken at face value. For local tests,
-#              cracked networks, or when something in front has already checked.
+# Who checks that a player is who they say they are. The backends cannot: they
+# run online-mode=false behind the proxy.
+#   "online"   Conduit does the Mojang handshake itself. What a public server wants.
+#   "offline"  the name the client sent is taken at face value. Local tests only.
 [authentication]
 mode = "online"
-
-# Where the Mojang session check goes. Change only for a proxy or a private
-# authentication service. (default: the Mojang session server)
+# Where the Mojang session check goes. (default: the Mojang session server)
 # session-url = "https://sessionserver.mojang.com/session/minecraft/hasJoined"
-
 # How long that check may take, in milliseconds. (default: 5000)
 # timeout-millis = 5000
-
-# A login by a player who is already connected is refused. true ends the existing
-# session and lets the new login in instead -- which in offline mode lets anyone
-# who types a name kick its owner. (default: false)
+# Let a new login end the session of a player already connected under that name.
+# (default: false)
 # kick-existing-players = false
 
-# How a backend learns the identity Conduit established, and that it really came
-# from Conduit.
-#
-#   "none"    nothing is forwarded; the backend sees the proxy's address and the
-#             name the client claimed. Fine for a local test, and only that: a
-#             backend on a reachable port with online-mode=false lets anyone in.
+# How a backend learns the identity Conduit established, and that it came from
+# Conduit.
+#   "none"    nothing is forwarded. Fine for a local test, and only that.
 #   "modern"  the Velocity-style signed handshake. Give every backend the same
-#             secret (Paper: velocity.secret in config/paper-global.yml) and it
-#             will refuse anything that cannot prove it. Use this one in public.
-#   "legacy" / "bungeeguard"  only for backends that speak nothing else. Weaker;
-#             see the README first.
-#
-# The secret below is generated on first start whatever the mode, so turning this
-# to "modern" later is this one line plus a copy into each backend.
+#             secret (Paper: velocity.secret in config/paper-global.yml). Use this
+#             one in public.
+#   "legacy" / "bungeeguard"  only for backends that speak nothing else.
+# The secret is generated on first start whatever the mode, so turning this to
+# "modern" later is this one line plus a copy into each backend.
 [forwarding]
 mode = "none"
-
-# Where that secret lives, relative to this file.
 # (default: "forwarding.secret")
 # secret-file = "forwarding.secret"
-
-# Forwarded to backends in place of the player's own address, for a network where
-# a backend must not see client IPs. (example)
+# Forwarded in place of the player's own address, where backends must not see
+# client IPs. (example)
 # player-address = "127.0.0.1"
 
 
@@ -131,54 +103,39 @@ mode = "none"
 #  WHAT PLAYERS SEE  --  the server list entry, and closing the doors
 # ============================================================================
 
-# The server list entry. motd takes MiniMessage, as Velocity's does -- <red>, <bold>,
-# <gradient:#5e4fa2:#f79459>, and the rest -- or the older &-codes (&0-&9 &a-&f colours,
-# &l &o &n &m &k decorations, &r plain) with \n for a second line. Plain text stays plain.
-# display-max-players is only the number shown after the slash; it limits nothing.
+# motd takes MiniMessage (<red>, <bold>, <gradient:#5e4fa2:#f79459>) or &-codes,
+# with \n for a second line.
 [status]
 motd = "Conduit"
-display-max-players = 100
-
+# Only the number shown after the slash; it limits nothing. (default: 100)
+# display-max-players = 100
 # A 64x64 PNG, relative to this file. (example)
 # favicon = "server-icon.png"
-
-# Who decides the icon: "plugins" (default) lets a ping plugin set one, "proxy-only"
-# always sends the icon above, or none -- use it when a plugin would otherwise pass a
-# backend's icon off as this proxy's.
+# "plugins" lets a ping plugin set the icon, "proxy-only" always sends the one above.
 # favicon-policy = "plugins"
-
-# How many players the server list names when the player count is hovered. 0 lists
-# nobody, which is what to set when who is online is not public. Names come from the
-# whole network, not one backend.
+# How many names the server list shows when the player count is hovered; 0 hides them.
 # player-sample = 12
-
-# Whether each name in that list is followed by the server the player is on, as
-# "Steve (lobby)". Off by default, so the list reads as it does on a single server.
+# Follow each name with the server they are on, as "Steve (lobby)".
 # player-sample-server = false
-
-# Whether players using the No Chat Reports mod see this server marked safe in
-# their list. Conduit passes signed chat on as it comes, so this is a promise about
-# the backends: turn it on when they run No Chat Reports or strip chat signatures.
-# Left off, the mark is still shown while every backend says so in its own server
-# list answer.
+# Mark the network safe for the No Chat Reports mod. A promise about the backends.
 # prevents-chat-reports = false
 
-# Turned on and off with /conduit maintenance. While it is on, players see motd in
-# the server list and kick-message if they try to join.
-[maintenance]
-enabled = true
-# Whether Conduit comes up already in maintenance.
-active-on-start = false
-kick-message = "This network is currently under maintenance. Please try again later."
-motd = "Conduit — under maintenance"
-# Names that may still join while it is on.
-allowlist = []
+# What one hostname shows instead, so a forced host is a branded entry of its own.
+# [status.host."pvp.example.com"]
+# motd = "<red>PvP</red> — the arena"
+# favicon = "pvp-icon.png"
 
-# What a banned player is shown, on joining and when /gban kicks them. Uncomment
-# and edit to reword it. The reason given to /gban fills {reason}, so the wording
-# here is kept for every ban. {actor} is who banned them, {duration} the time left
-# or permanent-duration below, {remaining} the time left alone, and {expiry}
-# temporary or permanent below. \n is a line break; &-codes and MiniMessage work.
+# Turned on and off with /conduit maintenance: players see motd in the server list
+# and kick-message if they try to join. allowlist names who may still join.
+# [maintenance]
+# enabled = true
+# active-on-start = false
+# kick-message = "This network is currently under maintenance. Please try again later."
+# motd = "Conduit — under maintenance"
+# allowlist = []
+
+# What a banned player is shown. {reason}, {actor}, {duration}, {remaining} and
+# {expiry} are filled in; \n is a line break; &-codes and MiniMessage work.
 # [bans]
 # message = "&cYou have been banned from this network.\n\n&7Reason: &f{reason}\n&7Banned By: &f{actor}\n&7Duration: &f{duration}"
 # default-reason = "No reason given"
@@ -186,16 +143,15 @@ allowlist = []
 # temporary = "Expires in {remaining}"
 # permanent = "This ban is permanent."
 
-# Who may run Conduit's admin commands (/gban, /gkick, /conduit reload, ...) in-game
-# while no permissions plugin such as LuckPerms is installed: names or UUIDs. Once
-# one is installed, it alone decides. In offline mode anyone can claim a name, so
-# use UUIDs there. (example)
+# Who may run Conduit's admin commands in-game while no permissions plugin is
+# installed: names or UUIDs. For groups, put a permissions.toml beside this file
+# instead (README, "Permission nodes"). (example)
 # [permissions]
 # operators = ["YourName"]
 
 
 # ============================================================================
-#  VERSIONS  --  which clients may join, and how their packets are translated
+#  EVERYTHING ELSE  --  rarely changed; shown at the defaults Conduit uses
 # ============================================================================
 
 # ViaVersion translation. It is what gives a cross-version player sounds,
@@ -203,176 +159,119 @@ allowlist = []
 # those. "via-preferred" still falls back to them where Via has no path. Set
 # enabled = false for native-only translation and accept the drops.
 # See docs/VIAVERSION.md and docs/LICENSING_VIA.md (GPLv3 Via* artifacts).
-[translation]
-enabled = true
-engine = "via-preferred"
-via-backwards = true
-via-rewind = true
-via-legacy = false
-data-folder = "via"
+# [translation]
+# enabled = true
+# engine = "via-preferred"
+# via-backwards = true
+# via-rewind = true
+# via-legacy = false
+# data-folder = "via"
 
-# Turn clients away by Minecraft version. enabled = true with no allow, minimum or
-# maximum turns nobody away, and says so at start.
-[versions]
-enabled = false
-# Versions or protocol numbers, e.g. ["1.20.4", "1.21.5"].
-allow = []
-# What the server list reports. {versions} is filled in from the rules here.
-ping-version-name = "Conduit {versions}"
-kick-message = "This network only allows Minecraft {versions}."
-kick-message-range = "This network only allows Minecraft versions {versions}."
-
-# A range, instead of or alongside allow. (example)
+# Turn clients away by Minecraft version: a list of versions or protocol numbers,
+# a range, or both. {versions} in the messages is filled in from the rules.
+# [versions]
+# enabled = false
+# allow = ["1.20.4", "1.21.5"]
 # minimum = "1.20.4"
 # maximum = "1.21.8"
-
-# Refuse a player whose version does not match the backend's exactly, rather than
-# translating for them. (default: false)
+# ping-version-name = "Conduit {versions}"
+# kick-message = "This network only allows Minecraft {versions}."
+# kick-message-range = "This network only allows Minecraft versions {versions}."
+# Refuse a player whose version is not the backend's exactly, rather than translate.
 # strict-backend-match = false
 
+# Conduit pings each backend on a timer so routing can skip a dead one.
+# [health]
+# enabled = true
+# interval-ms = 10000
+# timeout-ms = 1500
+# failure-threshold = 3
+# success-threshold = 2
 
-# ============================================================================
-#  OPERATIONS  --  watching backends, and stopping cleanly
-# ============================================================================
+# Ctrl+C, a service stop and /conduit shutdown: players are told, plugins are
+# disabled, then the process exits within timeout-ms.
+# [shutdown]
+# graceful-enabled = true
+# timeout-ms = 5000
+# message = "Conduit is shutting down."
 
-# Conduit pings each backend on a timer so routing can skip a dead one instead of
-# sending players who then bounce.
-[health]
-enabled = true
-interval-ms = 10000
-timeout-ms = 1500
-# Consecutive failures before a backend counts as down, successes before it counts
-# as up again.
-failure-threshold = 3
-success-threshold = 2
+# Per-source connection limits, grouped by address prefix.
+# [security.throttle]
+# enabled = true
+# max-attempts = 40
+# window-ms = 1000
+# max-concurrent = 32
+# ipv4-prefix = 32
+# ipv6-prefix = 64
+# log-interval-ms = 5000
 
-# Ctrl+C, a service stop and /conduit shutdown all take this path: players are
-# told, plugins are disabled, then the process exits. timeout-ms is how long that
-# may take before the remaining connections are dropped.
-[shutdown]
-graceful-enabled = true
-timeout-ms = 5000
-message = "Conduit is shutting down."
+# Connections that open and do nothing earn strikes; strike-threshold of them inside
+# strike-window-ms blocks the source for block-duration-ms.
+# [security.bot-filter]
+# enabled = true
+# strike-threshold = 10
+# handshake-timeout-ms = 3000
+# block-duration-ms = 60000
+# strike-window-ms = 60000
 
+# What to do about plugin-message channels a client opens; default-action covers
+# anything not listed.
+# [security.channel-guard]
+# enabled = false
+# default-action = "log"
+# block-list = ["wdl:init", "wdl:control"]
+# log-list = ["schematica"]
+# kick-list = []
 
-# ============================================================================
-#  PROTECTION  --  connection floods, bots, and client mod channels
-# ============================================================================
+# The tighter limits used while /conduit attack is on.
+# [security.attack-mode]
+# throttle-max-attempts = 8
+# bot-strike-threshold = 3
 
-# Per-source connection limits. Sources are grouped by address prefix, so one host
-# cannot spread a flood across its whole /64.
-[security.throttle]
-enabled = true
-# Connection attempts allowed per window-ms, and sockets held open at once.
-max-attempts = 40
-window-ms = 1000
-max-concurrent = 32
-ipv4-prefix = 32
-ipv6-prefix = 64
-# How often a throttled source is mentioned in the log.
-log-interval-ms = 5000
+# Forge, NeoForge and Fabric handshakes. unknown-policy "allow" lets a handshake
+# Conduit does not recognise through; anything else refuses it.
+# [modded]
+# enabled = true
+# known-packs-limit = 1024
+# handshake-cache = true
+# handshake-cache-capacity = 4096
+# handshake-cache-ttl-ms = 300000
+# forge-compat = true
+# neoforge-compat = true
+# fabric-compat = true
+# unknown-policy = "allow"
+# packet-queue-enabled = true
+# packet-queue-max-depth = 512
+# log-mod-handshakes = false
 
-# Connections that open and then do nothing earn strikes. strike-threshold of them
-# inside strike-window-ms blocks the source for block-duration-ms.
-[security.bot-filter]
-enabled = true
-strike-threshold = 10
-handshake-timeout-ms = 3000
-block-duration-ms = 60000
-strike-window-ms = 60000
+# The BungeeCord plugin channel, which a hub plugin's /hub is built on.
+# trusted-servers is which backends may move, kick or message players on other
+# servers; empty trusts every server.
+# [messaging]
+# bungeecord-channel = true
+# trusted-servers = []
 
-# What to do about plugin-message channels a client opens. The lists hold exact
-# channel names; default-action covers anything not in one.
-[security.channel-guard]
-enabled = false
-default-action = "log"
-block-list = ["wdl:init", "wdl:control"]
-log-list = ["schematica"]
-kick-list = []
+# One webhook told when a backend goes down or recovers, attack mode changes, and
+# the proxy comes up. Discord and Slack URLs work as they are. (example)
+# [alerts]
+# webhook-url = "https://discord.com/api/webhooks/..."
 
-# The tighter limits used while /conduit attack is on, standing in for the ordinary
-# ones above.
-[security.attack-mode]
-throttle-max-attempts = 8
-bot-strike-threshold = 3
-
-
-# ============================================================================
-#  MODDED CLIENTS  --  Forge, NeoForge and Fabric handshakes
-# ============================================================================
-
-[modded]
-enabled = true
-known-packs-limit = 1024
-# Remembers a source's handshake so a reconnect does not repeat it.
-handshake-cache = true
-handshake-cache-capacity = 4096
-handshake-cache-ttl-ms = 300000
-forge-compat = true
-neoforge-compat = true
-fabric-compat = true
-# What happens to a modded handshake Conduit does not recognise: "allow" lets it
-# through, anything else refuses it.
-unknown-policy = "allow"
-# Packets arriving mid-handshake are held rather than dropped.
-packet-queue-enabled = true
-packet-queue-max-depth = 512
-log-mod-handshakes = false
-
-
-# ============================================================================
-#  OBSERVABILITY
-# ============================================================================
-
-# Metrics in Prometheus' text format at GET /metrics. Off unless an address is set.
-# No authentication: keep it on loopback or a private network. (restart)
+# Prometheus metrics at GET /metrics. No authentication: keep it on loopback or a
+# private network. (restart) (example)
 # [metrics]
 # prometheus-address = "127.0.0.1:9225"
 
-# How backend plugins reach the proxy. The BungeeCord plugin channel is what a hub
-# plugin's /hub, and a queue plugin running on a backend, is built on: without it
-# they fail silently, because the message is delivered and never acted on. Turn it
-# off only where no backend is trusted to move, kick or message players.
-[messaging]
-bungeecord-channel = true
-
-
-# ============================================================================
-#  UPDATES  --  keeping ViaVersion current
-# ============================================================================
-
-# ViaVersion is not inside the Conduit jar. It is GPLv3 object code, which a jar
-# carrying it could only pass on together with Via's own source, and it would be
-# out of date within weeks: Via supports each new Minecraft release long before a
-# Conduit release can.
-#
-# So the first start with nothing in lib/via installs the set this build pins,
-# from ViaVersion's own repository, each jar checked against its published
-# SHA-256. With via = true it also looks for a newer release in the same version
-# line on every start and downloads that, keeping the jars it replaces in
-# lib/via/superseded. A new major version is reported and not taken, because
-# Conduit is built against the internals of the line it pins.
-#
-# Nothing here can stop Conduit starting. An unreachable repository, a blocked
-# proxy or a checksum that does not match all end the same way: a line in the log
-# and a proxy that comes up. With no Via at all, cross-version play is off and a
-# client may only join a backend on its own protocol.
-#
-# For a machine with no route out, put the five Via jars in lib/via yourself --
-# Conduit uses those whether it fetched them or you did. (restart)
-[updates]
-via = true
-# Say that a newer version exists without downloading it.
-check-only = false
-# How long the check may take, in milliseconds.
-timeout-ms = 5000
-# How long a check is good for, in hours. The check is the one thing between starting
-# Conduit and Conduit listening that waits on another server, so it is remembered and
-# not repeated on every restart. 0 checks on every start.
-via-check-interval-hours = 12
+# ViaVersion is not inside the Conduit jar: the first start installs the set this
+# build pins into lib/via, checksummed, and via = true also takes newer releases
+# in the same line on start. Nothing here can stop Conduit starting. (restart)
+# [updates]
+# via = true
+# check-only = false
+# timeout-ms = 5000
+# via-check-interval-hours = 12
 
 
 # Written by Conduit, so a newer version knows which settings this file predates.
 # Leave it alone.
 [ops]
-schema-version = 5
+schema-version = 6

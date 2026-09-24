@@ -59,11 +59,16 @@ public final class ViaUpdater {
   private static String repository() {
     String override = System.getProperty("conduit.via.repository");
     if (override == null || override.isBlank()) return "https://repo.viaversion.com/everything";
+    // What this serves is loaded into the proxy's own class loader, and the checksum beside each jar
+    // comes from the same place. HTTPS is the only thing between a network and running its code.
+    if (!override.strip().toLowerCase(java.util.Locale.ROOT).startsWith("https://")) {
+      throw new IllegalArgumentException("-Dconduit.via.repository must be an https:// URL, not " + override);
+    }
     // A trailing slash would double up in every path built from this.
     return override.endsWith("/") ? override.substring(0, override.length() - 1) : override.strip();
   }
   /** Names Conduit and nothing else: no user, no machine, no path. */
-  private static final String USER_AGENT = "Conduit/0.9.7 (+https://github.com/tame-gg/conduit-native)";
+  private static final String USER_AGENT = "Conduit/0.9.8 (+https://github.com/tame-gg/conduit-native)";
   /** Where a superseded set is moved to, rather than deleted. */
   private static final String SUPERSEDED = "superseded";
 
@@ -146,11 +151,13 @@ public final class ViaUpdater {
    * every copy of Conduit to travel with Via's Corresponding Source. So a first start installs the
    * set this build is pinned to, and {@link #update} moves it forward from there.
    *
-   * <p>The versions asked for are the pinned ones rather than the newest published, so a first start
-   * and a hundredth start of the same build install the same thing, and a Via that has just changed
-   * under a network is an update it can see in the log rather than a surprise on a fresh box.
+   * <p>The versions asked for are exactly the pinned ones, and each jar must match the SHA-256 this
+   * build carries for it in {@code hashes}. That hash is the one thing here not fetched from the
+   * repository, so a mirror or a hijacked download cannot put its own code on the class path. The
+   * newest release in the line, which {@link #update} may fetch afterwards, is verified only against
+   * the repository's own checksum.
    */
-  public static Outcome install(Path viaDirectory, Map<String, String> want, int timeoutMs) {
+  public static Outcome install(Path viaDirectory, Map<String, String> want, Map<String, String> hashes, int timeoutMs) {
     try {
       HttpClient client = HttpClient.newBuilder()
           .connectTimeout(Duration.ofMillis(timeoutMs))
@@ -167,22 +174,12 @@ public final class ViaUpdater {
           if (pinned == null || pinned.isBlank()) {
             return Outcome.of(Outcome.Kind.FAILED, "no version pinned for " + artifact);
           }
-          // The newest release in the pinned major, so a first start does not download the pinned set
-          // and then immediately replace it. Anything else -- a repository that will not say, a new
-          // major, a version that is not a release -- and the pinned one is what is installed.
-          String version = pinned;
-          try {
-            String release = release(client, artifact, timeoutMs);
-            if (release != null && ViaArtifacts.isRelease(release)
-                && ViaArtifacts.major(release) == ViaArtifacts.major(pinned)
-                && ViaArtifacts.compare(release, pinned) > 0) {
-              version = release;
-            }
-          } catch (IOException | RuntimeException unavailable) {
-            version = pinned;
+          String expected = hashes.get(artifact);
+          if (expected == null || expected.isBlank()) {
+            return Outcome.of(Outcome.Kind.FAILED, "no pinned SHA-256 for " + artifact);
           }
-          installing.put(artifact, version);
-          downloaded.add(download(client, artifact, version, staging, timeoutMs));
+          installing.put(artifact, pinned);
+          downloaded.add(download(client, artifact, pinned, staging, timeoutMs, expected));
         }
         Files.createDirectories(viaDirectory);
         for (Path jar : downloaded) {
@@ -225,6 +222,13 @@ public final class ViaUpdater {
     // Some repositories append " filename" to a checksum file.
     int space = expected.indexOf(' ');
     if (space > 0) expected = expected.substring(0, space);
+    return download(client, artifact, version, staging, timeoutMs, expected);
+  }
+
+  /** As above, against a SHA-256 the caller already holds: the pinned one from this build. */
+  private static Path download(HttpClient client, String artifact, String version, Path staging, int timeoutMs,
+      String expected) throws IOException, InterruptedException {
+    String path = ViaArtifacts.repositoryPath(artifact, version);
 
     Path target = staging.resolve(ViaArtifacts.fileName(artifact, version));
     HttpRequest request = HttpRequest.newBuilder(URI.create(REPOSITORY + "/" + path))
@@ -252,7 +256,7 @@ public final class ViaUpdater {
     String actual = hex(digest.digest());
     if (!actual.equals(expected)) {
       Files.deleteIfExists(target);
-      throw new IOException(ViaArtifacts.fileName(artifact, version) + " does not match its published SHA-256");
+      throw new IOException(ViaArtifacts.fileName(artifact, version) + " does not match its expected SHA-256");
     }
     return target;
   }

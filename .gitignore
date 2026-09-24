@@ -29,3 +29,12 @@ config/via/
 
 # The conduit.toml a first start from the repo root writes; the shipped copy is in src/main/resources.
 /conduit.toml
+
+# Operational records a start from the repo root writes beside conduit.toml.
+/bans.txt
+/bans.log
+/whitelist.txt
+/protected-players.txt
+/addresses.txt
+/mutes.txt
+/permissions.toml

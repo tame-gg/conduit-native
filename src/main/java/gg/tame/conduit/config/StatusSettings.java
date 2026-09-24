@@ -20,7 +20,7 @@ import java.util.Optional;
  */
 public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon,
                              FaviconPolicy faviconPolicy, int playerSample, boolean playerSampleServer,
-                             boolean preventsChatReports) {
+                             boolean preventsChatReports, java.util.Map<String, HostStatus> hosts) {
   /**
    * Who decides the icon a client is sent.
    *
@@ -57,6 +57,30 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
     this(motd, displayMaxPlayers, favicon, faviconPolicy, DEFAULT_PLAYER_SAMPLE, false, false);
   }
 
+  /**
+   * What one hostname shows instead of the network's MOTD or favicon, from
+   * {@code [status.host."pvp.example.com"]}. Either may be left unset to keep the network's.
+   */
+  public record HostStatus(Optional<Text> motd, Optional<String> favicon) {
+    public HostStatus {
+      motd = motd == null ? Optional.empty() : motd;
+      favicon = favicon == null ? Optional.empty() : favicon;
+    }
+  }
+
+  /** The override for the host a client wrote in its handshake, if one is configured. */
+  public Optional<HostStatus> forHost(String host) {
+    if (hosts.isEmpty() || host == null) return Optional.empty();
+    return Optional.ofNullable(hosts.get(gg.tame.conduit.routing.ForcedHosts.normalize(host)));
+  }
+
+  /** Every setting, with no per-host overrides. */
+  public StatusSettings(Text motd, int displayMaxPlayers, Optional<String> favicon, FaviconPolicy faviconPolicy,
+                        int playerSample, boolean playerSampleServer, boolean preventsChatReports) {
+    this(motd, displayMaxPlayers, favicon, faviconPolicy, playerSample, playerSampleServer, preventsChatReports, java.util.Map.of());
+  }
+
+
   public static final String DEFAULT_MOTD = "Conduit";
   public static final int DEFAULT_DISPLAY_MAX_PLAYERS = 100;
   /**
@@ -80,6 +104,7 @@ public record StatusSettings(Text motd, int displayMaxPlayers, Optional<String> 
   public StatusSettings {
     if (motd == null) motd = Text.of(DEFAULT_MOTD);
     if (favicon == null) favicon = Optional.empty();
+    if (hosts == null) hosts = java.util.Map.of();
     if (faviconPolicy == null) faviconPolicy = FaviconPolicy.PLUGINS;
     if (displayMaxPlayers < 0) throw new IllegalArgumentException("status.display-max-players must be >= 0");
     if (playerSample < 0 || playerSample > MAX_PLAYER_SAMPLE) {

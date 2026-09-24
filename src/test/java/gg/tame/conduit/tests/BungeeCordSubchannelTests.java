@@ -24,6 +24,7 @@ public final class BungeeCordSubchannelTests {
   public static void run() throws Exception {
     getPlayerServerSaysWhereSomeoneIs();
     kickPlayerRawKicksWithTheJsonReason();
+    anUntrustedBackendCannotKickAnotherServersPlayer();
     System.out.println("BungeeCordSubchannelTests OK");
   }
 
@@ -54,6 +55,32 @@ public final class BungeeCordSubchannelTests {
             write(out -> { out.writeUTF("KickPlayerRaw"); out.writeUTF("kicked"); out.writeUTF("{\"text\":\"Queue closed\"}"); })));
         require(client.await(packet -> id(packet) == DISCONNECT_OUT && text(packet).contains("Queue closed")),
             "the player is kicked with the JSON reason's text");
+      }
+    }
+  }
+
+  /**
+   * With {@code messaging.trusted-servers} set, a backend not on it may still ask about its own
+   * players but may not kick, move or read the address of anyone. The list is empty by default,
+   * which trusts every server as before.
+   */
+  private static void anUntrustedBackendCannotKickAnotherServersPlayer() throws Exception {
+    var messaging = new gg.tame.conduit.config.MessagingSettings(true, java.util.Set.of("hub"));
+    try (NativeApiTests.Backend lobby = new NativeApiTests.Backend("lobby");
+         NativeApiTests.Fixture proxy = new NativeApiTests.Fixture(List.of(lobby), List.of("lobby"), List.of("lobby"), messaging)) {
+      try (NativeApiTests.Client client = NativeApiTests.Client.join(proxy.port(), "target")) {
+        require(proxy.recorder.await(gg.tame.conduit.api.event.player.PlayerServerConnectedEvent.class, 1), "joined");
+        lobby.send(NativeApiTests.pluginMessage(NativeApiTests.pluginOut(), "bungeecord:main",
+            write(out -> { out.writeUTF("KickPlayer"); out.writeUTF("target"); out.writeUTF("bye"); })));
+        lobby.send(NativeApiTests.pluginMessage(NativeApiTests.pluginOut(), "bungeecord:main",
+            write(out -> { out.writeUTF("IPOther"); out.writeUTF("target"); })));
+        // A subchannel about the sender's own connection is still answered, so the refusal is
+        // known to have been read and acted on before the kick is judged not to have happened.
+        lobby.send(NativeApiTests.pluginMessage(NativeApiTests.pluginOut(), "bungeecord:main",
+            write(out -> { out.writeUTF("IP"); })));
+        require(waitFor(() -> !answers(lobby, "IP").isEmpty(), 10_000), "the backend's own IP question is answered");
+        require(answers(lobby, "IPOther").isEmpty(), "but not another player's address");
+        require(!waitFor(() -> !client.received(packet -> id(packet) == DISCONNECT_OUT).isEmpty(), 1_000), "and the player was not kicked");
       }
     }
   }

@@ -85,9 +85,9 @@ public final class Bootstrap {
         return;
       }
       Map<String, String> pinned = ViaArtifacts.bundled();
-      say("INFO", "No ViaVersion in " + viaDirectory + ", so Conduit is installing it from repo.viaversion.com"
-          + " (the newest release of the " + describeVersions(pinned) + " line)...");
-      ViaUpdater.Outcome installed = ViaUpdater.install(viaDirectory, pinned, config.timeoutMs());
+      say("INFO", "No ViaVersion in " + viaDirectory + ", so Conduit is installing the set this build is pinned to"
+          + " (" + describeVersions(pinned) + ") from repo.viaversion.com, checked against the hashes it carries...");
+      ViaUpdater.Outcome installed = ViaUpdater.install(viaDirectory, pinned, ViaArtifacts.bundledHashes(), config.timeoutMs());
       if (installed.kind() == ViaUpdater.Outcome.Kind.FAILED) {
         say("WARN", "Could not install ViaVersion (" + installed.detail() + "). Conduit starts without it, so a"
             + " client may only join a backend on its own protocol. Put the jars in " + viaDirectory

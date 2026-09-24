@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -148,13 +147,7 @@ public final class Whitelist {
     written.addAll(names);
     for (String name : written) out.append(name).append('\n');
     try {
-      Path temporary = file.resolveSibling(FILE + ".tmp");
-      Files.writeString(temporary, out.toString(), StandardCharsets.UTF_8);
-      try {
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-      } catch (java.nio.file.AtomicMoveNotSupportedException notAtomic) {
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-      }
+      AtomicFiles.write(file, out.toString());
     } catch (IOException unwritable) {
       ConduitLog.warn("Could not write " + file + ", so whitelist changes made now are lost on restart: "
           + unwritable.getMessage());

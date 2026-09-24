@@ -146,8 +146,13 @@ public final class AllTests {
     ServerResourcePackTests.run();
     BanWhitelistTests.run();
     BanUnbanTests.run();
+    BanAddressTests.run();
+    AlertsTests.run();
+    OperatorFeatureTests.run();
     BanListCommandTests.run();
     BanAlreadyBannedTests.run();
+    WrongHeaderTests.run();
+    MultiFallbackTests.run();
     MojangProfilesTests.run();
     BanMessageTests.run();
     StaffPermissionTests.run();

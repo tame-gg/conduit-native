@@ -3,10 +3,10 @@ package gg.tame.conduit.ops;
 
 import gg.tame.conduit.log.ConduitLog;
 import java.io.IOException;
+import java.net.InetAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -24,8 +24,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * <p>A name ban is matched case-insensitively, because that is how an operator types it and how
  * Minecraft treats names. An account ban is matched on the UUID, and so survives a name change. An
- * address ban is matched on the exact address the connection came from; there is no range or CIDR
- * matching, since the thing an operator has in front of them is one address out of a log.
+ * address ban is matched on the address the connection came from, or on a range written as CIDR
+ * ({@code 203.0.113.0/24}, {@code 2001:db8::/32}) for a host that keeps moving within one.
  *
  * <p>A ban may end. {@code expiresAt} of {@link #PERMANENT} never does; anything else is an instant
  * in epoch milliseconds, and an entry past it stops matching and is dropped the next time the list
@@ -35,6 +35,8 @@ public final class BanList {
   /** An {@code expiresAt} that never arrives. */
   public static final long PERMANENT = Long.MAX_VALUE;
   private static final String FILE = "bans.txt";
+  /** Every ban, unban and refused login, one line each, appended and never rewritten. */
+  private static final String AUDIT = "bans.log";
   /** Separates the fields of one record. Neither a name, a UUID nor an address may contain it. */
   private static final char FIELD = '\t';
 
@@ -70,6 +72,7 @@ public final class BanList {
   }
 
   private final Path file;
+  private final Path audit;
   /**
    * Copy-on-write because every login reads this and only an operator writes it: a read must never
    * wait behind a write, and the writes are a command at a time.
@@ -78,13 +81,114 @@ public final class BanList {
 
   public BanList(Path configDirectory) {
     this.file = configDirectory.resolve(FILE);
+    this.audit = configDirectory.resolve(AUDIT);
     load();
   }
 
   /** The name, account or address a ban is recorded and matched under. */
   public static String normalise(Kind kind, String value) {
     String trimmed = value == null ? "" : value.strip();
-    return kind == Kind.NAME ? trimmed.toLowerCase(Locale.ROOT) : trimmed;
+    if (kind == Kind.NAME) return trimmed.toLowerCase(Locale.ROOT);
+    if (kind != Kind.ADDRESS) return trimmed;
+    // An address is matched by what the connection reports, which for IPv6 is the expanded form:
+    // "::1" typed by an operator and "0:0:0:0:0:0:0:1" seen at login are the same address. A scope
+    // ("%eth0") is dropped on both sides: it names an interface, not a client.
+    int scope = trimmed.indexOf('%');
+    if (scope >= 0) trimmed = trimmed.substring(0, scope);
+    // A range is kept as its network address and prefix -- "10.0.0.7/24" is the same ban as
+    // "10.0.0.0/24" -- so that two operators typing it differently get one entry, not two.
+    int slash = trimmed.indexOf('/');
+    if (slash >= 0) {
+      Optional<InetAddress> network = literalAddress(trimmed.substring(0, slash));
+      Integer prefix = prefixLength(trimmed.substring(slash + 1), network);
+      if (network.isEmpty() || prefix == null) return trimmed;
+      byte[] bytes = network.get().getAddress();
+      mask(bytes, prefix);
+      try {
+        return InetAddress.getByAddress(bytes).getHostAddress() + "/" + prefix;
+      } catch (java.net.UnknownHostException impossible) {
+        return trimmed;
+      }
+    }
+    return literalAddress(trimmed).map(InetAddress::getHostAddress).orElse(trimmed);
+  }
+
+  /** Whether {@code text} is an address or a CIDR range this list can match, for a command to check first. */
+  public static boolean validAddress(String text) {
+    String trimmed = text == null ? "" : text.strip();
+    int scope = trimmed.indexOf('%');
+    if (scope >= 0) trimmed = trimmed.substring(0, scope);
+    int slash = trimmed.indexOf('/');
+    if (slash < 0) return literalAddress(trimmed).isPresent();
+    Optional<InetAddress> network = literalAddress(trimmed.substring(0, slash));
+    return network.isPresent() && prefixLength(trimmed.substring(slash + 1), network) != null;
+  }
+
+  /**
+   * Whether a recorded address ban, in its normalised form, covers a connection's address.
+   *
+   * <p>A plain entry is an equality test. A range entry compares the leading {@code prefix} bits, and
+   * only within one address family: a /24 on IPv4 says nothing about any IPv6 address.
+   */
+  public static boolean covers(String banned, String address) {
+    int slash = banned.indexOf('/');
+    // A range asked about a range is "is this the same ban", which is what /gban asks before adding one.
+    if (slash < 0 || address.indexOf('/') >= 0) return banned.equals(normalise(Kind.ADDRESS, address));
+    Optional<InetAddress> network = literalAddress(banned.substring(0, slash));
+    Optional<InetAddress> candidate = literalAddress(normalise(Kind.ADDRESS, address));
+    Integer prefix = prefixLength(banned.substring(slash + 1), network);
+    if (network.isEmpty() || candidate.isEmpty() || prefix == null) return false;
+    byte[] left = network.get().getAddress();
+    byte[] right = candidate.get().getAddress();
+    if (left.length != right.length) return false;
+    mask(right, prefix);
+    return java.util.Arrays.equals(left, right);
+  }
+
+  /** The prefix length after the slash, or null when it is not a number the address family allows. */
+  private static Integer prefixLength(String text, Optional<InetAddress> network) {
+    if (network.isEmpty() || text.isEmpty() || text.length() > 3) return null;
+    for (int index = 0; index < text.length(); index++) {
+      if (text.charAt(index) < '0' || text.charAt(index) > '9') return null;
+    }
+    int prefix = Integer.parseInt(text);
+    return prefix <= network.get().getAddress().length * 8 ? prefix : null;
+  }
+
+  /** Clears every bit after the first {@code prefix}, in place. */
+  private static void mask(byte[] bytes, int prefix) {
+    for (int index = 0; index < bytes.length; index++) {
+      int bits = Math.max(0, Math.min(8, prefix - index * 8));
+      bytes[index] &= (byte) (0xFF << (8 - bits));
+    }
+  }
+
+  /**
+   * A literal address, or nothing. Passing an operator-supplied string to
+   * {@link InetAddress#getByName} would turn a command into a name lookup, so IPv4 is parsed here and
+   * built with {@code getByAddress}, which never resolves; anything containing a colon is an IPv6
+   * literal, which getByName validates without resolving either.
+   */
+  public static Optional<InetAddress> literalAddress(String text) {
+    try {
+      if (text.indexOf(':') >= 0) return Optional.of(InetAddress.getByName(text));
+      String[] parts = text.split("[.]", -1);
+      if (parts.length != 4) return Optional.empty();
+      byte[] octets = new byte[4];
+      for (int index = 0; index < 4; index++) {
+        String part = parts[index];
+        if (part.isEmpty() || part.length() > 3) return Optional.empty();
+        for (int digit = 0; digit < part.length(); digit++) {
+          if (part.charAt(digit) < '0' || part.charAt(digit) > '9') return Optional.empty();
+        }
+        int octet = Integer.parseInt(part);
+        if (octet > 255) return Optional.empty();
+        octets[index] = (byte) octet;
+      }
+      return Optional.of(InetAddress.getByAddress(octets));
+    } catch (java.net.UnknownHostException notALiteral) {
+      return Optional.empty();
+    }
   }
 
   /**
@@ -101,7 +205,7 @@ public final class BanList {
       boolean hit = switch (entry.kind()) {
         case NAME -> username != null && entry.value().equals(normalise(Kind.NAME, username));
         case ACCOUNT -> account != null && entry.value().equals(account.toString());
-        case ADDRESS -> address != null && entry.value().equals(address);
+        case ADDRESS -> address != null && covers(entry.value(), address);
       };
       if (hit) return Optional.of(entry);
     }
@@ -138,6 +242,8 @@ public final class BanList {
     Entry entry = new Entry(kind, normalised, reason, actor, System.currentTimeMillis(), expiresAt, alias);
     entries.add(entry);
     persist();
+    audit("BAN " + kind + " " + normalised + " by " + entry.actor() + " until "
+        + (entry.permanent() ? "forever" : java.time.Instant.ofEpochMilli(expiresAt)) + ": " + entry.reason());
     return entry;
   }
 
@@ -158,7 +264,7 @@ public final class BanList {
         entry.kind() == kind && entry.value().equals(normalised) && !entry.expired(now));
     // Expired entries for the same thing go with it, so a pardon leaves nothing behind.
     entries.removeIf(entry -> entry.kind() == kind && entry.value().equals(normalised));
-    if (removed) persist();
+    if (removed) { persist(); audit("UNBAN " + kind + " " + normalised); }
     return removed;
   }
 
@@ -168,6 +274,25 @@ public final class BanList {
   }
 
   /** Lifts whatever ban of any kind is held against this text, for a {@code /gunban} that is given one word. */
+  /** Records that a login was turned away by {@code entry}, for the audit log. */
+  public void refused(String username, String address, Entry entry) {
+    audit("REFUSED " + username + " from " + address + " by " + entry.kind() + " " + entry.value() + ": " + entry.reason());
+  }
+
+  /**
+   * One line to {@code bans.log}. Appended, never rewritten: the file is the history a dispute a week
+   * later is settled from, and it survives every edit to bans.txt. A failure to write it is one
+   * warning, since the ban itself is already in force.
+   */
+  private synchronized void audit(String line) {
+    try {
+      Files.writeString(audit, java.time.Instant.now().toString() + " " + line + System.lineSeparator(),
+          StandardCharsets.UTF_8, java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+    } catch (IOException unwritable) {
+      ConduitLog.warn("Could not append to " + audit + ": " + unwritable.getMessage());
+    }
+  }
+
   public synchronized boolean pardonAny(String value) {
     boolean removed = false;
     for (Kind kind : Kind.values()) if (pardon(kind, value)) removed = true;
@@ -248,7 +373,9 @@ public final class BanList {
     if (parts.length < 6) return null;
     try {
       // The seventh field, the name an account ban was made alongside, is newer than the file format.
-      return new Entry(Kind.valueOf(parts[0]), parts[1], unescape(parts[2]), unescape(parts[3]),
+      // Normalised on the way in too, so an address written by an older build still matches.
+      Kind kind = Kind.valueOf(parts[0]);
+      return new Entry(kind, normalise(kind, parts[1]), unescape(parts[2]), unescape(parts[3]),
           Long.parseLong(parts[4]), Long.parseLong(parts[5]), parts.length > 6 ? unescape(parts[6]) : "");
     } catch (IllegalArgumentException malformed) {
       // One unreadable line is one ban lost, not a proxy that will not start.
@@ -275,13 +402,7 @@ public final class BanList {
       out.append('\n');
     }
     try {
-      Path temporary = file.resolveSibling(FILE + ".tmp");
-      Files.writeString(temporary, out.toString(), StandardCharsets.UTF_8);
-      try {
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-      } catch (java.nio.file.AtomicMoveNotSupportedException notAtomic) {
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-      }
+      AtomicFiles.write(file, out.toString());
     } catch (IOException unwritable) {
       // The ban is in force either way; it is the surviving of a restart that was lost.
       ConduitLog.warn("Could not write " + file + ", so bans made now are lost on restart: "

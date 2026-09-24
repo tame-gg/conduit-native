@@ -17,7 +17,7 @@ import gg.tame.conduit.api.permission.PermissionSubject;
  * administers it. The commands every player may use ({@code /server} and its shortcuts,
  * {@code /hub}, {@code /ping}) carry no node, so they are unaffected.
  */
-public final class DefaultPermissionProvider implements PermissionProvider {
+public class DefaultPermissionProvider implements PermissionProvider {
   /** The operators in {@code [permissions]}, read on each check so a reload takes effect at once. */
   private final java.util.function.Supplier<gg.tame.conduit.config.PermissionSettings> settings;
 

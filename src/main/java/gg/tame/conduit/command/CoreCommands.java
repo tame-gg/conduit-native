@@ -36,7 +36,7 @@ public final class CoreCommands {
   /** Every /conduit subcommand, in help order. Drives both tab completion and the client graph. */
   public static final List<String> CONDUIT_SUBCOMMANDS = List.of("info", "plugins", "servers", "uptime",
       "dump", "heap", "reload", "metrics", "health", "maintenance", "drain", "undrain", "doctor",
-      "diagnostics", "attack", "cache", "help");
+      "diagnostics", "attack", "alert", "cache", "help");
   /**
    * The node each subcommand needs. One each, so that doctor never brings reload with it; drain and
    * undrain share one, being one switch. help has none: it lists only what the source may run.
@@ -50,11 +50,12 @@ public final class CoreCommands {
       java.util.Map.entry("health", Permissions.HEALTH), java.util.Map.entry("maintenance", Permissions.MAINTENANCE),
       java.util.Map.entry("drain", Permissions.DRAIN), java.util.Map.entry("undrain", Permissions.DRAIN),
       java.util.Map.entry("doctor", Permissions.DOCTOR), java.util.Map.entry("diagnostics", Permissions.DIAGNOSTICS),
-      java.util.Map.entry("attack", Permissions.ATTACK), java.util.Map.entry("cache", Permissions.CACHE));
+      java.util.Map.entry("attack", Permissions.ATTACK), java.util.Map.entry("alert", Permissions.ALERT),
+      java.util.Map.entry("cache", Permissions.CACHE));
   private static final java.util.Map<String, String> ALIASES = java.util.Map.of("version", "info", "attackmode", "attack");
   private static final Set<String> RESERVED = Set.of(
       "server", "send", "glist", "plist", "find", "alert", "ping", "hub", "gkick", "conduit",
-      "gban", "gunban", "gpardon", "gbanlist", "gwhitelist", "gwl");
+      "gban", "gunban", "gpardon", "gbanlist", "galts", "gmute", "gunmute", "gwarn", "gwhitelist", "gwl");
   private CoreCommands() {}
 
   public static void register(CommandManager manager, ServerRegistry registry, PlayerManager players) {
@@ -93,6 +94,18 @@ public final class CoreCommands {
     manager.register(new RegisteredCommand("gban", List.of(), Permissions.GBAN,
         (source, arguments) -> gban(source, runtime, players, arguments),
         (source, arguments) -> completeGban(players, arguments)));
+    manager.register(new RegisteredCommand("gmute", List.of(), Permissions.GMUTE,
+        (source, arguments) -> gmute(source, runtime, players, arguments),
+        (source, arguments) -> completePlayers(players, arguments)));
+    manager.register(new RegisteredCommand("gunmute", List.of(), Permissions.GMUTE,
+        (source, arguments) -> gunmute(source, runtime, players, arguments),
+        (source, arguments) -> completePlayers(players, arguments)));
+    manager.register(new RegisteredCommand("gwarn", List.of(), Permissions.GWARN,
+        (source, arguments) -> gwarn(source, players, arguments),
+        (source, arguments) -> completePlayers(players, arguments)));
+    manager.register(new RegisteredCommand("galts", List.of(), Permissions.GALTS,
+        (source, arguments) -> galts(source, runtime, arguments),
+        (source, arguments) -> completePlayers(players, arguments)));
     manager.register(new RegisteredCommand("gunban", List.of("gpardon"), Permissions.GBAN,
         (source, arguments) -> gunban(source, runtime, players, arguments),
         (source, arguments) -> completeBanned(runtime, arguments)));
@@ -160,7 +173,12 @@ public final class CoreCommands {
     }
     if (runtime != null) {
       if (runtime.health().isDraining(name) && !Permissions.allows(source, Permissions.DRAIN_BYPASS)) {
-        Messages.failure(source, name + " is draining.");
+        Messages.failure(source, name + " is draining; try again later.");
+        return;
+      }
+      var backend = registry.get(name);
+      if (backend.isPresent() && backend.get().full(runtime.playerManager().byServer(name).size())) {
+        Messages.failure(source, name + " is full (" + backend.get().maxPlayers() + " players).");
         return;
       }
       if (runtime.health().snapshot(name).health() == gg.tame.conduit.health.BackendHealth.UNHEALTHY) {
@@ -303,11 +321,18 @@ public final class CoreCommands {
   private static void gban(CommandSource source, ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
     if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
     if (arguments.isEmpty()) {
-      Messages.info(source, "Usage: /gban <player|address> [duration] [reason]");
-      Messages.info(source, "Duration is 30m, 2h, 7d, 4w or perm; leaving it out is permanent.");
+      Messages.info(source, "Usage: /gban <player|address|range> [duration] [reason]");
+      Messages.info(source, "Duration is 30m, 2h, 7d, 4w or perm; leaving it out is permanent. A range is CIDR: 203.0.113.0/24.");
       return;
     }
     String target = arguments.getFirst();
+    // Staff cannot ban themselves, by name or by an address that covers their own.
+    if (source instanceof gg.tame.conduit.api.player.Player self && (target.equalsIgnoreCase(self.username())
+        || BanList.looksLikeAddress(target) && BanList.validAddress(target)
+            && BanList.covers(BanList.normalise(BanList.Kind.ADDRESS, target), self.remoteAddress().getHostAddress()))) {
+      Messages.failure(source, "You cannot ban yourself.");
+      return;
+    }
     List<String> rest = arguments.subList(1, arguments.size());
     // The second word is a length only if it reads as one; otherwise it is the start of the reason.
     long expiresAt = BanList.PERMANENT;
@@ -333,16 +358,21 @@ public final class CoreCommands {
     }
 
     if (address) {
+      if (!BanList.validAddress(target)) {
+        Messages.failure(source, "Not an IP address or CIDR range: " + target);
+        return;
+      }
+      String banned = BanList.normalise(BanList.Kind.ADDRESS, target);
       // Refused whole rather than banned around: the address ban would keep them out at their next login anyway.
       for (TrackedPlayer tracked : players.all()) {
-        if (tracked instanceof gg.tame.conduit.api.player.Player api && api.remoteAddress().getHostAddress().equals(BanList.normalise(BanList.Kind.ADDRESS, target))
+        if (tracked instanceof gg.tame.conduit.api.player.Player api && BanList.covers(banned, api.remoteAddress().getHostAddress())
             && protectedFrom(source, api, Permissions.GBAN)) {
           Messages.failure(source, api.username() + " is on that address and cannot be banned by another player.");
           return;
         }
       }
       BanList.Entry entry = bans.ban(BanList.Kind.ADDRESS, target, reason, actor, expiresAt);
-      int kicked = kickMatching(players, player -> player.remoteAddress().getHostAddress().equals(entry.value()),
+      int kicked = kickMatching(players, player -> BanList.covers(entry.value(), player.remoteAddress().getHostAddress()),
           screen.render(reason, actor, entry.remaining(System.currentTimeMillis())));
       Messages.success(source, "Banned address " + entry.value() + " " + describeBan(entry)
           + (kicked > 0 ? " (" + kicked + (kicked == 1 ? " player" : " players") + " kicked)" : "") + ".");
@@ -442,6 +472,93 @@ public final class CoreCommands {
     if (actor.username().equalsIgnoreCase(username) || actor.uniqueId().equals(account)) return false;
     return runtime.protectedPlayers().contains(username, account)
         || runtime.configuration().ops().permissions().isOperator(username, account);
+  }
+
+  /**
+   * {@code /galts <player>}: the other accounts seen from any address this player has used. Names
+   * are as last seen, so a renamed alt shows its newest name; the account is what ties them.
+   */
+  private static void galts(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    if (arguments.isEmpty()) { Messages.info(source, "Usage: /galts <player>"); return; }
+    String target = arguments.getFirst();
+    var history = runtime.addresses();
+    var addresses = history.addressesOf(target, null);
+    if (addresses.isEmpty()) { Messages.failure(source, "No login from " + target + " is on record."); return; }
+    var alts = history.alts(target);
+    if (alts.isEmpty()) {
+      Messages.info(source, target + " has used " + addresses.size() + (addresses.size() == 1 ? " address" : " addresses")
+          + " and no other account has been seen from any of them.");
+      return;
+    }
+    Messages.info(source, alts.size() + (alts.size() == 1 ? " account has" : " accounts have") + " shared an address with " + target + ":");
+    long now = System.currentTimeMillis();
+    for (var alt : alts) {
+      boolean banned = runtime.bans().find(alt.username(), alt.account(), null).isPresent();
+      Messages.info(source, "  " + alt.username() + " (" + alt.address() + ", last seen "
+          + BanList.describeDuration(Math.max(0, now - alt.lastSeen())) + " ago)" + (banned ? " [banned]" : ""));
+    }
+  }
+
+  /** {@code /gmute <player> [duration] [reason]}: the player stays, and their chat stops reaching a backend. */
+  private static void gmute(CommandSource source, ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    if (arguments.isEmpty()) {
+      Messages.info(source, "Usage: /gmute <player> [duration] [reason]");
+      Messages.info(source, "Duration is 30m, 2h, 7d, 4w or perm; leaving it out is permanent.");
+      return;
+    }
+    Optional<TrackedPlayer> found = players.getByUsername(arguments.getFirst());
+    if (found.isEmpty()) { Messages.failure(source, "Player not found: " + arguments.getFirst() + " (only an online player can be muted)."); return; }
+    TrackedPlayer target = found.get();
+    if (target instanceof gg.tame.conduit.api.player.Player api && protectedFrom(source, api, Permissions.GMUTE)) {
+      Messages.failure(source, target.username() + " cannot be muted by another player.");
+      return;
+    }
+    List<String> rest = arguments.subList(1, arguments.size());
+    long expiresAt = BanList.PERMANENT;
+    if (!rest.isEmpty()) {
+      Optional<Long> parsed = BanList.parseExpiry(rest.getFirst());
+      if (parsed.isPresent()) { expiresAt = parsed.get(); rest = rest.subList(1, rest.size()); }
+    }
+    String reason = String.join(" ", rest).isBlank() ? "Muted." : String.join(" ", rest);
+    var entry = runtime.mutes().mute(target.uniqueId(), target.username(), reason, source.username(), expiresAt);
+    String length = entry.remaining(System.currentTimeMillis()).map(left -> "for " + left).orElse("permanently");
+    if (target instanceof gg.tame.conduit.api.player.Player api) {
+      api.sendMessage(Text.of("You have been muted " + length + ": " + reason).color(Messages.WARN));
+    }
+    Messages.success(source, "Muted " + target.username() + " " + length + ".");
+    notifyStaff(source, players, "muted " + target.username() + " " + length + ": " + reason);
+  }
+
+  /** {@code /gunmute <player>}. */
+  private static void gunmute(CommandSource source, ConduitRuntime runtime, PlayerManager players, List<String> arguments) {
+    if (runtime == null) { Messages.failure(source, "Runtime unavailable."); return; }
+    if (arguments.isEmpty()) { Messages.info(source, "Usage: /gunmute <player>"); return; }
+    String target = arguments.getFirst();
+    if (runtime.mutes().unmute(target)) {
+      players.getByUsername(target).filter(gg.tame.conduit.api.player.Player.class::isInstance)
+          .map(gg.tame.conduit.api.player.Player.class::cast)
+          .ifPresent(api -> api.sendMessage(Text.of("You are no longer muted.").color(Messages.LABEL)));
+      Messages.success(source, "Unmuted " + target + ".");
+      notifyStaff(source, players, "unmuted " + target);
+    } else {
+      Messages.failure(source, target + " is not muted.");
+    }
+  }
+
+  /** {@code /gwarn <player> <reason>}: the player is told, staff are told, nothing else changes. */
+  private static void gwarn(CommandSource source, PlayerManager players, List<String> arguments) {
+    if (arguments.size() < 2) { Messages.info(source, "Usage: /gwarn <player> <reason>"); return; }
+    Optional<TrackedPlayer> found = players.getByUsername(arguments.getFirst());
+    if (found.isEmpty() || !(found.get() instanceof gg.tame.conduit.api.player.Player api)) {
+      Messages.failure(source, "Player not found: " + arguments.getFirst());
+      return;
+    }
+    String reason = String.join(" ", arguments.subList(1, arguments.size()));
+    api.sendMessage(Text.of("[Warning] ").color(Messages.WARN).bold().append(Text.of(reason).color(Messages.WARN)));
+    Messages.success(source, "Warned " + api.username() + ".");
+    notifyStaff(source, players, "warned " + api.username() + ": " + reason);
   }
 
   /** {@code /gunban <player|address>}, which lifts a ban of any kind held against that word. */
@@ -682,6 +799,7 @@ public final class CoreCommands {
       case "doctor" -> doctor(source, runtime);
       case "diagnostics" -> diagnostics(source, runtime, registry);
       case "attack", "attackmode" -> attack(source, runtime, arguments.subList(1, arguments.size()));
+      case "alert" -> alert(source, arguments.subList(1, arguments.size()));
       case "cache" -> cache(source, runtime, arguments.subList(1, arguments.size()));
       case "help" -> help(source);
       case "shutdown" -> shutdown(source, runtime, arguments.subList(1, arguments.size()));
@@ -729,7 +847,7 @@ public final class CoreCommands {
    */
   private static final List<Group> CONDUIT_GROUPS = List.of(
       new Group("Status", List.of("info", "servers", "health", "uptime", "metrics", "plugins")),
-      new Group("Operate", List.of("maintenance", "drain", "undrain", "attack", "reload")),
+      new Group("Operate", List.of("maintenance", "drain", "undrain", "attack", "alert", "reload")),
       new Group("Diagnose", List.of("doctor", "diagnostics", "dump", "heap", "cache")));
 
   /** Group headings padded to one width, so the names beside them line up in a fixed-width chat. */
@@ -964,6 +1082,23 @@ public final class CoreCommands {
     Messages.info(source, "Usage: /conduit maintenance <on|off|status>");
   }
 
+  /**
+   * {@code /conduit alert [message]}: posts a test alert to the configured webhook and reports how it
+   * went, so a webhook that never fires can be found out from the console instead of guessed at.
+   */
+  private static void alert(CommandSource source, List<String> words) {
+    if (!gg.tame.conduit.ops.Alerts.enabled()) {
+      Messages.failure(source, "No webhook is set. Put [alerts] webhook-url = \"https://...\" in conduit.toml (the [alerts] header must be uncommented too) and /conduit reload.");
+      return;
+    }
+    String message = words.isEmpty() ? "Test alert from Conduit, sent by " + source.username() + "." : String.join(" ", words);
+    Messages.info(source, "Sending the alert...");
+    gg.tame.conduit.ops.Alerts.send(message).thenAccept(outcome -> {
+      if (outcome.startsWith("delivered")) Messages.success(source, "Alert " + outcome + ".");
+      else Messages.failure(source, "Alert not delivered: " + outcome);
+    });
+  }
+
   private static void attack(CommandSource source, ConduitRuntime runtime, List<String> arguments) {
     if (runtime == null) {
       Messages.failure(source, "Runtime unavailable.");
@@ -1001,7 +1136,7 @@ public final class CoreCommands {
       Messages.info(source, "Usage: /conduit cache invalidate <source>");
       return;
     }
-    Optional<InetAddress> address = literalAddress(arguments.get(1));
+    Optional<InetAddress> address = BanList.literalAddress(arguments.get(1));
     if (address.isEmpty()) {
       Messages.failure(source, "Not an IP address: " + arguments.get(1));
       return;
@@ -1009,35 +1144,6 @@ public final class CoreCommands {
     boolean removed = runtime.modded().invalidateCache(address.get());
     if (removed) Messages.success(source, "Mod handshake cache invalidated for source.");
     else Messages.info(source, "No cache entries for that source.");
-  }
-
-  /**
-   * A literal address, or nothing. The cache is keyed by the address Conduit accepted a connection
-   * from, so a host name is never the right answer here -- and passing one to
-   * {@link InetAddress#getByName} would turn a command into a name lookup of an operator-supplied
-   * string. IPv4 is parsed here and built with {@code getByAddress}, which never resolves; anything
-   * containing a colon is an IPv6 literal, which getByName validates without resolving either.
-   */
-  private static Optional<InetAddress> literalAddress(String text) {
-    try {
-      if (text.indexOf(':') >= 0) return Optional.of(InetAddress.getByName(text));
-      String[] parts = text.split("[.]", -1);
-      if (parts.length != 4) return Optional.empty();
-      byte[] octets = new byte[4];
-      for (int index = 0; index < 4; index++) {
-        String part = parts[index];
-        if (part.isEmpty() || part.length() > 3) return Optional.empty();
-        for (int digit = 0; digit < part.length(); digit++) {
-          if (part.charAt(digit) < '0' || part.charAt(digit) > '9') return Optional.empty();
-        }
-        int octet = Integer.parseInt(part);
-        if (octet > 255) return Optional.empty();
-        octets[index] = (byte) octet;
-      }
-      return Optional.of(InetAddress.getByAddress(octets));
-    } catch (java.net.UnknownHostException notALiteral) {
-      return Optional.empty();
-    }
   }
 
   private static void drain(CommandSource source, ConduitRuntime runtime, ServerRegistry registry, List<String> arguments, boolean enable) {

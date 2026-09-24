@@ -11,6 +11,8 @@ public interface Plugin {
   ConduitProxy proxy();
   Logger getLogger();
   Path dataDirectory();
+  /** A key-value store kept in this plugin's data directory between restarts. */
+  default PluginStore store() { return PluginStore.in(dataDirectory()); }
   Scheduler getScheduler();
   void onLoad();
   void onEnable();

@@ -90,6 +90,10 @@ public final class StaffPermissionTests {
         proxy.runtime.setPermissionProvider(new NativeApiTests.TestPlugin("perms"), provider);
         Player staffPlayer = proxy.runtime.player("staff").orElseThrow();
 
+        proxy.runtime.commands().execute(staffPlayer, "gban staff");
+        proxy.runtime.commands().execute(staffPlayer, "gban " + staffPlayer.remoteAddress().getHostAddress());
+        require(proxy.runtime.player("staff").isPresent() && proxy.runtime.bans().active().isEmpty(),
+            "staff cannot ban themselves, by name or by their own address");
         proxy.runtime.commands().execute(staffPlayer, "gkick mod");
         proxy.runtime.commands().execute(staffPlayer, "gban mod");
         proxy.runtime.commands().execute(staffPlayer, "gkick vip");

@@ -235,7 +235,9 @@ final class ChannelWriter extends OutputStream {
   }
 
   private void ensure(int extra) throws IOException {
-    if (filled + extra <= pending.length && sent == 0) return;
+    // Compacting on every write with a sent prefix copied the whole unsent tail per packet while a
+    // peer was behind; the tail only has to move when the new bytes would not otherwise fit.
+    if (filled + extra <= pending.length) return;
     if (sent > 0) {
       System.arraycopy(pending, sent, pending, 0, filled - sent);
       filled -= sent;

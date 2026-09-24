@@ -79,7 +79,8 @@ public final class ForcedHosts {
   }
 
   /** Case, the trailing root dot, surrounding space and any {@code :port} all dropped. */
-  static String normalize(String host) {
+  /** Shared with per-host status, which is keyed by the same form. */
+  public static String normalize(String host) {
     String text = host == null ? "" : host.strip();
     // A bracketed IPv6 literal carries colons of its own, so only the port after the brackets goes.
     if (text.startsWith("[")) {

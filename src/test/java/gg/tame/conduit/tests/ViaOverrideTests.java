@@ -88,6 +88,10 @@ public final class ViaOverrideTests {
       require(text.contains("$" + variable + " = \"" + entry.getValue() + "\""),
           "fetch-via.ps1 pins $" + variable + " to " + entry.getValue() + ", which via-bundled.properties"
               + " claims is bundled (" + fileName + ")");
+      // The hash a first install verifies against is the one the script verifies against too.
+      String hash = ViaArtifacts.bundledHashes().get(entry.getKey());
+      require(text.contains("\"" + fileName + "\"") && text.contains(hash),
+          "fetch-via.ps1 carries the same SHA-256 for " + fileName + " as via-bundled.properties");
     }
   }
 

@@ -5,7 +5,7 @@ Velocity or Velocity-CTD fork, and it has no dependency on either implementation
 
 `tame-gg/conduit` is intentionally separate and untouched.
 
-Current version: **0.9.7**. Native plugin API version: **1**.
+Current version: **0.9.8**. Native plugin API version: **1**.
 
 ## License
 
@@ -67,7 +67,8 @@ Corresponding Source, and it would be out of date within weeks -- Via supports e
 release long before a Conduit release can, and 5.12.0 registers Minecraft 26.3.
 
 A first start with nothing in `lib/via` installs the set this build is pinned to from
-`repo.viaversion.com`, each jar checked against the SHA-256 published beside it. After that, with
+`repo.viaversion.com`, each jar checked against the SHA-256 this build carries for it, so a mirror or
+a tampered download cannot put its own code on the class path. After that, with
 `[updates] via = true` (the default), Conduit looks for a newer release on each start and downloads
 it into the same place, keeping the jars it replaces in `lib/via/superseded`. The Apache-2.0
 libraries Via needs -- fastutil, Netty, Guava -- are in the jar, so what is fetched is Via itself
@@ -294,11 +295,17 @@ port = 25570
 [servers.survival]
 host = "127.0.0.1"
 port = 25571
+max-players = 40
 
 [routing]
 initial = ["lobby"]
 fallback = ["lobby", "survival"]
 ```
+
+`max-players` is how many the proxy sends to a server before it is full; 0, the default, is no limit.
+A join skips a full server for the next candidate, a switch to it is refused, and a fallback never
+lands on one. It counts the players the proxy has on that server, so a player who joined the backend
+directly is not seen.
 
 `routing.initial` is tried in order after authentication. Matching native protocol on a later server
 does not jump the queue (a 26.2 client still starts on lobby when lobby is first). If the current backend socket dies,
@@ -331,11 +338,14 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/send <server> <server>` — move everyone on a backend (bounded concurrency; a player who fails to move stays put)
 * `/send current <server>` — move yourself
 * `/glist`, `/plist <server>`, `/find <player>`, `/alert <message>`, `/ping`, `/hub`, `/gkick <player> [reason]`
-* `/gban <player|address> [duration] [reason]` — ban from the whole network; no duration means permanent
+* `/gban <player|address|range> [duration] [reason]` — ban from the whole network; no duration means permanent; a range is CIDR
   (in online mode a name is looked up at Mojang first: a name no account has is refused, and a real
   one's account UUID is banned with it, so a name change does not get round the ban)
 * `/gunban <player|address>` — lift it
 * `/gbanlist [page]` — every ban in force: the reason, who made it and how long it has left
+* `/galts <player>` — every other account seen from an address this player has used, with when, and whether it is banned; from `addresses.txt` beside the configuration
+* `/gmute <player> [duration] [reason]`, `/gunmute <player>` — the player stays but their chat never reaches a backend; kept in `mutes.txt`. Commands still work, so they can still `/server` and ask for help
+* `/gwarn <player> <reason>` — the player is shown the warning and staff are told; nothing else changes
 * `/gwhitelist <on|off|add|remove|list|clear|status>` — close the network to all but a list
 * `/conduit` — the subcommands you may run; `/conduit info` is the branded version line plus current server and counts
 * `/conduit servers` — name + Online/Offline status (more detail than `/server`, still compact)
@@ -344,6 +354,7 @@ Minecraft-proxy UX, not a chat dashboard. No ASCII boxes, click-to-connect, or a
 * `/conduit drain|undrain <server>` — rolling-restart drain
 * `/conduit doctor` / `/conduit diagnostics` — operator checks (no secrets)
 * `/conduit attack <on|off|status>` — runtime attack-mode tightening
+* `/conduit alert [message]` — post a test alert to `[alerts] webhook-url` and report whether it was delivered
 * `/conduit cache invalidate <address>` — drop a mod-handshake cache entry
 * `/conduit uptime`, `/conduit metrics` — operator readouts
 * `/conduit dump` — counters, version and server names to a text file; safe to paste into an issue
@@ -387,7 +398,26 @@ unchanged.
 ```toml
 [messaging]
 bungeecord-channel = true
+trusted-servers = []
 ```
+
+### Alerts
+
+```toml
+[alerts]
+webhook-url = "https://discord.com/api/webhooks/..."
+```
+
+One URL is posted to when a backend goes unhealthy or recovers, when attack mode is engaged or
+lifted, and when the proxy comes up. The body carries both a `content` field, which Discord reads,
+and a `text` field, which Slack and most generic receivers read, so no format setting is needed.
+Posts are made in the background and never waited for. Reloads live.
+
+`trusted-servers` names the backends allowed to reach players on *other* servers: `ConnectOther`,
+`IPOther`, `KickPlayer`, `KickPlayerRaw`, `UUIDOther` and `Message` to `ALL`. Every backend may act
+on and ask about its own players. An empty list trusts every server, as BungeeCord and Velocity do;
+listing your lobbies keeps a minigame or test server from kicking or moving the whole network. A
+refused message is one `WARN` line naming the server and the subchannel.
 
 Supported: `Connect`, `ConnectOther`, `IP`, `IPOther`, `PlayerCount`, `PlayerList`, `GetServers`,
 `GetServer`, `UUID`, `UUIDOther`, `ServerIP`, `Message`, `MessageRaw`, `KickPlayer`, `Forward` and
@@ -424,6 +454,7 @@ login attempt. Nothing here is read from `conduit.toml` and nothing needs `/cond
 /gban Steve griefing               a permanent ban, with a reason
 /gban Steve 7d griefing            the same for a week; 30m, 2h, 7d, 4w and perm are understood
 /gban 198.51.100.7 open proxy      an address instead of a name
+/gban 198.51.100.0/24 open proxies a whole range, written as CIDR; IPv6 works the same way
 /gunban Steve
 /gwhitelist on
 /gwhitelist add Steve
@@ -449,6 +480,17 @@ a `whitelist.txt` that cannot be read at all leaves the whitelist **off** — an
 must not be the reason a whole network is shut out.
 
 ## Server list
+
+A hostname can carry its own MOTD and icon, so a forced host is a branded entry point:
+
+```toml
+[status.host."pvp.example.com"]
+motd = "<red>PvP</red> — the arena"
+favicon = "pvp-icon.png"
+```
+
+Either line may be left out to keep the network's. Reloads live.
+
 
 ```toml
 [status]
@@ -647,6 +689,28 @@ Pipeline (already framed / decompressed / decrypted):
 `PlayerSession` tracks `clientProtocol` and `backendProtocol` independently for that future work.
 
 ### Permission nodes
+
+Without a permissions plugin, a `permissions.toml` beside `conduit.toml` gives groups:
+
+```toml
+[groups.default]
+permissions = ["conduit.command.find"]
+
+[groups.mod]
+inherits = ["default"]
+permissions = ["conduit.command.gkick", "conduit.notify.moderation", "-conduit.command.gban"]
+
+[users]
+"Steve" = ["mod"]
+"069a79f4-44e9-4726-a5be-fca90e38aaf5" = ["mod"]
+```
+
+Everyone is in `default`. A node written with a leading `-` is denied outright and beats a grant from
+any other group. `conduit.admin` stands for every `conduit.` node. Users are names or UUIDs; in
+offline mode a name is only what the client claims, so use UUIDs there. The file is read at start and
+on `/conduit reload`, and a plugin that installs its own provider takes over from it. Without the
+file, `[permissions] operators` in `conduit.toml` answers as before.
+
 
 Asked through `PermissionProvider`, which a permissions plugin replaces (LuckPerms does, through the
 Velocity layer). The default grants a player no node, except that the operators named in
@@ -865,6 +929,11 @@ backend connect failures, Via translation failures, plugin task failures.
 
 ## Native plugin API
 
+A plugin keeps small state between restarts with `store()`, a key-value store in `store.properties`
+under its data directory: `store().put("last-run", "...")`, `store().get("last-run")`,
+`store().keys()`. Every write goes to disk at once through a temporary file and a rename.
+
+
 Package `gg.tame.conduit.api`. Plugins are JARs in `plugins/` with `conduit-plugin.yml`:
 
 ```yaml
@@ -910,15 +979,15 @@ public final class ExamplePlugin extends ConduitPlugin {
 }
 ```
 
-To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.7.jar` (the version is
+To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-0.9.8.jar` (the version is
 `Conduit.VERSION`) and its `-sources.jar`: the `gg.tame.conduit.api` classes and nothing else. Then:
 
 ```powershell
-javac --release 21 -cp build/conduit-api-0.9.7.jar -d classes src/com/example/ExamplePlugin.java
+javac --release 21 -cp build/conduit-api-0.9.8.jar -d classes src/com/example/ExamplePlugin.java
 jar --create --file plugins/example.jar conduit-plugin.yml -C classes .
 ```
 
-With Gradle: `compileOnly(files("path/to/conduit-api-0.9.7.jar"))`. The proxy provides the API at run time,
+With Gradle: `compileOnly(files("path/to/conduit-api-0.9.8.jar"))`. The proxy provides the API at run time,
 so do not ship it inside the plugin. Use `gg.tame.conduit.api` only: the rest of Conduit (`session`,
 `network`, `protocol` and so on) is internal and changes without notice. `ApiBoundaryTests` checks that the
 API compiles on its own and that this example loads.

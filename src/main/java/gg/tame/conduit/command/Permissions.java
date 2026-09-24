@@ -38,6 +38,9 @@ public final class Permissions {
   public static final String ATTACK = "conduit.command.attack";
   public static final String CACHE = "conduit.command.cache";
   public static final String GBAN = "conduit.command.gban";
+  public static final String GALTS = "conduit.command.galts";
+  public static final String GMUTE = "conduit.command.gmute";
+  public static final String GWARN = "conduit.command.gwarn";
   public static final String GWHITELIST = "conduit.command.gwhitelist";
   /** Held by players no other player may kick or ban, whatever that player may do. */
   public static final String PUNISH_EXEMPT = "conduit.punish.exempt";

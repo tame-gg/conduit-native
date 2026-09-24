@@ -58,6 +58,22 @@ public final class ViaArtifacts {
     return versions;
   }
 
+  /** Artifact to the SHA-256 of its pinned jar, from the same file as {@link #bundled()}. */
+  public static Map<String, String> bundledHashes() throws IOException {
+    Properties properties = new Properties();
+    try (InputStream stream = ViaArtifacts.class.getResourceAsStream(BUNDLED_RESOURCE)) {
+      if (stream == null) throw new IOException("this build is missing " + BUNDLED_RESOURCE);
+      properties.load(stream);
+    }
+    Map<String, String> hashes = new LinkedHashMap<>();
+    for (String name : NAMES) {
+      String hash = properties.getProperty("sha256." + name);
+      if (hash == null || hash.isBlank()) throw new IOException(BUNDLED_RESOURCE + " has no sha256 for " + name);
+      hashes.put(name, hash.strip().toLowerCase(java.util.Locale.ROOT));
+    }
+    return hashes;
+  }
+
   /** A jar of one artifact found in a directory: its version and its file. */
   public record Found(String version, Path file) {}
 

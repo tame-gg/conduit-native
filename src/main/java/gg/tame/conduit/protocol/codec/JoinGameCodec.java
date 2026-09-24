@@ -88,6 +88,7 @@ public final class JoinGameCodec {
     int entityId = input.readInt();
     boolean hardcore = input.readBoolean();
     int worldCount = MinecraftInput.varInt(input);
+    if (worldCount < 0 || worldCount > 1024) throw new IOException("world key count " + worldCount);
     List<String> worlds = new ArrayList<>(worldCount);
     for (int i = 0; i < worldCount; i++) worlds.add(MinecraftInput.string(input, 32767));
     int maxPlayers = MinecraftInput.varInt(input);

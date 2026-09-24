@@ -60,7 +60,17 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
   private final ModdedService modded;
   private final ConduitEventManager events = new ConduitEventManager();
   private final ConduitScheduler scheduler = new ConduitScheduler();
-  private final PermissionProvider DEFAULT_PERMISSIONS = new DefaultPermissionProvider(() -> configuration().ops().permissions());
+  private final gg.tame.conduit.ops.AddressHistory addresses;
+  private final gg.tame.conduit.ops.Mutes mutes;
+  public gg.tame.conduit.ops.Mutes mutes() { return mutes; }
+  public gg.tame.conduit.ops.AddressHistory addresses() { return addresses; }
+  /**
+   * What answers until a plugin installs a provider: {@code permissions.toml} beside the
+   * configuration when there is one, else the operators list. The file is read again on reload.
+   */
+  private final gg.tame.conduit.permission.FilePermissionProvider filePermissions =
+      new gg.tame.conduit.permission.FilePermissionProvider(() -> configuration().ops().permissions());
+  private final PermissionProvider DEFAULT_PERMISSIONS = filePermissions;
   /** Provider and owner change together, so a disable can never reset another plugin's provider. */
   private volatile PermissionGrant permissions = new PermissionGrant(null, DEFAULT_PERMISSIONS);
   private final gg.tame.conduit.command.ConsoleCommandSource console = new gg.tame.conduit.command.ConsoleCommandSource();
@@ -86,6 +96,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.configuration = configuration;
     this.pluginsDirectory = pluginsDirectory;
     this.configDirectory = configDirectory == null ? Path.of(".") : configDirectory;
+    gg.tame.conduit.ops.Alerts.configure(configuration.ops().metrics().alertWebhook());
     this.health = new BackendHealthService(new ServerRegistry(configuration), configuration.health());
     this.selector = new BackendSelector(configuration, health);
     this.maintenance = new MaintenanceService(this.configDirectory, configuration.maintenance());
@@ -94,6 +105,9 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     this.bans = new gg.tame.conduit.ops.BanList(this.configDirectory);
     this.whitelist = new gg.tame.conduit.ops.Whitelist(this.configDirectory);
     this.protectedPlayers = new gg.tame.conduit.ops.ProtectedPlayers(this.configDirectory);
+    this.addresses = new gg.tame.conduit.ops.AddressHistory(this.configDirectory);
+    this.mutes = new gg.tame.conduit.ops.Mutes(this.configDirectory);
+    filePermissions.reload(this.configDirectory);
     this.versionGate = new VersionGate(configuration.versions());
     this.gracefulShutdown = new GracefulShutdown(configuration.shutdown());
     this.security = new SecurityService(configuration.security());
@@ -363,6 +377,10 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       live.add("modded.*");
       // Read from the configuration on every ping, so replacing it below is all it takes.
       live.add("status.*");
+      gg.tame.conduit.ops.Alerts.configure(next.ops().metrics().alertWebhook());
+      live.add("alerts.*");
+      filePermissions.reload(configDirectory);
+      live.add("permissions.toml");
       // Read from the configuration at every login, the same way.
       live.add("forced-hosts.*");
       this.configuration = current.withOps(next.ops());

@@ -208,7 +208,7 @@ public final class ConfigRewriter {
    * Every {@code section.key} these lines mention, set or commented out -- what "this file already has
    * a line for" means when deciding whether the shipped file offers something it does not.
    */
-  private static Set<String> keys(List<String> lines) {
+  static Set<String> keys(List<String> lines) {
     Set<String> keys = new LinkedHashSet<>();
     String section = "";
     for (String raw : lines) {

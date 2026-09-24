@@ -19,7 +19,7 @@ public record OpsSettings(
     BanSettings bans,
     PermissionSettings permissions
 ) {
-  public static final int CURRENT_SCHEMA = 5;
+  public static final int CURRENT_SCHEMA = 6;
 
   public OpsSettings {
     if (schemaVersion < 0) throw new IllegalArgumentException("ops.schema-version must be >= 0");

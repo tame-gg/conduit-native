@@ -271,6 +271,20 @@ public final class ConnectionSelector implements AutoCloseable {
     }
   }
 
+  /**
+   * Runs work that may block -- a close that waits out a linger, a disconnect event with plugins
+   * listening -- on the endings pool rather than the calling worker. A mass kick closes many
+   * sessions from the workers relaying them, and each close spent on a worker is one less thread
+   * for everyone still playing.
+   */
+  public void runOffWorker(Runnable task) {
+    try {
+      endings.execute(task);
+    } catch (RejectedExecutionException stopping) {
+      task.run();
+    }
+  }
+
   @Override public void close() {
     running = false;
     for (Loop loop : loops) loop.stop();
@@ -370,6 +384,14 @@ public final class ConnectionSelector implements AutoCloseable {
           dead = true;
           ConduitLog.error("connection selector " + index + " stopped: the connections it watched are"
               + " no longer being read, and the proxy should be restarted", fatal);
+          // The sessions it watched are told so, rather than left counted as players nobody reads.
+          // finish() hands the ending to the endings pool and only queues the key cancel, so the
+          // dead loop is not asked to do anything it no longer can.
+          for (SelectionKey key : new java.util.ArrayList<>(selector.keys())) {
+            if (key.attachment() instanceof Registration registration) {
+              try { finish(registration, "connection selector stopped", true); } catch (RuntimeException ignored) { }
+            }
+          }
           break;
         }
       }

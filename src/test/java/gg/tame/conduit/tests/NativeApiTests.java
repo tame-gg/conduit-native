@@ -949,9 +949,19 @@ public final class NativeApiTests {
     Fixture(List<Backend> backends, List<String> initial, List<String> fallback, HealthSettings health) throws Exception {
       this(backends, initial, fallback, TempFiles.dir("conduit-native-api").resolve("plugins"), OFFLINE, null, null, health);
     }
+    Fixture(List<Backend> backends, List<String> initial, List<String> fallback, gg.tame.conduit.config.MessagingSettings messaging) throws Exception {
+      this(backends, initial, fallback, TempFiles.dir("conduit-native-api").resolve("plugins"), OFFLINE, null, null,
+          new HealthSettings(false, 10_000, 1_500, 3, 2), messaging);
+    }
     Fixture(List<Backend> backends, List<String> initial, List<String> fallback, Path plugins,
             AuthenticationSettings auth, PlayerAuthenticator authenticator, StatusSettings status, HealthSettings health) throws Exception {
-      OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, health, null, null, null, null, null, status);
+      this(backends, initial, fallback, plugins, auth, authenticator, status, health, null);
+    }
+    Fixture(List<Backend> backends, List<String> initial, List<String> fallback, Path plugins,
+            AuthenticationSettings auth, PlayerAuthenticator authenticator, StatusSettings status, HealthSettings health,
+            gg.tame.conduit.config.MessagingSettings messaging) throws Exception {
+      OpsSettings ops = new OpsSettings(OpsSettings.CURRENT_SCHEMA, null, health, null, null, null, null, null, status,
+          null, null, messaging, null);
       ConduitConfiguration configuration = new ConduitConfiguration(new InetSocketAddress("127.0.0.1", reservePort()), 1 << 20,
           ForwardingMode.NONE, Optional.empty(), backends.stream().map(Backend::server).toList(), initial, fallback,
           auth, Optional.empty(), ops);
@@ -1014,6 +1024,10 @@ public final class NativeApiTests {
       } catch (IOException ended) { }
     }
     void send(byte[] packet) throws IOException { write(current, packet); }
+    /** To every player on this backend at once, as a server kicks everyone while it stops. */
+    void sendAll(byte[] packet) throws IOException {
+      synchronized (sockets) { for (Socket socket : sockets) if (!socket.isClosed()) write(socket, packet); }
+    }
     /** The backend going away under a player, as a crash or restart would. */
     void drop() throws IOException { current.close(); }
     List<byte[]> received(Predicate<byte[]> match) {

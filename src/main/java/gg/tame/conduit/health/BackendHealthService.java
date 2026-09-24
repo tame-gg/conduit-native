@@ -105,6 +105,7 @@ public final class BackendHealthService implements AutoCloseable {
         if (state.successes >= settings.successThreshold()) state.health = BackendHealth.HEALTHY;
         if (previous != state.health && state.health == BackendHealth.HEALTHY) {
           ConduitLog.info("Backend " + name + " is healthy.");
+          gg.tame.conduit.ops.Alerts.send("Backend " + name + " is healthy again.");
         }
       } else {
         // Keep the last successful advertisement. Falling back to the client
@@ -118,6 +119,7 @@ public final class BackendHealthService implements AutoCloseable {
         if (previous != state.health && state.health == BackendHealth.UNHEALTHY) {
           ConduitLog.warn("Backend " + name + " is unhealthy.");
           ConduitMetrics.current().backendUnhealthy();
+          gg.tame.conduit.ops.Alerts.send("Backend " + name + " is unhealthy: players are being routed elsewhere.");
         }
       }
     }

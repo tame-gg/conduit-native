@@ -62,6 +62,10 @@ public final class BungeeCordMessages {
    */
   private final java.util.concurrent.atomic.AtomicLong handled = new java.util.concurrent.atomic.AtomicLong();
 
+  /** The subchannels that act on players other than the one whose connection carried the message. */
+  private static final java.util.Set<String> REACHES_OTHERS =
+      java.util.Set.of("ConnectOther", "IPOther", "KickPlayer", "KickPlayerRaw", "UUIDOther");
+
   public BungeeCordMessages(ConduitRuntime runtime) { this.runtime = runtime; }
 
   /** How many messages have been answered on this channel, for {@code /conduit doctor}. */
@@ -90,6 +94,16 @@ public final class BungeeCordMessages {
             + subchannel + ", from '" + sender.currentServer().name() + "'). Conduit answers it.");
       } else {
         ConduitLog.debug(channel + " " + subchannel + " from '" + sender.currentServer().name() + "'");
+      }
+      // A backend can always act on and ask about its own players. Reaching another server's --
+      // kicking them, moving them, reading their address, messaging everyone -- is for the servers
+      // the operator listed, so one minigame or test server is not a way to the whole network.
+      String from = sender.currentServer().name();
+      boolean trusted = runtime.configuration().ops().messaging().trusts(from);
+      if (!trusted && REACHES_OTHERS.contains(subchannel)) {
+        ConduitLog.warn("'" + from + "' sent " + subchannel + " on " + channel + ", which is refused: it is not in"
+            + " messaging.trusted-servers. Add it there if that backend should reach players on other servers.");
+        return true;
       }
       switch (subchannel) {
         case "Connect" -> connect(sender, in.readUTF());
@@ -179,19 +193,27 @@ public final class BungeeCordMessages {
           Text text = subchannel.equals("MessageRaw")
               ? gg.tame.conduit.text.TextCodec.fromJson(body)
               : gg.tame.conduit.config.StatusSettings.parseMotd(sectionToAmpersand(body));
-          if (ALL.equalsIgnoreCase(who)) for (var player : runtime.players().all()) player.sendMessage(text);
-          else player(who).ifPresent(target -> target.sendMessage(text));
+          if (ALL.equalsIgnoreCase(who)) {
+            if (!trusted) {
+              ConduitLog.warn("'" + from + "' sent " + subchannel + " to ALL on " + channel + ", which is refused: it"
+                  + " is not in messaging.trusted-servers.");
+              break;
+            }
+            for (var player : runtime.players().all()) player.sendMessage(text);
+          } else {
+            player(who).ifPresent(target -> target.sendMessage(text));
+          }
         }
         case "KickPlayer" -> {
           String who = in.readUTF();
           String reason = in.readUTF();
-          player(who).ifPresent(target -> target.disconnect(reason));
+          player(who).filter(BungeeCordMessages::kickable).ifPresent(target -> target.disconnect(reason));
         }
         case "KickPlayerRaw" -> {
           // KickPlayer's JSON form, as MessageRaw is Message's.
           String who = in.readUTF();
           Text reason = gg.tame.conduit.text.TextCodec.fromJson(in.readUTF());
-          player(who).ifPresent(target -> target.disconnect(reason));
+          player(who).filter(BungeeCordMessages::kickable).ifPresent(target -> target.disconnect(reason));
         }
         case "Forward" -> {
           String server = in.readUTF();
@@ -314,6 +336,17 @@ public final class BungeeCordMessages {
     }
     // Back to the backend that asked, and to nobody else.
     sender.sendPluginMessageToServer(channel, bytes.toByteArray());
+  }
+
+  /**
+   * Whether a backend may disconnect this player. Staff who hold {@code conduit.punish.exempt} are
+   * out of reach of {@code /gkick} from another player, and a plugin on one backend is not more
+   * trusted than that.
+   */
+  private static boolean kickable(Player target) {
+    if (!gg.tame.conduit.command.Permissions.allows(target, gg.tame.conduit.command.Permissions.PUNISH_EXEMPT)) return true;
+    ConduitLog.debug("A backend asked to kick " + target.username() + ", who is exempt from punishment; refused.");
+    return false;
   }
 
   private Optional<Player> player(String username) {

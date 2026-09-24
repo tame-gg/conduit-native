@@ -6,7 +6,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -71,13 +70,7 @@ public final class ProtectedPlayers {
     out.append("# so /gban cannot reach them while they are offline. Written at each login and leave; edit only while the proxy is stopped.\n");
     for (Map.Entry<UUID, String> entry : names.entrySet()) out.append(entry.getKey()).append('\t').append(entry.getValue()).append('\n');
     try {
-      Path temporary = file.resolveSibling(FILE + ".tmp");
-      Files.writeString(temporary, out.toString(), StandardCharsets.UTF_8);
-      try {
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-      } catch (java.nio.file.AtomicMoveNotSupportedException notAtomic) {
-        Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
-      }
+      AtomicFiles.write(file, out.toString());
     } catch (IOException unwritable) {
       ConduitLog.warn("Could not write " + file + ", so who is protected from /gban is forgotten on restart: " + unwritable.getMessage());
     }

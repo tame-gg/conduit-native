@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.config;
 
+import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.log.ConduitLog;
 import gg.tame.conduit.protocol.ProtocolCatalog;
 import gg.tame.conduit.protocol.ProtocolVersion;
@@ -90,9 +91,39 @@ public final class ConfigurationLoader {
     }
     try {
       ConduitConfiguration configuration = build(path, values, serverOrder, createSecret);
+      // The commonest way a setting lands in the wrong section: its line was uncommented under a
+      // header that was not, so it sits in the section above, where it used to be ignored and its
+      // default quietly used -- a webhook that never fired was the report. One that belongs to
+      // exactly one other section is read as that section's, and the file is read again with it there.
+      boolean moved = false;
+      for (String key : new java.util.TreeSet<>(values.keySet())) {
+        if (values.read.contains(key)) continue;
+        String name = key.substring(key.lastIndexOf('.') + 1);
+        List<String> homes = values.read.stream().filter(read -> read.endsWith("." + name) && !read.startsWith("servers."))
+            .map(read -> read.substring(0, read.length() - name.length() - 1)).distinct().toList();
+        if (homes.size() != 1 || values.containsKey(homes.getFirst() + "." + name)) continue;
+        String home = homes.getFirst() + "." + name;
+        ConduitLog.warn(key + " in " + file + " is read as " + home + ": " + name + " belongs under [" + homes.getFirst()
+            + "], and its line sits under another header (most likely the [" + homes.getFirst() + "] header above it is still commented out)");
+        values.put(home, values.remove(key));
+        values.origins.put(home, values.origins.remove(key));
+        moved = true;
+      }
+      if (moved) configuration = build(path, values, serverOrder, createSecret);
       // A misspelt setting was silently ignored, and its default quietly used in its place.
       for (String key : new java.util.TreeSet<>(values.keySet())) {
         if (!values.read.contains(key)) ConduitLog.warn("Unknown setting " + key + " in " + file + " is ignored");
+      }
+      // A fallback list that only names the server the player is on leaves them nowhere to go when it
+      // stops: they are disconnected from the whole network, which reads as fallback not working.
+      if (configuration.backends().size() > 1) {
+        for (String start : configuration.initialBackends()) {
+          boolean elsewhere = configuration.fallbackBackends().stream().anyMatch(name -> !name.equalsIgnoreCase(start));
+          if (!elsewhere) {
+            ConduitLog.warn("routing.fallback in " + file + " names no server other than " + start + ", so a player on " + start
+                + " is disconnected from the network when it stops. Add another server to routing.fallback to move them instead.");
+          }
+        }
       }
       VersionGateSettings gate = configuration.versions();
       // The other way round, and the more expensive mistake: rules written but switched off. Every
@@ -119,7 +150,7 @@ public final class ConfigurationLoader {
     InetSocketAddress listener = new InetSocketAddress(required(values, "listener.host"), port(values, "listener.port"));
     // Unresolved, it failed only at bind, as an UnresolvedAddressException with no message at all.
     if (listener.isUnresolved()) throw new IllegalArgumentException("listener.host must be an IP address or a host name that resolves, such as 0.0.0.0 or 127.0.0.1");
-    int maxFrame = integer(values, "listener.max-frame-bytes");
+    int maxFrame = optionalInteger(values, "listener.max-frame-bytes", 1_048_576);
     ForwardingMode mode = ForwardingMode.parse(required(values, "forwarding.mode"));
     Path configDirectory = path.toAbsolutePath().getParent();
     // Modern forwarding needs a secret and there is nothing useful to choose, so
@@ -162,7 +193,9 @@ public final class ConfigurationLoader {
       catch (IllegalArgumentException unknown) {
         throw new IllegalArgumentException(loadersKey + " may only name vanilla, fabric, quilt, forge or neoforge (" + unknown.getMessage() + ")");
       }
-      servers.add(new BackendServer(name, address, loaders));
+      int maxPlayers = optionalInteger(values, prefix + ".max-players", 0);
+      if (maxPlayers < 0) throw new IllegalArgumentException(prefix + ".max-players must be 0 (no limit) or more");
+      servers.add(new BackendServer(name, address, loaders, maxPlayers));
     }
     ConduitConfiguration configuration = new ConduitConfiguration(listener, maxFrame, mode, secret, servers,
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
@@ -263,10 +296,23 @@ public final class ConfigurationLoader {
 
   private static MetricsSettings metrics(Map<String, String> values) {
     String key = "metrics.prometheus-address";
-    if (optionalString(values, key, "").isBlank()) return MetricsSettings.defaults();
-    InetSocketAddress address = parseAddress(values, key);
-    if (address.isUnresolved()) throw new IllegalArgumentException(key + " must be an IP address or a host name that resolves, with a port");
-    return new MetricsSettings(Optional.of(address));
+    Optional<InetSocketAddress> prometheus = Optional.empty();
+    if (!optionalString(values, key, "").isBlank()) {
+      InetSocketAddress address = parseAddress(values, key);
+      if (address.isUnresolved()) throw new IllegalArgumentException(key + " must be an IP address or a host name that resolves, with a port");
+      prometheus = Optional.of(address);
+    }
+    Optional<java.net.URI> webhook = Optional.empty();
+    String url = optionalString(values, "alerts.webhook-url", "").strip();
+    if (!url.isBlank()) {
+      java.net.URI parsed;
+      try { parsed = new java.net.URI(url); } catch (java.net.URISyntaxException bad) { parsed = null; }
+      if (parsed == null || parsed.getHost() == null || !"https".equalsIgnoreCase(parsed.getScheme()) && !"http".equalsIgnoreCase(parsed.getScheme())) {
+        throw new IllegalArgumentException("alerts.webhook-url must be an http:// or https:// URL, found " + url);
+      }
+      webhook = Optional.of(parsed);
+    }
+    return new MetricsSettings(prometheus, webhook);
   }
 
   private static BanSettings bans(Map<String, String> values) {
@@ -286,7 +332,7 @@ public final class ConfigurationLoader {
 
   private static MessagingSettings messaging(Map<String, String> values) {
     return new MessagingSettings(optionalBoolean(values, "messaging.bungeecord-channel",
-        MessagingSettings.DEFAULT_BUNGEECORD_CHANNEL));
+        MessagingSettings.DEFAULT_BUNGEECORD_CHANNEL), Set.copyOf(optionalList(values, "messaging.trusted-servers")));
   }
 
   private static UpdateSettings updates(Map<String, String> values) {
@@ -334,7 +380,36 @@ public final class ConfigurationLoader {
         StatusSettings.FaviconPolicy.parse(optionalString(values, "status.favicon-policy", "plugins")),
         optionalInteger(values, "status.player-sample", StatusSettings.DEFAULT_PLAYER_SAMPLE),
         optionalBoolean(values, "status.player-sample-server", false),
-        optionalBoolean(values, "status.prevents-chat-reports", false));
+        optionalBoolean(values, "status.prevents-chat-reports", false),
+        hostStatus(values, configDirectory));
+  }
+
+  /**
+   * {@code [status.host."pvp.example.com"]} blocks: a MOTD and a favicon shown to clients that
+   * pinged that hostname, so one proxy fronts several branded entry points. The host is the part
+   * of the key between the prefix and the last dot, quotes off.
+   */
+  private static Map<String, StatusSettings.HostStatus> hostStatus(Map<String, String> values, Path configDirectory) {
+    String prefix = "status.host.";
+    Map<String, Optional<Text>> motds = new LinkedHashMap<>();
+    Map<String, Optional<String>> favicons = new LinkedHashMap<>();
+    for (String key : new java.util.TreeSet<>(values.keySet())) {
+      if (!key.startsWith(prefix)) continue;
+      int dot = key.lastIndexOf('.');
+      String host = gg.tame.conduit.routing.ForcedHosts.normalize(unquote(key.substring(prefix.length(), dot)));
+      String setting = key.substring(dot + 1);
+      if (host.isEmpty()) throw new IllegalArgumentException(key + ": the host name is empty");
+      switch (setting) {
+        case "motd" -> motds.put(host, Optional.of(StatusSettings.parseMotd(values.get(key))));
+        case "favicon" -> favicons.put(host, Optional.ofNullable(values.get(key)).filter(file -> !file.isBlank())
+            .flatMap(file -> StatusSettings.favicon(configDirectory.resolve(file).normalize())));
+        default -> throw new IllegalArgumentException(key + ": a host takes motd and favicon, not " + setting);
+      }
+    }
+    Map<String, StatusSettings.HostStatus> hosts = new LinkedHashMap<>();
+    for (String host : motds.keySet()) hosts.put(host, new StatusSettings.HostStatus(motds.get(host), favicons.getOrDefault(host, Optional.empty())));
+    for (String host : favicons.keySet()) hosts.putIfAbsent(host, new StatusSettings.HostStatus(Optional.empty(), favicons.get(host)));
+    return Map.copyOf(hosts);
   }
 
   private static TranslationSettings translation(Map<String, String> values) {

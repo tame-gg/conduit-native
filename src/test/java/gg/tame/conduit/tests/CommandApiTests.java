@@ -502,7 +502,7 @@ public final class CommandApiTests {
     // real files. Without those nodes they answer "no permission", which is still not "unknown".
     Set<String> nodes = Set.of(Permissions.INFO, Permissions.PLUGINS, Permissions.SERVERS,
         Permissions.UPTIME, Permissions.RELOAD, Permissions.METRICS, Permissions.HEALTH, Permissions.MAINTENANCE,
-        Permissions.DRAIN, Permissions.DOCTOR, Permissions.DIAGNOSTICS, Permissions.ATTACK, Permissions.CACHE);
+        Permissions.DRAIN, Permissions.DOCTOR, Permissions.DIAGNOSTICS, Permissions.ATTACK, Permissions.ALERT, Permissions.CACHE);
     RecordingPlayer admin = new RecordingPlayer("Op", "lobby", nodes);
     List<String> expected = new ArrayList<>(CoreCommands.CONDUIT_SUBCOMMANDS);
     expected.removeAll(List.of("dump", "heap"));

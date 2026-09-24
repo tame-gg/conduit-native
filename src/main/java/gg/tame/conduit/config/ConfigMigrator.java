@@ -31,7 +31,10 @@ public final class ConfigMigrator {
   public static Result migrate(Path path) throws IOException {
     if (!Files.isRegularFile(path)) throw new IllegalArgumentException("config file missing: " + path);
     List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-    Set<String> present = indexKeys(lines);
+    // A commented "# key = value" counts as present: that is how the shipped file offers a default.
+    Set<String> present = new LinkedHashSet<>(ConfigRewriter.keys(lines));
+    // The scan leaves the schema line out on purpose (a rewrite must not carry it), so it is asked for here.
+    if (ConfigTemplate.schemaVersionOf(lines) > 0) present.add("ops.schema-version");
     List<String> added = new ArrayList<>();
     StringBuilder appendix = new StringBuilder();
 
@@ -140,20 +143,4 @@ public final class ConfigMigrator {
     return Map.entry(key, line);
   }
 
-  private static Set<String> indexKeys(List<String> lines) {
-    Set<String> values = new LinkedHashSet<>();
-    String section = "";
-    for (String raw : lines) {
-      String line = raw.strip();
-      if (line.isEmpty() || line.startsWith("#")) continue;
-      if (line.startsWith("[") && line.endsWith("]")) {
-        section = line.substring(1, line.length() - 1);
-        continue;
-      }
-      int equals = line.indexOf('=');
-      if (equals < 1 || section.isEmpty()) continue;
-      values.add(section + "." + line.substring(0, equals).strip());
-    }
-    return values;
-  }
 }
