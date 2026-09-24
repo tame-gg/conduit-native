@@ -18,7 +18,7 @@ if (-not $OutDir) { $OutDir = Join-Path $root "dist\source\third-party" }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 # Downloads name Conduit's build scripts and nothing else: no user, machine or path.
-$userAgent = "Conduit-Development/0.9.8-SNAPSHOT"
+$userAgent = "Conduit-Development/1.0.0-SNAPSHOT"
 
 # Keep in step with scripts/fetch-via.ps1.
 $viaVersion = "5.12.0"
