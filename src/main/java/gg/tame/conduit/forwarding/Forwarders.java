@@ -2,15 +2,17 @@
 package gg.tame.conduit.forwarding;
 
 import gg.tame.conduit.config.ConduitConfiguration;
-import gg.tame.conduit.config.ForwardingMode;
 import java.io.IOException;
 
-/** Configures only modes with a concrete implementation; unsupported modes never silently degrade. */
+/** The forwarder for the configured mode; the secret is read here, at start, for the modes that use it. */
 public final class Forwarders {
   private Forwarders() { }
   public static PlayerInfoForwarder create(ConduitConfiguration configuration) throws IOException {
-    if (configuration.forwardingMode() == ForwardingMode.NONE) return new NoneForwarder();
-    if (configuration.forwardingMode() == ForwardingMode.MODERN) return new ModernForwarder(ForwardingSecret.load(configuration.forwardingSecretFile().orElseThrow()));
-    throw new UnsupportedOperationException("forwarding mode " + configuration.forwardingMode().name().toLowerCase() + " is not implemented");
+    return switch (configuration.forwardingMode()) {
+      case NONE -> new NoneForwarder();
+      case MODERN -> new ModernForwarder(ForwardingSecret.load(configuration.forwardingSecretFile().orElseThrow()));
+      case LEGACY -> LegacyForwarder.legacy();
+      case BUNGEEGUARD -> LegacyForwarder.bungeeGuard(ForwardingSecret.load(configuration.forwardingSecretFile().orElseThrow()));
+    };
   }
 }

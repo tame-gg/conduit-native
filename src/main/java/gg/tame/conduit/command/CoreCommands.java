@@ -1105,9 +1105,14 @@ public final class CoreCommands {
       return;
     }
     if (arguments.isEmpty() || arguments.getFirst().equalsIgnoreCase("status")) {
-      boolean active = runtime.security().attackMode().isActive();
-      source.sendMessage(Text.of("Attack mode: ").color(Messages.LABEL)
-          .append(Text.of(active ? "ON" : "OFF").color(active ? Messages.WARN : Messages.OK).bold()));
+      var mode = runtime.security().attackMode();
+      boolean active = mode.isActive();
+      var line = Text.of("Attack mode: ").color(Messages.LABEL)
+          .append(Text.of(active ? "ON" : "OFF").color(active ? Messages.WARN : Messages.OK).bold());
+      if (active) line = line.append(Text.of(mode.isAutomatic()
+          ? " (switched on automatically by the connection rate; lifts after a quiet minute)"
+          : " (switched on by command)").color(Messages.BODY));
+      source.sendMessage(line);
       return;
     }
     if (arguments.getFirst().equalsIgnoreCase("on")) {

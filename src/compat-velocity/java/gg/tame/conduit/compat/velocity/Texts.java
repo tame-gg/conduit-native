@@ -129,4 +129,27 @@ final class Texts {
       }
     };
   }
+
+  /**
+   * A signed message as the chat line its chat type makes of it, the way a vanilla client decorates
+   * one: the unsigned content where the message has one, else its text, with the sender's name and the
+   * target in the places the built-in chat types give them. A type that is not built in is shown as
+   * plain chat.
+   */
+  static Component chat(net.kyori.adventure.chat.SignedMessage message, net.kyori.adventure.chat.ChatType.Bound bound) {
+    Component content = message.unsignedContent() != null ? message.unsignedContent() : Component.text(message.message());
+    Component name = bound.name();
+    Component target = bound.target() == null ? Component.empty() : bound.target();
+    return switch (bound.type().key().asString()) {
+      case "minecraft:say_command" -> Component.translatable("chat.type.announcement", name, content);
+      case "minecraft:emote_command" -> Component.translatable("chat.type.emote", name, content);
+      case "minecraft:msg_command_incoming" -> Component.translatable("commands.message.display.incoming", NamedTextColor.GRAY, name, content)
+          .decorate(TextDecoration.ITALIC);
+      case "minecraft:msg_command_outgoing" -> Component.translatable("commands.message.display.outgoing", NamedTextColor.GRAY, target, content)
+          .decorate(TextDecoration.ITALIC);
+      case "minecraft:team_msg_command_incoming" -> Component.translatable("chat.type.team.text", target, name, content);
+      case "minecraft:team_msg_command_outgoing" -> Component.translatable("chat.type.team.sent", target, name, content);
+      default -> Component.translatable("chat.type.text", name, content);
+    };
+  }
 }

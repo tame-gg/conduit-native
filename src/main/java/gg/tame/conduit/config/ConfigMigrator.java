@@ -82,7 +82,9 @@ public final class ConfigMigrator {
         entry("security.channel-guard.kick-list", "kick-list = []")));
     appendMissingSection(appendix, present, added, "security.attack-mode", List.of(
         entry("security.attack-mode.throttle-max-attempts", "throttle-max-attempts = 8"),
-        entry("security.attack-mode.bot-strike-threshold", "bot-strike-threshold = 3")));
+        entry("security.attack-mode.bot-strike-threshold", "bot-strike-threshold = 3"),
+        entry("security.attack-mode.auto-trip-per-second", "auto-trip-per-second = 0"),
+        entry("security.attack-mode.known-sources-only", "known-sources-only = false")));
     appendMissingSection(appendix, present, added, "modded", List.of(
         entry("modded.enabled", "enabled = true"),
         entry("modded.known-packs-limit", "known-packs-limit = 1024"),
@@ -99,7 +101,8 @@ public final class ConfigMigrator {
     appendMissingSection(appendix, present, added, "updates", List.of(
         entry("updates.via", "via = " + UpdateSettings.DEFAULT_VIA),
         entry("updates.check-only", "check-only = false"),
-        entry("updates.timeout-ms", "timeout-ms = " + UpdateSettings.DEFAULT_TIMEOUT_MS)));
+        entry("updates.timeout-ms", "timeout-ms = " + UpdateSettings.DEFAULT_TIMEOUT_MS),
+        entry("updates.conduit", "conduit = " + UpdateSettings.DEFAULT_CONDUIT)));
     if (!present.contains("ops.schema-version")) {
       if (!appendix.isEmpty()) appendix.append('\n');
       appendix.append("# Written by Conduit. It is how a newer version knows which settings to add to\n");

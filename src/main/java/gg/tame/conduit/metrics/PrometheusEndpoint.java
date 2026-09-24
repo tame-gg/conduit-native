@@ -106,6 +106,12 @@ public final class PrometheusEndpoint implements AutoCloseable {
     gauge(out, "conduit_plugins", "Enabled plugins, of every format.", runtime.plugins().plugins().size());
     gauge(out, "conduit_shutting_down", "1 while the proxy is shutting down.", runtime.shuttingDown() ? 1 : 0);
     gauge(out, "conduit_maintenance_active", "1 while maintenance mode turns players away.", runtime.isMaintenanceActive() ? 1 : 0);
+    gauge(out, "conduit_attack_mode_active", "1 while attack mode is on.", runtime.security().attackMode().isActive() ? 1 : 0);
+    ProcessHandle.current().info().startInstant().ifPresent(start ->
+        gauge(out, "conduit_uptime_seconds", "Seconds since the proxy's process started.", java.time.Duration.between(start, java.time.Instant.now()).toSeconds()));
+    Runtime jvm = Runtime.getRuntime();
+    gauge(out, "conduit_jvm_memory_used_bytes", "Heap in use.", jvm.totalMemory() - jvm.freeMemory());
+    gauge(out, "conduit_jvm_memory_max_bytes", "The most heap the JVM will take.", jvm.maxMemory());
 
     var health = runtime.selector().health();
     if (health != null) {

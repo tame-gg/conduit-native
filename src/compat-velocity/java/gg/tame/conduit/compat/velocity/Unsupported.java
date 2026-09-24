@@ -39,8 +39,14 @@ final class Unsupported {
     @Override default void sendMessage(Identified source, Component message, MessageType type) { deliver(message); }
     @Override default void sendMessage(Identity source, Component message, MessageType type) { deliver(message); }
     @Override default void sendMessage(Component message, ChatType.Bound boundChatType) { deliver(message); }
-    @Override default void sendMessage(SignedMessage signedMessage, ChatType.Bound boundChatType) { throw api("Audience.sendMessage(SignedMessage)"); }
-    @Override default void deleteMessage(SignedMessage.Signature signature) { throw api("Audience.deleteMessage"); }
+    /**
+     * As a system line with the chat type's decoration, never into the client's signed chat: a message
+     * the proxy put there would take a place in the chain the backend counts, and the client's next
+     * message would no longer agree with the backend's count.
+     */
+    @Override default void sendMessage(SignedMessage signedMessage, ChatType.Bound boundChatType) { deliver(Texts.chat(signedMessage, boundChatType)); }
+    /** Nothing, as Adventure has it for an audience that shows no signed chat; a player overrides it. */
+    @Override default void deleteMessage(SignedMessage.Signature signature) { }
     @Override default void sendActionBar(Component message) { throw api("Audience.sendActionBar"); }
     @Override default void sendPlayerListHeaderAndFooter(Component header, Component footer) { throw api("Audience.sendPlayerListHeaderAndFooter"); }
     @Override default void sendPlayerListHeader(Component header) { throw api("Audience.sendPlayerListHeader"); }

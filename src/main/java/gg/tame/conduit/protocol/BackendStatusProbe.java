@@ -71,12 +71,13 @@ public final class BackendStatusProbe {
 
   /** Everything a status answer says, beyond the {@link Advertisement} health and routing use. */
   private record Answer(Advertisement advertisement, Text description, Optional<String> favicon,
-                        List<ServerListPingEvent.SamplePlayer> samplePlayers) {
+                        List<ServerListPingEvent.SamplePlayer> samplePlayers,
+                        Optional<gg.tame.conduit.api.server.ModInfo> modInfo) {
     ServerStatus toStatus(String server, Instant when) {
       Advertisement ad = advertisement;
       return new ServerStatus(server, ServerAvailability.ONLINE, OptionalInt.of(ad.protocol()), ad.name(),
           count(ad.onlinePlayers()), count(ad.maxPlayers()), OptionalLong.of(ad.latencyMillis()), when,
-          description, favicon, samplePlayers);
+          description, favicon, samplePlayers, modInfo);
     }
     private static OptionalInt count(int value) { return value >= 0 ? OptionalInt.of(value) : OptionalInt.empty(); }
   }
@@ -173,7 +174,8 @@ public final class BackendStatusProbe {
           ? Optional.of(icon) : Optional.empty();
       boolean preventsChatReports = Boolean.TRUE.equals(root.get("preventsChatReports"));
       return Optional.of(new Answer(new Advertisement(protocol.intValue(), name, online, max, latencyMillis, preventsChatReports),
-          description == null ? Text.empty() : TextCodec.fromTree(description), favicon, sample));
+          description == null ? Text.empty() : TextCodec.fromTree(description), favicon, sample,
+          gg.tame.conduit.modded.ForgeModList.fromStatus(root)));
     } catch (StackOverflowError nested) {
       // A backend can nest a description as deep as its answer is long; the parsers recurse.
       return Optional.empty();

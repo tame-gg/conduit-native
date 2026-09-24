@@ -542,7 +542,8 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x14),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x23),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x2E),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x08)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x08),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x30)));
 
   /** 1.19.2 (protocol 760), derived from 1.19 (protocol 759): 55 changed mappings. */
   public static final ProtocolRevision V1_19_2 = new ProtocolRevision(
@@ -607,7 +608,9 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x15),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x24),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x2F),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x18),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x33)));
 
   /** 1.19.3 (protocol 761), derived from 1.19.2 (protocol 760): 57 changed mappings. */
   public static final ProtocolRevision V1_19_3 = new ProtocolRevision(
@@ -674,7 +677,11 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE, 0x0C),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION, 0x13),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x14),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x08)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x08),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x03),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x20),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x16),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x31)));
 
   /** 1.19.4 (protocol 762), derived from 1.19.3 (protocol 761): 59 changed mappings. */
   public static final ProtocolRevision V1_19_4 = new ProtocolRevision(
@@ -743,7 +750,10 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_PLUGIN_MESSAGE, 0x0D),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION, 0x14),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x15),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x06),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x19),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x35)));
 
   /** 1.20.2 (protocol 764), derived from 1.20.4 (protocol 765): 42 changed mappings. */
   public static final ProtocolRevision V1_20_2 = new ProtocolRevision(
@@ -886,7 +896,11 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x1B),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x2B),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x36),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0B)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0B),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND_SIGNED, 0x05),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x07),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x1C),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x39)));
 
   /** 1.21.3 (protocol 768), derived from 1.21 (protocol 767): 56 changed mappings. */
   public static final ProtocolRevision V1_21_3 = new ProtocolRevision(
@@ -955,7 +969,11 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x1D),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x2D),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x38),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0D)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0D),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x04),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND_SIGNED, 0x06),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x08),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x3B)));
 
   /** 1.21.4 (protocol 769), derived from 1.21.3 (protocol 768): 3 changed mappings. */
   public static final ProtocolRevision V1_21_4 = new ProtocolRevision(
@@ -1028,7 +1046,9 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_VIEW_DISTANCE, 0x58),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_VIEW_POSITION, 0x57),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_BORDER_INIT, 0x25),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x3B)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x3B),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x1B),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x3A)));
 
   /** 1.21.6 (protocol 771), derived from 1.21.5 (protocol 770): 14 changed mappings. */
   public static final ProtocolRevision V1_21_6 = new ProtocolRevision(
@@ -1052,7 +1072,10 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x1E),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x30),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x3C),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0E)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0E),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x05),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND_SIGNED, 0x07),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x09)));
 
   /** 1.21.8 (protocol 772), derived from 1.21.6 (protocol 771): 0 changed mappings. */
   public static final ProtocolRevision V1_21_8 = new ProtocolRevision(
@@ -1117,7 +1140,9 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_TIME, 0x6F),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_VIEW_DISTANCE, 0x5D),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_UPDATE_VIEW_POSITION, 0x5C),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_BORDER_INIT, 0x2A)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_WORLD_BORDER_INIT, 0x2A),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x1F),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x3F)));
 
   /** 1.21.11 (protocol 774), derived from 1.21.10 (protocol 773): 0 changed mappings. */
   public static final ProtocolRevision V1_21_11 = new ProtocolRevision(
@@ -1193,7 +1218,11 @@ public final class ProtocolRevisions {
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_POSITION_LOOK, 0x1F),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x31),
           PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_SWING_ARM, 0x3F),
-          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0F)));
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0F),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x06),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND_SIGNED, 0x08),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x0A),
+          PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x41)));
 
   /**
    * Registration order matters: a revision may derive from a protocol that an

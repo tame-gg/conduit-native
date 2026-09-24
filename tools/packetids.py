@@ -177,6 +177,14 @@ KINDS: dict[tuple[str, str, str], list[str]] = {
     # 1.19 split the serverbound chat packet into signed chat_message and
     # chat_command; older versions carry both through plain "chat".
     (STATE_PLAY, TO_SERVER, "PLAY_CHAT"): ["chat_message", "chat"],
+    # Secure chat (1.19+): the client's chat session, the signed command split off in 1.20.5, the
+    # 1.19.3+ acknowledgement (1.19.1's has another layout, see resolve), and what Conduit reads or
+    # writes toward the client for Player.getIdentifiedKey, spoofed chat and deleteMessage.
+    (STATE_PLAY, TO_SERVER, "PLAY_CHAT_SESSION_UPDATE"): ["chat_session_update"],
+    (STATE_PLAY, TO_SERVER, "PLAY_CHAT_COMMAND_SIGNED"): ["chat_command_signed"],
+    (STATE_PLAY, TO_SERVER, "PLAY_CHAT_ACKNOWLEDGEMENT"): ["message_acknowledgement"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_DELETE_MESSAGE"): ["hide_message"],
+    (STATE_PLAY, TO_CLIENT, "PLAY_PLAYER_CHAT"): ["player_chat"],
     (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_PLUGIN_MESSAGE"): ["custom_payload"],
     (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_FINISH"): ["finish_configuration"],
     (STATE_CONFIG, TO_CLIENT, "CONFIGURATION_KEEP_ALIVE"): ["keep_alive"],
@@ -203,6 +211,8 @@ def resolve(protocol_json: dict, key: tuple[str, str, str]) -> int | None:
     by_name = {name: int(code, 16) for code, name in mappings.items()}
     if kind == "PLAY_CHAT" and direction == TO_CLIENT and "system_chat" in by_name:
         return None  # modern versions carry server chat as PLAY_SYSTEM_CHAT instead
+    if kind == "PLAY_CHAT_ACKNOWLEDGEMENT" and "chat_session_update" not in by_name:
+        return None  # 1.19.1-1.19.2 acknowledge with a list of signatures, not a 1.19.3+ count
     for name in candidates:
         if name in by_name:
             return by_name[name]

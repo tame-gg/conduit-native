@@ -37,6 +37,13 @@ public interface Player extends CommandSource {
    * {@code GameProfileRequestEvent} listener replaced them with. An offline player has none.
    */
   default GameProfile gameProfile() { return new GameProfile(uniqueId(), username(), java.util.List.of()); }
+  /**
+   * Replaces the properties of {@link #gameProfile()}. Backends hear of them through forwarding on the
+   * player's next connection to one; the backend the player is on now keeps what it was told.
+   *
+   * @return false when this player cannot take new properties, which this default cannot
+   */
+  default boolean setGameProfileProperties(List<GameProfile.Property> properties) { return false; }
   /** Whether the client arrived by a Transfer packet from another server (a 1.20.5+ handshake with intent 3). */
   default boolean transferred() { return false; }
   /**
@@ -159,14 +166,28 @@ public interface Player extends CommandSource {
   /**
    * Puts {@code entry} on this player's tab list, or updates the proxy's entry with the same id. The
    * proxy's entries stay across server switches and are sent again where the client dropped them; the
-   * backend's entries are never touched. Sent to 1.8 and newer clients except 1.20.1, which Conduit
-   * has no Player Info table for yet; for 1.7 and 1.20.1 the entry is only remembered.
+   * backend's entries are left alone. A 1.7 client, whose list names entries by text, lists it under
+   * its display name (as legacy text, else its name, cut to 16 characters) with its latency only.
    */
   void addTabListEntry(TabListEntry entry);
   /** Takes the proxy's entry with this id off the tab list; false when the proxy has none. */
   boolean removeTabListEntry(UUID id);
   /** The proxy's own entries on this player's tab list, in the order they were added. */
   List<TabListEntry> tabListEntries();
+  /**
+   * The backend's entries on this player's tab list, as its Player Info packets have told the client
+   * since its Join Game, which starts them afresh on each server. A 1.7 entry has no UUID and is named
+   * by the offline-mode UUID of the text it is listed under.
+   */
+  List<TabListEntry> backendTabListEntries();
+  /**
+   * Shows the backend's entry with {@code entry}'s id on the client as {@code entry} says, profile
+   * aside, which stays the backend's; the backend's own next update of a field replaces it. A 1.7
+   * client is sent the latency only. False when the backend has no entry with that id.
+   */
+  boolean updateBackendTabListEntry(TabListEntry entry);
+  /** Takes the backend's entry with this id off the client's tab list; false when the backend has none. */
+  boolean removeBackendTabListEntry(UUID id);
 
   // Sounds, by name. A sound is sent only while the client stands in a world, and is dropped rather
   // than held when it does not (before its first Join Game, or while a switch reconfigures it).
@@ -178,6 +199,13 @@ public interface Player extends CommandSource {
   void playSound(Sound sound);
   /** Plays {@code sound} at a position in the player's current world. Every client from 1.7. */
   void playSound(Sound sound, double x, double y, double z);
+  /**
+   * Plays {@code sound} following {@code emitter}, another player (or this one) on the same backend,
+   * by the entity id that backend gave them. Only 1.19.3+ clients, as for {@link #playSound(Sound)};
+   * nothing is sent when the emitter is on another backend or has not joined one yet. This default
+   * sends nothing.
+   */
+  default void playSound(Sound sound, Player emitter) { }
   /**
    * Stops sounds the client is playing: those named {@code name} (null for any) in {@code source}
    * (null for every source). From 1.9.3 clients; 1.7 and 1.8 have no way to stop one and are sent nothing.
@@ -193,16 +221,32 @@ public interface Player extends CommandSource {
    * with {@code /} as a command, anything else as a chat message. Only the backend hears it; the proxy's
    * own commands and its chat and command events do not.
    *
-   * <p>A 1.19+ client signs what it says, and the proxy cannot sign for it, so for such a client only a
-   * command can be sent, as the unsigned command a 1.20.5+ client sends itself. A 1.20.5+ backend
-   * refuses a command whose arguments it expects signed, such as {@code /msg}, and may disconnect the
-   * player over it.
+   * <p>A 1.19+ client signs what it says, and the proxy cannot sign for it: such a client is sent as a
+   * client with chat signing off would send it, unsigned. Its account of the signed chat it has seen is
+   * the one the backend already holds, so the client's own next message still agrees with the
+   * backend's. A backend with {@code enforce-secure-profile=true} refuses unsigned chat from a player
+   * who has a chat key, and may disconnect them over it. From 1.20.5 a command goes as the unsigned
+   * command alone, which a backend refuses for a command whose arguments it expects signed, such as
+   * {@code /msg} or {@code /me}.
    *
    * @return false, with nothing sent, when the player is not in Play on a backend
    * @throws IllegalArgumentException for input longer than the client's chat box takes: 256 characters, 100 before 1.11
-   * @throws UnsupportedOperationException for a chat message from a 1.19+ client, or a command from a 1.19 to 1.20.4 one
    */
   default boolean spoofChatInput(String input) { return false; }
+  /**
+   * The chat key the client sent: a 1.19 to 1.19.2 client's in its Login Start, a 1.19.3+ client's in
+   * the game once it is there. Empty for an older client, one with chat signing off, and every
+   * client of an offline-mode network, whose clients have no key to send.
+   */
+  default java.util.Optional<ChatSession> chatSession() { return java.util.Optional.empty(); }
+  /**
+   * Shows the signed chat message with {@code signature} as deleted on a 1.19.1+ client, as a server's
+   * Delete Chat does; one the client does not have is ignored. Nothing about the message's chain changes.
+   *
+   * @return false, with nothing sent, for an older client or one not in Play
+   * @throws IllegalArgumentException for a 1.19.3+ client and a signature that is not 256 bytes
+   */
+  default boolean deleteChatMessage(byte[] signature) { return false; }
   /** What {@link #updateCustomChatCompletions} does with the strings it is given. */
   enum ChatCompletions { ADD, REMOVE, SET }
   /**
@@ -218,6 +262,14 @@ public interface Player extends CommandSource {
    * @return false, with nothing sent, for an older client or one neither configuring nor in Play
    */
   default boolean setServerLinks(List<ServerLink> links) { return false; }
+  /**
+   * Closes the dialog the client is showing, whoever opened it. Sent to 26.2 and later clients, the
+   * dialog releases whose packet ids Conduit's tables carry; 1.21.6 to 26.1 have dialogs too but are
+   * sent nothing.
+   *
+   * @return false, with nothing sent, for any other client or one neither configuring nor in Play
+   */
+  default boolean closeDialog() { return false; }
   /**
    * Stores {@code data} on a 1.20.5+ client under {@code key}, a namespaced key such as
    * {@code myplugin:token} ({@code minecraft:} when it has no namespace). The client keeps it when it is

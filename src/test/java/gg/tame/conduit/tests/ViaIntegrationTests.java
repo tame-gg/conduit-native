@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 package gg.tame.conduit.tests;
 
-import com.viaversion.viaversion.api.protocol.version.ProtocolVersion;
 import gg.tame.conduit.config.TranslationSettings;
 import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.TranslationSupport;
@@ -30,7 +29,9 @@ public final class ViaIntegrationTests {
     require(ConduitViaSupport.knowsProtocol(393), "Via knows 1.13");
     require(ConduitViaSupport.knowsProtocol(765), "Via knows 1.20.4");
     require(ConduitViaSupport.knowsProtocol(776), "Via knows 26.2");
-    require(ProtocolVersion.getClosest("26.3") == null, "26.3 not registered in Via 5.11.0");
+    require(ConduitViaSupport.knowsProtocol(777), "Via knows 26.3");
+    require(ConduitViaSupport.supportsTranslation(776, 777), "Via path 26.2 client to 26.3 backend");
+    require(ConduitViaSupport.supportsTranslation(777, 776), "Via path 26.3 client to 26.2 backend");
 
     require(ProtocolCompatibility.between(765, 765) == TranslationSupport.DIRECT, "same-version DIRECT");
     require(ConduitViaSupport.supportsTranslation(393, 765), "Via path 393→765");

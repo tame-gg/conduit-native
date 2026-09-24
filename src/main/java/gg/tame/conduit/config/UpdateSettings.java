@@ -13,8 +13,10 @@ package gg.tame.conduit.config;
  * own; this record is what the rest of Conduit sees, and the two are kept in step by
  * {@code ConfigurationLoader} reading the same keys.
  */
-public record UpdateSettings(boolean via, boolean checkOnly, int timeoutMs, int checkIntervalHours) {
+public record UpdateSettings(boolean via, boolean checkOnly, int timeoutMs, int checkIntervalHours, boolean conduit) {
   public static final boolean DEFAULT_VIA = true;
+  /** Whether a newer Conduit release on GitHub is mentioned in the log. It is only ever mentioned. */
+  public static final boolean DEFAULT_CONDUIT = true;
   public static final int DEFAULT_TIMEOUT_MS = 5000;
   /**
    * How long a check stands for, in hours. The check is the one thing between starting Conduit and
@@ -36,7 +38,11 @@ public record UpdateSettings(boolean via, boolean checkOnly, int timeoutMs, int 
     }
   }
 
+  public UpdateSettings(boolean via, boolean checkOnly, int timeoutMs, int checkIntervalHours) {
+    this(via, checkOnly, timeoutMs, checkIntervalHours, DEFAULT_CONDUIT);
+  }
+
   public static UpdateSettings defaults() {
-    return new UpdateSettings(DEFAULT_VIA, false, DEFAULT_TIMEOUT_MS, DEFAULT_CHECK_INTERVAL_HOURS);
+    return new UpdateSettings(DEFAULT_VIA, false, DEFAULT_TIMEOUT_MS, DEFAULT_CHECK_INTERVAL_HOURS, DEFAULT_CONDUIT);
   }
 }

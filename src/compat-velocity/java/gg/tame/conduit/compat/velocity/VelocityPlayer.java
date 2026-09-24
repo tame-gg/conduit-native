@@ -3,6 +3,8 @@ package gg.tame.conduit.compat.velocity;
 
 import com.google.common.io.ByteArrayDataOutput;
 import com.google.common.io.ByteStreams;
+import com.velocitypowered.api.event.player.CookieRequestEvent;
+import com.velocitypowered.api.event.player.CookieStoreEvent;
 import com.velocitypowered.api.network.HandshakeIntent;
 import com.velocitypowered.api.network.ProtocolState;
 import com.velocitypowered.api.network.ProtocolVersion;
@@ -52,6 +54,8 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   private volatile Locale effectiveLocale;
   /** Adventure callbacks for packs sent with one, until the client's last answer about each. */
   private final java.util.Map<UUID, ResourcePackCallback> packCallbacks = new java.util.concurrent.ConcurrentHashMap<>();
+  /** Set by the event bridge from the client's FML|HS mod list. */
+  volatile ModInfo modInfo;
 
   VelocityPlayer(VelocityEnvironment environment, gg.tame.conduit.api.player.Player player) {
     this.environment = environment;
@@ -93,9 +97,16 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   @Override public Optional<String> getRawVirtualHost() { return getVirtualHost().map(InetSocketAddress::getHostString); }
   @Override public ProtocolVersion getProtocolVersion() { return ProtocolVersion.getProtocolVersion(player.protocolVersion()); }
   @Override public boolean isActive() { return environment.conduit.player(player.uniqueId()).filter(live -> live == player).isPresent(); }
+  /** Conduit's own states by name; before the handshake is HANDSHAKE, and a closed connection is reported as PLAY. */
   @Override public ProtocolState getProtocolState() {
-    try { return ProtocolState.valueOf(player.connectionState()); }
-    catch (IllegalArgumentException unknown) { throw Unsupported.api("Player.getProtocolState for state " + player.connectionState()); }
+    return switch (player.connectionState()) {
+      case "AWAITING_HANDSHAKE" -> ProtocolState.HANDSHAKE;
+      case "STATUS" -> ProtocolState.STATUS;
+      case "LOGIN" -> ProtocolState.LOGIN;
+      case "CONFIGURATION" -> ProtocolState.CONFIGURATION;
+      // ponytail: the state a connection closed in is not kept; a player plugins hold almost always reached Play.
+      default -> ProtocolState.PLAY;
+    };
   }
 
   @Override public Optional<ServerConnection> getCurrentServer() {
@@ -129,14 +140,22 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   /** The settings the client last sent, as its release has them; the vanilla client's defaults before it has. */
   @Override public PlayerSettings getPlayerSettings() { return new Settings(player.settings().orElse(ClientSettings.defaults())); }
   @Override public boolean hasSentPlayerSettings() { return player.settings().isPresent(); }
-  /** Empty: Conduit does not read a modded client's mod list, so it cannot say which mods it has. */
-  @Override public Optional<ModInfo> getModInfo() { return Optional.empty(); }
+  /** The mod list a 1.7-1.12 Forge client last sent in its FML handshake; empty for any other client. */
+  @Override public Optional<ModInfo> getModInfo() { return Optional.ofNullable(modInfo); }
   /** What the client last sent on the brand channel; null until it has. */
   @Override public String getClientBrand() { return player.clientBrand().orElse(null); }
-  /** Null, the documented answer for a player without one: Conduit does not keep the client's chat key. */
-  @Override public IdentifiedKey getIdentifiedKey() { return null; }
+  /**
+   * The chat key the client sent (see Conduit's Player.chatSession), held by this player; null, the
+   * documented answer, for a client that sent none. Not checked against Mojang's key: see VelocityIdentifiedKey.
+   */
+  @Override public IdentifiedKey getIdentifiedKey() {
+    return VelocityIdentifiedKey.of(player.chatSession().orElse(null), getUniqueId(), player.protocolVersion());
+  }
   @Override public List<GameProfile.Property> getGameProfileProperties() { return getGameProfile().getProperties(); }
-  @Override public void setGameProfileProperties(List<GameProfile.Property> properties) { throw Unsupported.api("Player.setGameProfileProperties"); }
+  /** What getGameProfile answers from now on, and what backends are forwarded on the next connection; the current backend keeps the old. */
+  @Override public void setGameProfileProperties(List<GameProfile.Property> properties) {
+    player.setGameProfileProperties(Profiles.toConduit(new GameProfile(getUniqueId(), getUsername(), properties)).properties());
+  }
   // Titles, action bar, boss bars and the tab-list header, through Conduit's own display.
   @Override public void sendActionBar(Component message) { player.sendActionBar(Texts.toConduit(message)); }
   @Override public void showTitle(Title title) {
@@ -241,13 +260,25 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
     player.transferToHost(address.getHostString(), address.getPort());
   }
   // Cookies and server links: a client whose release has none gets an IllegalArgumentException, as Velocity throws.
+  /** After CookieStoreEvent, whose result may drop the cookie or change its key or data. */
   @Override public void storeCookie(Key key, byte[] data) {
     requireRelease(ProtocolVersion.MINECRAFT_1_20_5, "cookies");
+    if (environment.events.listening(CookieStoreEvent.class)) {
+      CookieStoreEvent.ForwardResult result = environment.fireAndWait(new CookieStoreEvent(this, key, data)).getResult();
+      if (!result.isAllowed()) return;
+      if (result.getKey() != null) key = result.getKey();
+      if (result.getData() != null) data = result.getData();
+    }
     player.storeCookie(key.asString(), data);
   }
-  /** The answer arrives as CookieReceiveEvent, and never reaches the backend. */
+  /** After CookieRequestEvent, whose result may drop the request or change its key. The answer arrives as CookieReceiveEvent, and never reaches the backend. */
   @Override public void requestCookie(Key key) {
     requireRelease(ProtocolVersion.MINECRAFT_1_20_5, "cookies");
+    if (environment.events.listening(CookieRequestEvent.class)) {
+      CookieRequestEvent.ForwardResult result = environment.fireAndWait(new CookieRequestEvent(this, key)).getResult();
+      if (!result.isAllowed()) return;
+      if (result.getKey() != null) key = result.getKey();
+    }
     player.requestCookie(key.asString());
   }
   @Override public void setServerLinks(List<ServerLink> links) {
@@ -266,10 +297,14 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   /** At the player, following them; only 1.19.3+ clients can be sent that (see Player.playSound). */
   @Override public void playSound(Sound sound) { player.playSound(sound(sound)); }
   @Override public void playSound(Sound sound, double x, double y, double z) { player.playSound(sound(sound), x, y, z); }
-  /** The player is the only emitter the proxy knows: it has no other entity to follow. */
+  /**
+   * Following the player, or another player on the same backend by the entity id it gave them; nothing
+   * when the other player is elsewhere. Players are the only entities the proxy knows.
+   */
   @Override public void playSound(Sound sound, Sound.Emitter emitter) {
-    if (emitter != Sound.Emitter.self()) throw Unsupported.api("Player.playSound(Sound, Emitter) with an emitter other than Sound.Emitter.self()");
-    player.playSound(sound(sound));
+    if (emitter == Sound.Emitter.self()) player.playSound(sound(sound));
+    else if (emitter instanceof VelocityPlayer other) player.playSound(sound(sound), other.player);
+    else throw Unsupported.api("Player.playSound(Sound, Emitter) with an emitter that is not a player");
   }
   @Override public void stopSound(SoundStop stop) {
     player.stopSound(stop.sound() == null ? null : stop.sound().asString(), stop.source() == null ? null : source(stop.source()));
@@ -281,9 +316,17 @@ final class VelocityPlayer implements Player, Unsupported.ChatOnly {
   private static gg.tame.conduit.api.player.Sound.Source source(Sound.Source source) {
     return gg.tame.conduit.api.player.Sound.Source.valueOf(source.name());
   }
+  /**
+   * The protocol only opens the book in the player's hand, and the proxy does not track what that
+   * hand holds, so it could not put the real item back afterwards.
+   */
+  /** Shown as deleted on a 1.19.1+ client that has the message; nothing for an older one. */
+  @Override public void deleteMessage(net.kyori.adventure.chat.SignedMessage.Signature signature) { player.deleteChatMessage(signature.bytes()); }
   @Override public void openBook(Book book) { throw Unsupported.api("Player.openBook"); }
+  /** Adventure's DialogLike carries nothing the proxy could send: a dialog is the backend platform's type. */
   @Override public void showDialog(DialogLike dialog) { throw Unsupported.api("Player.showDialog"); }
-  @Override public void closeDialog() { throw Unsupported.api("Player.closeDialog"); }
+  /** A 26.2+ client is sent Clear Dialog; any other has none the proxy can close, and is sent nothing. */
+  @Override public void closeDialog() { player.closeDialog(); }
 
   /** The client's settings as Velocity's type; before it has sent any, the vanilla client's defaults. */
   private record Settings(ClientSettings settings) implements PlayerSettings {

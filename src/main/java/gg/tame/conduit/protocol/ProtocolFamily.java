@@ -2,7 +2,7 @@
 package gg.tame.conduit.protocol;
 
 /**
- * Organizational protocol families for the modern compatibility program (1.13–26.2).
+ * Organizational protocol families for the modern compatibility program (1.13–26.3).
  * Packet definitions remain authoritative — families do not imply identical wires.
  */
 public enum ProtocolFamily {
@@ -30,7 +30,7 @@ public enum ProtocolFamily {
     if (number <= 762) return V1_19;
     if (number <= 766) return V1_20;
     if (number <= 774) return V1_21;
-    if (number <= 776) return V26;
+    if (number <= 777) return V26;
     return UNKNOWN;
   }
 

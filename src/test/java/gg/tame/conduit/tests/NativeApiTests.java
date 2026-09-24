@@ -993,6 +993,10 @@ public final class NativeApiTests {
     /** A reason to refuse every login with, as a Login Disconnect, the way a whitelisted server does. */
     volatile String refuseWith;
     volatile boolean silent;
+    /** How long this server takes between Login Success and Join Game, as a cold one does over its first player. */
+    volatile int joinGameDelayMillis;
+    /** What arrived in that gap: a server with no Configuration phase decodes it as Login. */
+    final List<byte[]> beforeJoinGame = Collections.synchronizedList(new ArrayList<>());
     Backend(String name) throws IOException {
       this.name = name;
       Thread.ofPlatform().daemon().name("test-backend-" + name).start(() -> {
@@ -1019,6 +1023,12 @@ public final class NativeApiTests {
         if (silent) { in.transferTo(OutputStream.nullOutputStream()); return; }
         current = socket;
         write(socket, loginSuccess());
+        long joinGameAt = System.currentTimeMillis() + joinGameDelayMillis;
+        for (long left; (left = joinGameAt - System.currentTimeMillis()) > 0; ) {
+          socket.setSoTimeout((int) left);
+          try { beforeJoinGame.add(MinecraftFrames.read(in, 1 << 20)); } catch (java.net.SocketTimeoutException quiet) { }
+        }
+        socket.setSoTimeout(0);
         write(socket, joinGame());
         while (true) received.add(MinecraftFrames.read(in, 1 << 20));
       } catch (IOException ended) { }

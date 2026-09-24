@@ -59,7 +59,7 @@ public final class CommandGraphs {
   public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
       List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown,
       java.util.function.Function<String, List<CommandSyntax>> syntax) throws IOException {
-    return merge(protocol, packet, serverNames, extraNames, displaced, shown, syntax);
+    return merge(protocol, packet, serverNames, extraNames, displaced, shown, syntax, java.util.Set.of());
   }
   /**
    * As above, declaring only the commands {@code shown} accepts (CommandManager#shownTo): a top-level
@@ -67,12 +67,104 @@ public final class CommandGraphs {
    */
   public static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
       List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown) throws IOException {
-    return merge(protocol, packet, serverNames, extraNames, displaced, shown, name -> List.of());
+    return merge(protocol, packet, serverNames, extraNames, displaced, shown, name -> List.of(), java.util.Set.of());
+  }
+
+  /**
+   * As above, also leaving out every backend command named in {@code dropped} -- what a
+   * PlayerAvailableCommandsEvent listener removed or replaced. A tree {@link #rootNames} cannot read
+   * keeps all of the backend's commands.
+   */
+  static byte[] mergeProxyCommands(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
+      List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown,
+      java.util.function.Function<String, List<CommandSyntax>> syntax, java.util.Set<String> dropped) throws IOException {
+    return merge(protocol, packet, serverNames, extraNames, displaced, shown, syntax, dropped);
+  }
+
+  /** The top-level names the proxy would declare with these arguments, in the order it declares them. */
+  static List<String> proxyNames(ProtocolDefinition protocol, List<String> serverNames, List<String> extraNames,
+      java.util.Set<String> displaced, java.util.function.Predicate<String> shown) {
+    return proxyNodes(serverNames, extraNames, displaced, parserWriter(protocol), shown, name -> List.of())
+        .stream().map(CommandSyntax::name).toList();
+  }
+
+  /**
+   * The names of a backend tree's top-level commands, in the root's order, or null when the tree
+   * cannot be read.
+   *
+   * <p>Only a name is wanted, but reaching a node means walking every node before it, and an argument
+   * node's properties have a length only its parser knows. So this reads what {@link #merge} never
+   * does, and it is used only to tell which of the root's children a plugin asked to hide. Anything it
+   * cannot read -- a release whose parser numbering is not in {@link #propertyIds}, a tree that does
+   * not come out exactly at its end -- is null, and the merge then leaves the backend's commands be.
+   */
+  public static List<String> rootNames(ProtocolDefinition protocol, byte[] packet) {
+    if (protocol == null || !protocol.capabilities().commandTree()) return null;
+    ParserIds parsers = ParserIds.forProtocol(protocol.version().number());
+    java.util.function.IntUnaryOperator properties = propertyIds(protocol.version().number());
+    if (parsers.indexed() && properties == null) return null;
+    try {
+      int start = varIntLength(packet, 0);
+      var input = new java.io.DataInputStream(new java.io.ByteArrayInputStream(packet, start, packet.length - start));
+      int count = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+      if (count < 1 || count > packet.length) return null;
+      String[] names = new String[count];
+      int[] rootChildren = null;
+      for (int index = 0; index < count; index++) {
+        int flags = input.readUnsignedByte();
+        int type = flags & 0x03;
+        int childCount = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+        if (childCount < 0 || childCount > packet.length) return null;
+        int[] children = new int[childCount];
+        for (int child = 0; child < childCount; child++) children[child] = gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+        if (index == 0) rootChildren = children;
+        if ((flags & 0x08) != 0) gg.tame.conduit.protocol.MinecraftInput.varInt(input);
+        if (type == 1 || type == 2) names[index] = gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);
+        if (type == 2) {
+          int parser = parsers.indexed()
+              ? properties.applyAsInt(gg.tame.conduit.protocol.MinecraftInput.varInt(input))
+              : ArgumentProperties.idFor(gg.tame.conduit.protocol.MinecraftInput.string(input, 32767));
+          ArgumentProperties.read(input, parser);
+        }
+        if ((flags & 0x10) != 0) gg.tame.conduit.protocol.MinecraftInput.string(input, 32767);
+      }
+      if (gg.tame.conduit.protocol.MinecraftInput.varInt(input) != 0 || input.available() != 0) return null;
+      List<String> found = new ArrayList<>(rootChildren.length);
+      for (int child : rootChildren) {
+        if (child < 0 || child >= count || names[child] == null) return null;
+        found.add(names[child]);
+      }
+      return found;
+    } catch (IOException | RuntimeException unreadable) {
+      return null;
+    }
+  }
+
+  /**
+   * A 1.19+ release's parser id as the id {@link ArgumentProperties} reads by, or null for a release
+   * not listed here. Only the parsers that carry properties matter -- Brigadier's own (ids 1 to 5 in
+   * every release), entity, score_holder, time and the resource family -- and their ids were read
+   * from each release's own registry report ({@code server.jar --reports}, registry
+   * {@code minecraft:command_argument_type}). Every other parser has no properties, which -1 means.
+   */
+  private static java.util.function.IntUnaryOperator propertyIds(int protocol) {
+    // score_holder, time, then the first and last of resource_or_tag .. resource_key (and 26.2's
+    // resource_selector), which all carry one identifier.
+    int[] at = switch (protocol) {
+      case 763 -> new int[] {29, 40, 41, 44};
+      case 765 -> new int[] {30, 41, 42, 45};
+      case 766 -> new int[] {30, 42, 43, 46};
+      case 776, 777 -> new int[] {31, 43, 44, 48};
+      default -> null;
+    };
+    if (at == null) return null;
+    return id -> id <= 6 ? id : id == at[0] ? 29 : id == at[1] ? 40 : id >= at[2] && id <= at[3] ? 41 : -1;
   }
 
   private static byte[] merge(ProtocolDefinition protocol, byte[] packet, List<String> serverNames,
       List<String> extraNames, java.util.Set<String> displaced, java.util.function.Predicate<String> shown,
-      java.util.function.Function<String, List<CommandSyntax>> syntax) throws IOException {
+      java.util.function.Function<String, List<CommandSyntax>> syntax, java.util.Set<String> dropped) throws IOException {
+    List<String> backendNames = dropped.isEmpty() ? null : rootNames(protocol, packet);
     int id = PlayPackets.packetId(packet);
     int cursor = varIntLength(packet, 0);
     int count = readVarInt(packet, cursor);
@@ -91,9 +183,10 @@ public final class CommandGraphs {
     // Each child index takes at least a byte. Taken as the array size, a backend's -1 threw a
     // NegativeArraySizeException and its 2^31-1 an OutOfMemoryError, past the catch for an unreadable tree.
     if (childCount < 0 || childCount > rootIndexStart - header) throw new IOException("command tree root claims " + childCount + " children");
-    int[] children = new int[childCount];
+    List<Integer> children = new ArrayList<>(childCount);
     for (int index = 0; index < childCount; index++) {
-      children[index] = readVarInt(packet, header);
+      // The other nodes stay in the packet either way: a dropped command is only unreachable.
+      if (backendNames == null || !dropped.contains(backendNames.get(index))) children.add(readVarInt(packet, header));
       header += varIntLength(packet, header);
     }
     if ((flags & 0x08) != 0) header += varIntLength(packet, header);
@@ -109,7 +202,7 @@ public final class CommandGraphs {
       gg.tame.conduit.protocol.MinecraftOutput.varInt(output, id);
       gg.tame.conduit.protocol.MinecraftOutput.varInt(output, count + flat.size());
       output.writeByte(flags);
-      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, childCount + topLevel.size());
+      gg.tame.conduit.protocol.MinecraftOutput.varInt(output, children.size() + topLevel.size());
       for (int child : children) gg.tame.conduit.protocol.MinecraftOutput.varInt(output, child);
       for (int position : topLevel) gg.tame.conduit.protocol.MinecraftOutput.varInt(output, count + position);
       // The other nodes, byte for byte. Their indices are unchanged, so their children still match.

@@ -24,7 +24,7 @@ Upstream artifacts are sufficient. **No ViaVersion fork** unless a later blocker
 
 Conduit Independent does **not** use Netty for its proxy I/O. It uses:
 
-- blocking sockets + virtual threads
+- blocking sockets before Play (virtual threads; platform threads on Windows, JDK-8334574), then an NIO selector relay (`network/ConnectionSelector`) for playing sessions
 - `PacketTransport` (client) with optional AES/CFB8 **outside** packet bodies
 - `MinecraftFrames` VarInt framing
 - backend-only zlib compression in `BackendConnection` / `PacketCompression`

@@ -106,6 +106,8 @@ public final class Phase12SecurityTests {
         [routing]
         initial=["lobby"]
         fallback=["lobby"]
+        [security.attack-mode]
+        auto-trip-per-second=5
         """);
     var loaded = ConfigurationLoader.load(config);
     Path plugins = TempFiles.dir("conduit-plugins-sec");
@@ -122,9 +124,14 @@ public final class Phase12SecurityTests {
     require(runtime.security().botFilter().effectiveThreshold() == 3, "attack bot threshold");
     admin.messages.clear();
     runtime.commandManager().dispatch(admin, "/conduit attack status");
-    require(admin.messages.stream().anyMatch(line -> line.contains("ON")), "status on");
+    require(admin.messages.stream().anyMatch(line -> line.contains("ON") && line.contains("by command")), "status on, by command " + admin.messages);
     runtime.commandManager().dispatch(admin, "/conduit attack off");
     require(!runtime.security().attackMode().isActive(), "attack off");
+    for (int i = 0; i < 6; i++) runtime.security().attackMode().recordConnection(i);
+    admin.messages.clear();
+    runtime.commandManager().dispatch(admin, "/conduit attack status");
+    require(admin.messages.stream().anyMatch(line -> line.contains("ON") && line.contains("automatically")), "status says automatic " + admin.messages);
+    runtime.commandManager().dispatch(admin, "/conduit attack off");
     require(runtime.security().throttle().effectiveMaxAttempts() == 40, "restored throttle");
     admin.messages.clear();
     runtime.commandManager().dispatch(admin, "/conduit doctor");

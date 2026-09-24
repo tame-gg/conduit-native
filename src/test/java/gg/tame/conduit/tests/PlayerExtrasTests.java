@@ -64,7 +64,7 @@ public final class PlayerExtrasTests {
   public static void run() throws Exception {
     packetsForEachRelease();
     aLegacyClientSaysWhatItIsGivenAndIsSentNothingNew();
-    aModernClientSendsOnlyAnUnsignedCommand();
+    aModernClientSpeaksUnsigned();
     customCompletionsReachA1204Client();
     serverLinksReachA121Client();
     cookiesStayBetweenTheProxyAndTheClient();
@@ -154,7 +154,8 @@ public final class PlayerExtrasTests {
 
   // --- 1.20.4 and 1.20.5 --------------------------------------------------------------------------
 
-  private static void aModernClientSendsOnlyAnUnsignedCommand() throws Exception {
+  /** A 1.19+ client's chat and commands go unsigned, as SecureChatApiTests and the live-backend runs check in depth. */
+  private static void aModernClientSpeaksUnsigned() throws Exception {
     try (ModernBackend lobby = new ModernBackend(766);
          Proxy proxy = new Proxy(List.of(lobby.server()), AuthenticationSettings.offline(), null, null, ForwardingMode.NONE, Optional.empty());
          ModernClient client = ModernClient.open(766, proxy.port(), "Commander")) {
@@ -163,7 +164,9 @@ public final class PlayerExtrasTests {
       int command = lobby.p.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND);
       require(lobby.await(packet -> id(packet) == command && chatLine(packet).equals("spawn now")),
           "an unsigned Chat Command, the command alone, without its slash");
-      refused(UnsupportedOperationException.class, () -> player.spoofChatInput("hello"), "a chat message, which the client would sign");
+      require(player.spoofChatInput("hello"), "chat sent");
+      int chat = lobby.p.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT);
+      require(lobby.await(packet -> id(packet) == chat && chatLine(packet).equals("hello")), "as unsigned chat");
       refused(IllegalArgumentException.class, () -> player.spoofChatInput("/" + "x".repeat(256)), "257 characters");
       require(proxy.recorder.of(CommandExecuteEvent.class).isEmpty(), "the proxy's command event heard nothing");
     }
@@ -171,7 +174,9 @@ public final class PlayerExtrasTests {
          Proxy proxy = new Proxy(List.of(lobby.server()), AuthenticationSettings.offline(), null, null, ForwardingMode.NONE, Optional.empty());
          ModernClient client = ModernClient.open(765, proxy.port(), "Signer")) {
       Player player = client.playing(proxy);
-      refused(UnsupportedOperationException.class, () -> player.spoofChatInput("/spawn"), "a 1.20.4 command, which carries what the client has seen");
+      require(player.spoofChatInput("/spawn"), "a 1.20.4 command sent");
+      int command = lobby.p.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND);
+      require(lobby.await(packet -> id(packet) == command && chatLine(packet).equals("spawn")), "with nothing signed and nothing new acknowledged");
       require(!player.storeCookie("a:b", new byte[1]) && !player.requestCookie("a:b") && !player.setServerLinks(List.of()),
           "no cookies or links for 1.20.4");
     }
@@ -279,7 +284,8 @@ public final class PlayerExtrasTests {
                 case "old" -> {
                   try { player.requestCookie(Key.key("extrasv", "k")); } catch (IllegalArgumentException refused) { signal("old-cookie"); }
                   try { player.setServerLinks(List.of()); } catch (IllegalArgumentException refused) { signal("old-links"); }
-                  try { player.spoofChatInput("hi"); } catch (UnsupportedOperationException refused) { signal("old-chat"); }
+                  player.spoofChatInput("hi");
+                  signal("old-chat");
                   player.addCustomChatCompletions(List.of("fine"));
                   signal("old-done");
                 }
@@ -327,7 +333,9 @@ public final class PlayerExtrasTests {
         client.playing(proxy);
         proxy.runtime.commands().execute(proxy.runtime.console(), "extras VOld old");
         require(waitFor(() -> signals.contains("old-done"), 10_000), "the plugin ran: " + signals);
-        require(signals.containsAll(List.of("old-cookie", "old-links", "old-chat")), "1.20.4 has no cookies or links, and signs its chat: " + signals);
+        require(signals.containsAll(List.of("old-cookie", "old-links", "old-chat")), "1.20.4 has no cookies or links, but takes unsigned chat: " + signals);
+        int chat = lobby.p.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT);
+        require(lobby.await(packet -> id(packet) == chat && chatLine(packet).equals("hi")), "the spoofed chat");
         require(client.await(ConnectionState.PLAY, PacketKind.PLAY_CHAT_SUGGESTIONS, 1).size() == 1, "but it has completions");
       }
     } finally {
@@ -358,6 +366,8 @@ public final class PlayerExtrasTests {
     private final List<Socket> sockets = Collections.synchronizedList(new ArrayList<>());
     private final Map<String, Socket> playing = new ConcurrentHashMap<>();
     private final List<byte[]> received = Collections.synchronizedList(new ArrayList<>());
+    /** Each player's entity id, from 7 up in the order they join. */
+    private final java.util.concurrent.atomic.AtomicInteger entities = new java.util.concurrent.atomic.AtomicInteger(7);
     ModernBackend(int protocol) throws IOException {
       p = ProtocolDefinition.forVersion(protocol);
       Thread.ofPlatform().daemon().name("extras-backend-" + protocol).start(() -> {
@@ -390,16 +400,19 @@ public final class PlayerExtrasTests {
         write(socket, new byte[] {(byte) p.id(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_FINISH)});
         int finished = p.id(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_FINISH);
         while (MinecraftFrames.read(in, 1 << 16)[0] != finished) { }
-        write(socket, joinGame(p));
+        write(socket, joinGame(p, entities.getAndIncrement()));
         playing.put(player, socket);
         while (true) received.add(MinecraftFrames.read(in, 1 << 20));
       } catch (Exception ended) { }
     }
-    /** A 1.20.3-1.21.1 Join Game: entity 7 in a single overworld; 1.20.5 named the dimension type by id and added the secure-chat flag. */
-    private static byte[] joinGame(ProtocolDefinition p) throws IOException {
+    /**
+     * A 1.20.3+ Join Game in a single overworld; 1.20.5 named the dimension type by id and added the
+     * secure-chat flag, 1.21.2 the sea level before it.
+     */
+    private static byte[] joinGame(ProtocolDefinition p, int entity) throws IOException {
       int number = p.version().number();
       return packet(p.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN), output -> {
-        output.writeInt(7); output.writeBoolean(false);
+        output.writeInt(entity); output.writeBoolean(false);
         MinecraftOutput.varInt(output, 1); MinecraftOutput.string(output, "minecraft:overworld");
         MinecraftOutput.varInt(output, 20); MinecraftOutput.varInt(output, 10); MinecraftOutput.varInt(output, 10);
         output.writeBoolean(false); output.writeBoolean(true); output.writeBoolean(false);
@@ -408,6 +421,7 @@ public final class PlayerExtrasTests {
         output.writeLong(0L); output.writeByte(0); output.writeByte(-1);
         output.writeBoolean(false); output.writeBoolean(false); output.writeBoolean(false);
         MinecraftOutput.varInt(output, 0);
+        if (number >= 768) MinecraftOutput.varInt(output, 63);
         if (number >= 766) output.writeBoolean(false);
       });
     }
@@ -492,7 +506,7 @@ public final class PlayerExtrasTests {
         }
       } catch (IOException closed) { }
     }
-    private synchronized void send(byte[] packet) throws IOException { MinecraftFrames.write(socket.getOutputStream(), packet); }
+    synchronized void send(byte[] packet) throws IOException { MinecraftFrames.write(socket.getOutputStream(), packet); }
     /** The player once the client is in Play and the proxy has let them in. */
     Player playing(Proxy proxy) throws Exception {
       require(waitFor(() -> state == ConnectionState.PLAY, 15_000), name + " never reached Play, it is in " + state);

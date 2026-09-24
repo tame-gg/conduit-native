@@ -15,7 +15,7 @@ import java.io.IOException;
 public final class LoginPipeline {
   private final ProtocolSession session;
   private final ProtocolDefinition protocol;
-  private PlayerProfile player;
+  private volatile PlayerProfile player;
   /** Who logged in: the client's claim, or the session server's answer. {@link #player} differs only once a plugin replaced it. */
   private PlayerProfile account;
   public LoginPipeline(ProtocolSession session, ProtocolDefinition protocol) { this.session = session; this.protocol = protocol; }

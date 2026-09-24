@@ -38,10 +38,10 @@ Two consequences of the default worth knowing:
 
 | Component | Role |
 |---|---|
-| ViaVersion 5.11.0 | Newer clients → older backends |
-| ViaBackwards 5.11.0 | Older clients → newer backends |
-| ViaRewind 4.1.3 | 1.7.x / 1.8.x clients on 1.9+ |
-| ViaLegacy 3.0.16 | Clients → backends ≤ 1.7.10 (opt-in; needs extra deps) |
+| ViaVersion 5.12.0 | Newer clients → older backends |
+| ViaBackwards 5.12.0 | Older clients → newer backends |
+| ViaRewind 4.2.0 | 1.7.x / 1.8.x clients on 1.9+ |
+| ViaLegacy 3.1.0 | Clients → backends ≤ 1.7.10 (opt-in; needs extra deps) |
 
 ViaLegacy is **off by default**. Enable `translation.via-legacy=true` only when
 proxying to ≤1.7.10 backends, and ensure ViaLegacy's transitive libraries
@@ -109,11 +109,12 @@ translators leave those gaps. Via closes them itself. Doing both produces a
 second brand, a duplicated player entry or a transition the client has already
 made, so on the Via path Via's output goes to the client as it stands.
 
-## Protocol ceiling (Via 5.11.0)
+## Protocol ceiling (Via 5.12.0)
 
 - Floor of interest: Minecraft **1.7.6** (protocol 5)
-- Via register tops out at **26.2** (protocol 776)
-- **26.3 is not supported** by this Via release — do not claim it
+- Via registers up to **26.3** (protocol 777)
+- 26.3 ↔ 26.3 is DIRECT on Conduit's own table; every other pair with 26.3 on
+  either side is Via's
 
 ## Modes
 
@@ -143,7 +144,7 @@ dependency merely containing the protocol.
 | 5 (1.7.6) → modern | Via + ViaRewind | **UNVERIFIED** — no real-client run has been performed |
 | 765 → 404 direct | Via | **TRANSLATED / VERIFIED** — control run, no switch; joins and plays with 0 failures |
 | 765 → 404 after `/server` | Via | **PARTIAL** — same pair, reached by switching, stops when the client's Configuration phase is never finished; see `docs/VALIDATION_VIA_393_765.md` |
-| anything → 26.3 | Via | **UNSUPPORTED** — Via 5.11.0 does not register it |
+| 26.2 → 26.3, then `/server` to a second 26.3 | Via (`Protocol26_3To26_2`) | **TRANSLATED** — scripted 26.2 client, two real 26.3 servers: login, configuration, Join Game, a dimension change and a `/server` switch; no real 26.2 client run yet |
 
 ### A defect in the dependency, and Conduit's response
 
@@ -162,6 +163,10 @@ layout is forwarded by identity, one that only reads under the malformed layout
 is re-emitted without the recipes carrying an empty slot, and one that fits
 neither is replaced with an empty recipe list and logged. Nothing is re-encoded;
 kept recipes are copied byte for byte.
+
+The pin moved to 5.12.0 on 2026-09-23 for 26.3. Whether 5.12.0 still writes
+this layout has not been re-checked against a 1.13 client; the repair stays in
+place either way, since a correct packet passes through it untouched.
 
 The exact bytes, the ruled-out configuration options, the upstream check, and
 the reasoning that places the fault outside Conduit are in

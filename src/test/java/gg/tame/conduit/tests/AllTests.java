@@ -94,6 +94,7 @@ public final class AllTests {
     ViaIntegrationTests.run();
     ViaSwitchBridgeTests.run();
     CompatibilityProbeTests.run();
+    Protocol777Tests.run();
     SwitchJoinGateTests.run();
     ViaOrderingTests.run();
     DirectLoginCompressionTests.run();
@@ -110,6 +111,7 @@ public final class AllTests {
     ObservabilityTests.run();
     ConfigValidationTests.run();
     ProxyProtocolTests.run();
+    LegacyForwardingTests.run();
     ViaOverrideTests.run();
     ReleaseJarTests.run();
     ShutdownTests.run();
@@ -125,8 +127,10 @@ public final class AllTests {
     TextFidelityTests.run();
     SoundApiTests.run();
     ModLoaderTests.run();
+    ModInfoTests.run();
     VelocityCompatTests.run();
     VelocityDisplayTests.run();
+    TabListTrackingTests.run();
     VelocityTextTests.run();
     VelocitySoundTests.run();
     VelocityLifecycleTests.run();
@@ -137,8 +141,12 @@ public final class AllTests {
     ResourcePackTests.run();
     LoginFlowTests.run();
     TabCompleteEventTests.run();
+    BrigadierTreeTests.run();
     VelocityAudienceTests.run();
     PlayerExtrasTests.run();
+    SecureChatApiTests.run();
+    VelocityApiGapTests.run();
+    PlayerUiApiTests.run();
     ChannelCommandHandshakeEventTests.run();
     ApiBoundaryTests.run();
     ConfigurationEventsTests.run();
@@ -149,6 +157,7 @@ public final class AllTests {
     BanAddressTests.run();
     AlertsTests.run();
     OperatorFeatureTests.run();
+    OpsExtrasTests.run();
     BanListCommandTests.run();
     BanAlreadyBannedTests.run();
     WrongHeaderTests.run();
@@ -160,6 +169,7 @@ public final class AllTests {
     PermissionDiscoveryTests.run();
     BungeeCordChannelTests.run();
     BungeeCordRegistrationTests.run();
+    ColdBackendJoinTests.run();
     ServerboundPluginMessageTests.run();
     BungeeCordSubchannelTests.run();
     ProxyChannelRegistrationTests.run();

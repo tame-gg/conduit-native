@@ -6,7 +6,6 @@ import gg.tame.conduit.api.event.player.PlayerConfigurationEvent;
 import gg.tame.conduit.api.event.player.PlayerKickedFromServerEvent.KickResult;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.api.text.TextColor;
-import gg.tame.conduit.command.CommandGraphs;
 import gg.tame.conduit.command.CommandManager;
 import gg.tame.conduit.command.CommandSource;
 import gg.tame.conduit.command.Messages;
@@ -73,6 +72,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   final Handshake handshake;
   private final byte[] originalHandshake;
   private final byte[] originalLoginStart;
+  /** The client's chat key (see chatSession()); null until it is known. */
+  private volatile gg.tame.conduit.api.player.ChatSession chatSession;
+  // Secure chat toward the backend: what it holds the client to having seen, and the lock that keeps
+  // what the proxy writes for the client and what the client writes itself from interleaving.
+  private final Object secureChatLock = new Object();
+  private final gg.tame.conduit.protocol.SecureChat.Window chatWindow = new gg.tame.conduit.protocol.SecureChat.Window();
+  private BackendConnection chatWindowBackend;
+  /** The seen-messages list a 1.19.1-1.19.2 client last sent its backend; null before it has. */
+  private volatile byte[] lastSeenList;
   final InetAddress address;
   final HandshakeClassifier modClassifier;
   final SwitchPacketQueue switchQueue;
@@ -111,6 +119,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private volatile boolean expectClientLoginAck;
   /** The backend's login asked the client something, so an answer may still be in flight. */
   private volatile boolean loginQueriesRelayed;
+  /** A 1.13+ Forge client's mod list, read from its login answer; told to plugins once it joins. */
+  private volatile gg.tame.conduit.api.server.ModInfo modInfo;
   /**
    * What a client with no command tree last sent the backend to complete, until the backend's reply
    * has been through {@link #withLegacyTabCompletions}. A reply to a command name gets Conduit's
@@ -228,6 +238,18 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     return new gg.tame.conduit.api.player.GameProfile(profile.uniqueId(), profile.username(), profile.properties().stream()
         .map(property -> new gg.tame.conduit.api.player.GameProfile.Property(property.name(), property.value(), property.signature())).toList());
   }
+  /** Replaces the profile every later BackendConnection forwards; the connection open now was built with the old one. */
+  @Override public boolean setGameProfileProperties(List<gg.tame.conduit.api.player.GameProfile.Property> properties) {
+    PlayerProfile profile = profile();
+    loginPipeline.replace(new PlayerProfile(profile.uniqueId(), profile.username(), properties.stream()
+        .map(property -> new gg.tame.conduit.login.ProfileProperty(property.name(), property.value(), property.signature())).toList(),
+        profile.authenticated()));
+    return true;
+  }
+  @Override public boolean closeDialog() {
+    int id = pluginPacketId(PacketKind.PLAY_CLEAR_DIALOG, PacketKind.CONFIGURATION_CLEAR_DIALOG);
+    return id >= 0 && writeForPlugin(() -> gg.tame.conduit.protocol.PlayerApiPackets.clearDialog(id));
+  }
   @Override public boolean transferred() { return handshake.nextState() == Handshake.TRANSFER; }
   @Override public boolean transferToHost(String host, int port) {
     if (host == null || host.isBlank()) throw new IllegalArgumentException("host is required");
@@ -288,14 +310,62 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     int limit = gg.tame.conduit.protocol.ProtocolEras.chatLimit(protocol.version().number());
     if (input.length() > limit) throw new IllegalArgumentException("chat input is longer than the " + limit + " characters this client's chat box takes");
     if (protocol.capabilities().legacyPlayChat()) return sendChatLineToServer(input);
-    // Before 1.20.5 the command packet carries the client's acknowledgement of the chat it has seen,
-    // which a backend checks against what it sent; a made-up one gets the player disconnected.
-    if (!input.startsWith("/") || !gg.tame.conduit.protocol.ProtocolEras.unsignedChatCommand(protocol.version().number())) {
-      throw new UnsupportedOperationException("a " + protocol.version().displayName() + " client signs its "
-          + (input.startsWith("/") ? "commands" : "chat") + ", and the proxy cannot sign for it");
-    }
+    boolean command = input.startsWith("/");
     // The unsigned Chat Command is the command alone, which is all sendChatLineToServer writes.
-    return sendChatLineToServer(input.substring(1));
+    if (command && gg.tame.conduit.protocol.ProtocolEras.unsignedChatCommand(protocol.version().number())) {
+      return sendChatLineToServer(input.substring(1));
+    }
+    // Everything else a 1.19+ client sends says which signed messages it has seen, and a backend
+    // disconnects a player whose account of that does not match its own. What the proxy writes gives
+    // the account the backend already has (see SecureChat.Window), under the lock the client's own
+    // chat goes out under, so neither lands between the other's reading and writing.
+    synchronized (secureChatLock) {
+      BackendConnection current = backend;
+      if (current == null) return false;
+      int acknowledged = chatWindow(current).acknowledgedForProxy();
+      try {
+        return sendToServer(command
+            ? gg.tame.conduit.protocol.SecureChat.unsignedCommand(protocol, input.substring(1), acknowledged, lastSeenList)
+            : gg.tame.conduit.protocol.SecureChat.unsignedChat(protocol, input, acknowledged, lastSeenList));
+      } catch (IOException impossible) {
+        return false;
+      }
+    }
+  }
+  /** The client's chat key: from its 1.19-1.19.2 Login Start, or the 1.19.3+ Chat Session Update it last sent. */
+  @Override public java.util.Optional<gg.tame.conduit.api.player.ChatSession> chatSession() {
+    var session = chatSession;
+    if (session == null && originalLoginStart != null
+        && gg.tame.conduit.protocol.ProtocolEras.loginStartSignature(protocol.version().number())) {
+      try { session = chatSession = gg.tame.conduit.protocol.SecureChat.loginKey(protocol.version().number(), PlayPackets.body(originalLoginStart)); }
+      catch (IOException unreadable) { }
+    }
+    return java.util.Optional.ofNullable(session);
+  }
+  @Override public boolean deleteChatMessage(byte[] signature) {
+    java.util.Objects.requireNonNull(signature, "signature");
+    int id = pluginPacketId(PacketKind.PLAY_DELETE_MESSAGE, null);
+    return id >= 0 && writeForPlugin(() -> gg.tame.conduit.protocol.SecureChat.deleteMessage(protocol, signature));
+  }
+  /** The backend's record of what this client has seen, started afresh for each backend. */
+  private gg.tame.conduit.protocol.SecureChat.Window chatWindow(BackendConnection current) {
+    synchronized (secureChatLock) {
+      if (current != chatWindowBackend) {
+        chatWindowBackend = current;
+        chatWindow.reset();
+        lastSeenList = null;
+      }
+      return chatWindow;
+    }
+  }
+  /** A Play packet in the client's dialect on its way to {@code target}: what it acknowledges is now the backend's too. */
+  private void sentSecureChat(BackendConnection target, byte[] packet) {
+    try {
+      var update = gg.tame.conduit.protocol.SecureChat.update(protocol, packet);
+      if (update != null) chatWindow(target).apply(update);
+      byte[] list = gg.tame.conduit.protocol.SecureChat.lastSeenList(protocol, packet);
+      if (list != null) { chatWindow(target); lastSeenList = list; }
+    } catch (IOException | RuntimeException unreadable) { }
   }
   @Override public boolean updateCustomChatCompletions(ChatCompletions action, java.util.Collection<String> completions) {
     java.util.Objects.requireNonNull(action, "action");
@@ -404,7 +474,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    */
   @Override public java.util.concurrent.CompletableFuture<gg.tame.conduit.api.player.ConnectResult> connectWithResult(
       gg.tame.conduit.api.server.RegisteredServer server) {
-    BackendServer target = server == null ? null : selector.registry().get(server.getName()).orElse(null);
+    // By address too: a raw server (ServerManager.raw) may share a registered one's name.
+    BackendServer target = server == null ? null : selector.registry().get(server.getName())
+        .filter(found -> found.address().equals(server.getAddress())).orElse(null);
     if (target == null) {
       return java.util.concurrent.CompletableFuture.completedFuture(new gg.tame.conduit.api.player.ConnectResult(
           gg.tame.conduit.api.player.ConnectResult.Status.FAILED, "unknown server " + (server == null ? "" : server.getName())));
@@ -513,7 +585,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     try {
       byte[] outbound = towardBackend(ConnectionState.PLAY, packet);
       if (outbound == null) return false;
-      current.writeUncompressed(outbound);
+      synchronized (secureChatLock) {
+        sentSecureChat(current, packet);
+        current.writeUncompressed(outbound);
+      }
       flushTranslatorExtras(current);
       return true;
     } catch (IOException | RuntimeException failed) {
@@ -534,20 +609,17 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   private boolean relayModernChat(byte[] packet) throws IOException {
     boolean muted = muted();
     if (!muted && !runtime.events().listening(gg.tame.conduit.api.event.player.PlayerChatEvent.class)) return false;
-    PlayPackets.SignedChat line = PlayPackets.signedChat(packet);
+    PlayPackets.SignedChat line = PlayPackets.signedChat(protocol.version().number(), packet);
     if (muted) { acknowledgeDroppedChat(line); return true; }
     var chat = runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerChatEvent(this, line.message()));
     if (chat.cancelled()) {
-      if (line.acknowledged() > 0
-          && protocol.defines(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT)) {
-        var bytes = new java.io.ByteArrayOutputStream();
-        try (var output = new java.io.DataOutputStream(bytes)) {
-          gg.tame.conduit.protocol.MinecraftOutput.varInt(output,
-              protocol.id(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT));
-          gg.tame.conduit.protocol.MinecraftOutput.varInt(output, line.acknowledged());
-        }
-        sendToServer(bytes.toByteArray());
+      // A 1.19.1-1.19.2 signed message names the one before it, and the backend checks that chain:
+      // one withheld breaks it for the next.
+      if (line.signed() && gg.tame.conduit.protocol.ProtocolEras.chatLastSeenList(protocol.version().number())) {
+        gg.tame.conduit.log.ConduitLog.warn("A plugin denied " + username() + "'s chat, which the client signed into a chain; the backend got it anyway");
+        return false;
       }
+      acknowledgeDroppedChat(line);
       return true;
     }
     if (chat.message().equals(line.message())) return false;
@@ -686,6 +758,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     gg.tame.conduit.log.ConduitLog.info(origin() + " connected to the proxy");
     gg.tame.conduit.metrics.ConduitMetrics.current().playerJoined();
     long joined = System.nanoTime();
+    if (modInfo != null) runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerModInfoEvent(this, modInfo));
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerPostLoginEvent(this));
     runtime.revealNodes(this);
     runtime.noteProtection(this);
@@ -694,6 +767,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     // hear about ends before the player counts as on the server, as the Velocity events have it.
     if (expectClientLoginAck) enteredConfiguration(initial);
     firstConnected = runtime.registered(initial.server().name()).orElse(null);
+    // A backend with no Configuration phase decodes Play only once it has sent its Join Game, and a
+    // cold one can take a while over its first player: a 1.19 server read the channel registration
+    // that landed in that gap as a Login packet and closed ("Index 12 out of bounds for length 3").
+    announceAtJoinGame = configurationEntered == null && !backendDefinition.hasConfiguration();
     if (configurationEntered == null) connectedToFirst();
     this.joinedAtNanos = joined;
     try {
@@ -846,6 +923,19 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
    * A 1.19.3+ chat line that was not passed on still owes the backend the acknowledgement it carried,
    * or the client's chat chain and the server's fall out of step and the next line disconnects them.
    */
+  /**
+   * A 1.19.3-1.20.4 command the proxy kept from the backend (it ran it, or a plugin cancelled it): it
+   * carried an acknowledgement, which goes on alone as for withheld chat. True, for the caller to return.
+   */
+  private boolean withheldCommand(byte[] packet) {
+    try {
+      var update = gg.tame.conduit.protocol.SecureChat.update(protocol, packet);
+      if (update != null) acknowledgeDroppedChat(new PlayPackets.SignedChat("", false, update.offset(), 0));
+    } catch (IOException unreadable) {
+      // Nothing to pass on: the command itself was read, and a session is not ended over its tail.
+    }
+    return true;
+  }
   private void acknowledgeDroppedChat(PlayPackets.SignedChat line) throws IOException {
     if (line.acknowledged() > 0
         && protocol.defines(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT)) {
@@ -1085,13 +1175,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       } else if (modClassifier.marker() != gg.tame.conduit.modded.FmlAddressMarkers.MarkerKind.NONE) {
         host = gg.tame.conduit.modded.FmlAddressMarkers.append(host, modClassifier.marker());
       }
+      host = forwarder.handshakeHost(host, profile(), address);
       Handshake backendHandshake = new Handshake(backendProtocol, host, server.address().getPort(), 2);
       MinecraftFrames.write(socket.getOutputStream(), backendHandshake.encode());
     } else {
       // A client that arrived by transfer is logged in to the backend as any other: the backend is
       // Conduit's, not the server that sent the client, and a vanilla one refuses transfers by default.
-      MinecraftFrames.write(socket.getOutputStream(), transferred()
-          ? new Handshake(handshake.protocolVersion(), handshake.requestedHost(), handshake.requestedPort(), 2).encode()
+      // Legacy forwarding rewrites the host, and the client's bytes no longer say what the backend must read.
+      String host = forwarder.handshakeHost(handshake.requestedHost(), profile(), address);
+      MinecraftFrames.write(socket.getOutputStream(), transferred() || !host.equals(handshake.requestedHost())
+          ? new Handshake(handshake.protocolVersion(), host, handshake.requestedPort(), 2).encode()
           : originalHandshake);
     }
   }
@@ -1265,8 +1358,12 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
               Thread.sleep(LOGIN_QUERY_POLL_MS);
               continue;
             }
-            connection.writeUncompressed(
-                connection.login().clientLoginQueryResponse(client.read(configuration.maxFrameBytes())));
+            byte[] answer = connection.login().clientLoginQueryResponse(client.read(configuration.maxFrameBytes()));
+            connection.writeUncompressed(answer);
+            java.util.List<String> mods = gg.tame.conduit.modded.ForgeModList.clientMods(answer);
+            if (mods != null) modInfo = new gg.tame.conduit.api.server.ModInfo(
+                modClassifier.marker() == gg.tame.conduit.modded.FmlAddressMarkers.MarkerKind.FML3 ? "FML3" : "FML2",
+                mods.stream().map(mod -> new gg.tame.conduit.api.server.ModInfo.Mod(mod, "")).toList());
           } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             return;
@@ -1572,7 +1669,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         return;
       }
       byte[] outbound = towardBackend(clientState.state(), packet);
-      if (outbound != null) target.writeUncompressed(outbound);
+      if (outbound != null) {
+        if (clientState.state() == ConnectionState.PLAY) {
+          synchronized (secureChatLock) {
+            sentSecureChat(target, packet);
+            target.writeUncompressed(outbound);
+          }
+        } else {
+          target.writeUncompressed(outbound);
+        }
+      }
       flushTranslatorExtras(target);
     }
   }
@@ -1604,6 +1710,11 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // id 0x03 as the client finishing Configuration.
       return true;
     }
+    if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_SESSION_UPDATE)) {
+      // Kept for Player.getIdentifiedKey; the backend gets it as it came, being the one that checks it.
+      try { chatSession = gg.tame.conduit.protocol.SecureChat.sessionUpdate(packet); } catch (IOException unreadable) { }
+      return false;
+    }
     if (clientState.state() == ConnectionState.PLAY && protocol.is(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.PLAY_CHAT_COMMAND)) {
       String command = PlayPackets.chatCommand(packet);
       if (protocol.capabilities().legacyPlayChat() && command.startsWith("/")) {
@@ -1619,16 +1730,16 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       }
       var execute = new gg.tame.conduit.api.event.command.CommandExecuteEvent(this, command);
       runtime.events().fire(execute);
-      if (execute.cancelled()) return true;
+      if (execute.cancelled()) return withheldCommand(packet);
       String effective = execute.command();
       if (!execute.forwardsToServer()) {
         // The client's own slash is gone already; dispatch strips one more, so it gets one back.
         // Without it "//lpv" ran "lpv", where Velocity runs the command registered as "/lpv", and a
         // backend's "//wand" was taken by any proxy command that happened to be called "wand".
-        try { if (commands.dispatch(this, "/" + effective)) return true; }
+        try { if (commands.dispatch(this, "/" + effective)) return withheldCommand(packet); }
         catch (RuntimeException exception) {
           gg.tame.conduit.log.ConduitLog.error("command failed", exception);
-          return true;
+          return withheldCommand(packet);
         }
       }
       var forwarded = gg.tame.conduit.api.event.command.PostCommandEvent.Result.FORWARDED;
@@ -1657,7 +1768,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       // went into the next reply, Conduit's own list of servers, which Tab turned into "/server /server".
       legacyTabRequest = null;
       var command = gg.tame.conduit.command.ParsedCommand.parseKeepEmpty(request.text());
-      if (request.text().startsWith("/") && commands.get(command.name()).isPresent()) {
+      if (request.text().startsWith("/") && commands.handles(this, command.name(), command.arguments())) {
         List<String> completions = commands.tabComplete(this, request.text());
         // A client with no command tree puts each match in place of the last word it typed, so a
         // command name has to come back with the slash it was typed with.
@@ -1912,6 +2023,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         }
         if (!forwardPluginMessage(translated, gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.BACKEND_TO_PROXY, null)) return true;
         if (relayedTransfer(translated)) return true;
+        if (clientState.state() == ConnectionState.PLAY && gg.tame.conduit.protocol.SecureChat.signedPlayerChat(protocol, translated)) {
+          chatWindow(current).signedMessageSent();
+        }
         // Everything below this point compensates for gaps in Conduit's own translators: a brand
         // the client never gets told, a command tree that has to be merged, a Configuration phase
         // one side of the pair does not have, a Play stream that must wait for the other side to
@@ -2195,8 +2309,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     int id = PlayPackets.packetId(packet);
     if (!protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_DECLARE_COMMANDS)) return packet;
     try {
-      byte[] merged = CommandGraphs.mergeProxyCommands(protocol, packet, selector.registry().names(), commands.names(),
-          commands.displacedBuiltIns(), commands.shownTo(this), commands::syntaxOf);
+      byte[] merged = commands.declare(this, protocol, packet, selector.registry().names());
       commandsDeclared = true;
       lastBackendCommands = packet;
       gg.tame.conduit.protocol.ProfileTrace.dumpCommandMerge(protocol, packet, merged);
@@ -2461,6 +2574,8 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     runtime.events().fire(new PlayerConfigurationEvent(this, entered.server(), PlayerConfigurationEvent.Stage.FINISHED));
     connectedToFirst();
   }
+  /** A first join onto a backend without Configuration: its channels go once its Join Game is written. */
+  private volatile boolean announceAtJoinGame;
   /** The first server, until the player counts as on it. */
   private volatile gg.tame.conduit.api.server.RegisteredServer firstConnected;
   private void connectedToFirst() {
@@ -2469,7 +2584,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     firstConnected = null;
     loggedBackend = first.getName();
     gg.tame.conduit.log.ConduitLog.info(origin() + " joined backend '" + first.getName() + "'");
-    announceProxyChannels();
+    if (!announceAtJoinGame) announceProxyChannels();
     runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerConnectedEvent(this, java.util.Optional.empty(), first));
   }
 
@@ -2616,6 +2731,10 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
       return;
     }
     awaitingBackendJoinGame.written(outbound);
+    if (announceAtJoinGame && writtenIn == ConnectionState.PLAY && isPlayLogin(outbound)) {
+      announceAtJoinGame = false;
+      announceProxyChannels();
+    }
     display.afterWrite(writtenIn, outbound);
     resourcePacks.afterWrite(writtenIn, outbound);
   }
@@ -2682,6 +2801,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public void addTabListEntry(gg.tame.conduit.api.player.TabListEntry entry) { display.addEntry(java.util.Objects.requireNonNull(entry, "entry")); }
   @Override public boolean removeTabListEntry(java.util.UUID id) { return id != null && display.removeEntry(id); }
   @Override public List<gg.tame.conduit.api.player.TabListEntry> tabListEntries() { return display.entries(); }
+  @Override public List<gg.tame.conduit.api.player.TabListEntry> backendTabListEntries() { return display.backendEntries(); }
+  @Override public boolean updateBackendTabListEntry(gg.tame.conduit.api.player.TabListEntry entry) { return display.updateBackendEntry(java.util.Objects.requireNonNull(entry, "entry")); }
+  @Override public boolean removeBackendTabListEntry(java.util.UUID id) { return id != null && display.removeBackendEntry(id); }
   @Override public boolean sendResourcePack(gg.tame.conduit.api.player.ResourcePack pack) { return resourcePacks.offer(java.util.Objects.requireNonNull(pack, "pack")); }
   @Override public boolean removeResourcePack(java.util.UUID id) { return id != null && resourcePacks.remove(id); }
   @Override public boolean clearResourcePacks() { return resourcePacks.clear(); }
@@ -2689,6 +2811,13 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
   @Override public void playSound(gg.tame.conduit.api.player.Sound sound) { display.playSound(java.util.Objects.requireNonNull(sound, "sound")); }
   @Override public void playSound(gg.tame.conduit.api.player.Sound sound, double x, double y, double z) {
     display.playSound(java.util.Objects.requireNonNull(sound, "sound"), x, y, z);
+  }
+  /** The emitter's entity id is the one its backend gave it, which is also what this client sees it as there. */
+  @Override public void playSound(gg.tame.conduit.api.player.Sound sound, gg.tame.conduit.api.player.Player emitter) {
+    java.util.Objects.requireNonNull(sound, "sound");
+    String here = currentBackend();
+    if (!(emitter instanceof PlayerSession other) || other.closed || here.isEmpty() || !here.equalsIgnoreCase(other.currentBackend())) return;
+    display.playSound(sound, other.display.entityId());
   }
   @Override public void stopSound(String name, gg.tame.conduit.api.player.Sound.Source source) { display.stopSound(name, source); }
   @Override public String currentBackend() {

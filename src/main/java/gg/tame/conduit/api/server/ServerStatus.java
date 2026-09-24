@@ -19,7 +19,8 @@ import java.util.OptionalLong;
  * whatever the backend chose to show and need not be real players. Each is empty when the backend
  * gave none. The description keeps what {@link Text} can carry: colours outside the sixteen named
  * ones, fonts and translation arguments are dropped, and legacy section-sign colour codes in a
- * plain-string description stay in its text.
+ * plain-string description stay in its text. {@code modInfo} is the mod list a Forge server puts in
+ * its answer ({@code modinfo}, {@code forgeData} or {@code neoForgeData}), empty for any other server.
  */
 public record ServerStatus(
     String name,
@@ -32,17 +33,25 @@ public record ServerStatus(
     Instant lastProbe,
     Text description,
     Optional<String> favicon,
-    List<ServerListPingEvent.SamplePlayer> samplePlayers
+    List<ServerListPingEvent.SamplePlayer> samplePlayers,
+    Optional<ModInfo> modInfo
 ) {
   public ServerStatus {
     if (description == null) description = Text.empty();
     if (favicon == null) favicon = Optional.empty();
     samplePlayers = samplePlayers == null ? List.of() : List.copyOf(samplePlayers);
+    if (modInfo == null) modInfo = Optional.empty();
+  }
+  /** A status with no mod list. */
+  public ServerStatus(String name, ServerAvailability availability, OptionalInt protocol, String versionName,
+                      OptionalInt onlinePlayers, OptionalInt maxPlayers, OptionalLong latencyMillis, Instant lastProbe,
+                      Text description, Optional<String> favicon, List<ServerListPingEvent.SamplePlayer> samplePlayers) {
+    this(name, availability, protocol, versionName, onlinePlayers, maxPlayers, latencyMillis, lastProbe, description, favicon, samplePlayers, Optional.empty());
   }
   /** A status without a description, favicon or player sample, as the cached one is. */
   public ServerStatus(String name, ServerAvailability availability, OptionalInt protocol, String versionName,
                       OptionalInt onlinePlayers, OptionalInt maxPlayers, OptionalLong latencyMillis, Instant lastProbe) {
-    this(name, availability, protocol, versionName, onlinePlayers, maxPlayers, latencyMillis, lastProbe, Text.empty(), Optional.empty(), List.of());
+    this(name, availability, protocol, versionName, onlinePlayers, maxPlayers, latencyMillis, lastProbe, Text.empty(), Optional.empty(), List.of(), Optional.empty());
   }
   public static ServerStatus online(
       String name,

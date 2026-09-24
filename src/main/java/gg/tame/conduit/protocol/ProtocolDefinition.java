@@ -172,6 +172,7 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
       // Message Acknowledgment, 1.19.3's layout; sent in place of a chat line a plugin withheld.
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x03,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x06,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x05,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0A,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x0B,
@@ -361,6 +362,10 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
       // Chat and Message Acknowledgment, which PlayerChatEvent reads and writes on the player's behalf.
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x03,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x07,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND_SIGNED, 0x05,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x1C,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x39,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x06,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0B,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x0C,
@@ -752,6 +757,9 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x04,
       // Chat and Message Acknowledgment, which PlayerChatEvent reads and writes on the player's behalf.
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x03,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x06,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x19,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x35,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x05,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x09,
       // The serverbound plugin message, from the wiki.vg-merge packet list for protocol 763, which
@@ -772,6 +780,10 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x62,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x63,
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CHAT_SUGGESTIONS, 0x16,
+      // Player Info Remove and Update (1.19.3's split layout), from minecraft-data's 1.20.1 protocol:
+      // the proxy's own tab-list entries, and the backend's read as they pass.
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_REMOVE, 0x39,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE, 0x3A,
       // Play Keep Alive, from minecraft-data's 1.20.1 protocol, so Player.ping() is measured here too.
       ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE, 0x23,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_KEEP_ALIVE, 0x12
@@ -822,6 +834,10 @@ public final class ProtocolDefinition {
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND, 0x07,
       // Chat and Message Acknowledgment, from Mojang's own packet report for 26.2 (server --reports).
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_ACKNOWLEDGEMENT, 0x06,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_SESSION_UPDATE, 0x0A,
+      ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT_COMMAND_SIGNED, 0x08,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_DELETE_MESSAGE, 0x1F,
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x41,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CHAT, 0x09,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_TAB_COMPLETE_REQUEST, 0x0F,
       ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_CONFIGURATION_ACKNOWLEDGED, 0x10,
@@ -864,8 +880,45 @@ public final class ProtocolDefinition {
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_SERVER_LINKS, 0x10,
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_STORE_COOKIE, 0x0A,
       ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_COOKIE_REQUEST, 0x00,
-      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_COOKIE_RESPONSE, 0x01
+      ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, PacketKind.CONFIGURATION_COOKIE_RESPONSE, 0x01,
+      // Clear Dialog, from Mojang's packet report for 26.2 (clear_dialog: play 139, configuration 17).
+      ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CLEAR_DIALOG, 0x8B,
+      ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_CLEAR_DIALOG, 0x11
   );
+  // 26.3 as a delta on 26.2. Every id is from Mojang's own packet report for 26.3 (server.jar
+  // --reports), and every 26.2 id above was checked against 26.2's report at the same time. 26.3
+  // inserts post_effects into configuration and add_transient_block, post_effects and swing_animation
+  // into clientbound play, and replaces serverbound swing with punch; handshake, status and login
+  // are unchanged, and so is every id not listed here.
+  private static final ProtocolDefinition V26_3 = derive(V26_2, ProtocolRevision.of(ProtocolVersion.MINECRAFT_26_3, 776,
+      null, CodecStatus.DECLARED, "Mojang packet report for 26.3",
+      PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_STORE_COOKIE, 0x0B),
+      PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_TRANSFER, 0x0C),
+      PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_KNOWN_PACKS, 0x0F),
+      PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_SERVER_LINKS, 0x11),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_KEEP_ALIVE, 0x2D),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_LOGIN, 0x32),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_REMOVE, 0x46),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_INFO_UPDATE, 0x47),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_POP, 0x51),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_RESOURCE_PACK_PUSH, 0x52),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_ACTION_BAR, 0x59),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_SUBTITLE, 0x72),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_TITLE_TEXT, 0x74),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SET_TITLE_TIMES, 0x75),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_ENTITY_SOUND_EFFECT, 0x76),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SOUND_EFFECT, 0x77),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_START_CONFIGURATION, 0x78),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STOP_SOUND, 0x79),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_STORE_COOKIE, 0x7A),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SYSTEM_CHAT, 0x7C),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_PLAYER_CHAT, 0x42),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TAB_LIST_HEADER, 0x7D),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_TRANSFER, 0x84),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_SERVER_LINKS, 0x8C),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.CLIENT_TO_SERVER, PacketKind.PLAY_RESOURCE_PACK_STATUS, 0x32),
+      PacketMapping.of(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, PacketKind.PLAY_CLEAR_DIALOG, 0x8E),
+      PacketMapping.of(ConnectionState.CONFIGURATION, PacketDirection.SERVER_TO_CLIENT, PacketKind.CONFIGURATION_CLEAR_DIALOG, 0x12)));
   /**
    * Registered packet tables, keyed by protocol number.
    *
@@ -880,7 +933,7 @@ public final class ProtocolDefinition {
   private static Map<Integer, ProtocolDefinition> buildRegistry() {
     Map<Integer, ProtocolDefinition> registry = new java.util.LinkedHashMap<>();
     for (ProtocolDefinition declared : new ProtocolDefinition[] {
-        V1_7_6, V1_8, V1_12_2, V1_13, V1_20_1, V1_20_4, V1_20_5, V26_2}) {
+        V1_7_6, V1_8, V1_12_2, V1_13, V1_20_1, V1_20_4, V1_20_5, V26_2, V26_3}) {
       registry.put(declared.version().number(), declared);
     }
     for (ProtocolRevision revision : ProtocolRevisions.ALL) {

@@ -130,6 +130,14 @@ public final class Phase11OpsTests {
     require(reload.applied(), "reload applied");
     require(runtime.health().settings().failureThreshold() == 4, "live health threshold");
     require(reload.error() == null, "no reload error");
+    require(reload.restartRequired().isEmpty(), "a live-only change needs no restart, said " + reload.restartRequired());
+    // The alert webhook shares a record with the query port and the Prometheus address but is live.
+    Files.writeString(config, Files.readString(config) + "\n[metrics]\nalert-webhook = \"http://127.0.0.1:1/hook\"\n");
+    reload = runtime.reload();
+    require(reload.restartRequired().isEmpty(), "an alert webhook change is live, said " + reload.restartRequired());
+    Files.writeString(config, Files.readString(config) + "\n[query]\nenabled = true\nport = 25599\n");
+    reload = runtime.reload();
+    require(reload.restartRequired().equals(List.of("query.*")), "a query change is labelled query.*, said " + reload.restartRequired());
     runtime.close();
   }
 

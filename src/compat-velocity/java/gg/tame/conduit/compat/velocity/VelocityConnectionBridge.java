@@ -164,7 +164,7 @@ final class VelocityConnectionBridge {
         catch (RuntimeException failed) { environment.log.log(java.util.logging.Level.WARNING, "A login plugin message consumer failed", failed); }
       }, environment.work);
     }
-    /** Null, as for a connection that sent none: Conduit does not keep the client's chat key. */
+    /** Null, as for a connection that sent none: the client's chat key is the player's, from Player.getIdentifiedKey. */
     @Override public IdentifiedKey getIdentifiedKey() { return null; }
   }
 }

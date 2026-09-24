@@ -87,7 +87,9 @@ mode = "online"
 #   "modern"  the Velocity-style signed handshake. Give every backend the same
 #             secret (Paper: velocity.secret in config/paper-global.yml). Use this
 #             one in public.
-#   "legacy" / "bungeeguard"  only for backends that speak nothing else.
+#   "legacy" / "bungeeguard"  only for backends that speak nothing else
+#             (Spigot bungeecord: true). Legacy is unsigned: firewall the backends.
+#             BungeeGuard sends the secret below as its token.
 # The secret is generated on first start whatever the mode, so turning this to
 # "modern" later is this one line plus a copy into each backend.
 [forwarding]
@@ -223,10 +225,15 @@ motd = "Conduit"
 # log-list = ["schematica"]
 # kick-list = []
 
-# The tighter limits used while /conduit attack is on.
+# The tighter limits used while /conduit attack is on. auto-trip-per-second switches
+# it on by itself when more connections than that arrive in one second (0 = never),
+# and off after a quiet minute. known-sources-only lets only addresses a player has
+# logged in from since start log in while it is on; pings are still answered.
 # [security.attack-mode]
 # throttle-max-attempts = 8
 # bot-strike-threshold = 3
+# auto-trip-per-second = 0
+# known-sources-only = false
 
 # Forge, NeoForge and Fabric handshakes. unknown-policy "allow" lets a handshake
 # Conduit does not recognise through; anything else refuses it.
@@ -261,14 +268,22 @@ motd = "Conduit"
 # [metrics]
 # prometheus-address = "127.0.0.1:9225"
 
+# The GameSpy 4 query some server lists and status bots read, over UDP: the MOTD,
+# player count and names. port = 0 is the listener's own port. (restart)
+# [query]
+# enabled = false
+# port = 0
+
 # ViaVersion is not inside the Conduit jar: the first start installs the set this
 # build pins into lib/via, checksummed, and via = true also takes newer releases
-# in the same line on start. Nothing here can stop Conduit starting. (restart)
+# in the same line on start. Nothing here can stop Conduit starting. conduit = true
+# only logs a line when a newer Conduit release is on GitHub. (restart)
 # [updates]
 # via = true
 # check-only = false
 # timeout-ms = 5000
 # via-check-interval-hours = 12
+# conduit = true
 
 
 # Written by Conduit, so a newer version knows which settings this file predates.

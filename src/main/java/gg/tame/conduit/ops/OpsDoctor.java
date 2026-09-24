@@ -110,7 +110,9 @@ public final class OpsDoctor {
         findings.add(new Finding(Severity.OK, "forwarding", "Modern forwarding configured (secret not shown)."));
       }
     } else {
-      findings.add(new Finding(Severity.OK, "forwarding", "Forwarding mode: " + config.forwardingMode().name().toLowerCase()));
+      boolean unsigned = config.forwardingMode() == ForwardingMode.LEGACY;
+      findings.add(new Finding(unsigned ? Severity.WARNING : Severity.OK, "forwarding", "Forwarding mode: " + config.forwardingMode().name().toLowerCase()
+          + (unsigned ? " (unsigned: backends must accept connections from Conduit only)" : "")));
     }
     int codecs = 0;
     for (var version : gg.tame.conduit.protocol.ProtocolVersion.CATALOG) {

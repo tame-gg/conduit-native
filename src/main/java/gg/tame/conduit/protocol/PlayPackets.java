@@ -93,10 +93,15 @@ public final class PlayPackets {
       return matches;
     }
   }
+  /**
+   * The most bytes a chat line's 256 characters take in UTF-8. The limit is in characters: read as 256
+   * bytes, a line of accented letters or emoji failed to parse.
+   */
+  public static final int CHAT_BYTES = 256 * 3;
   public static String chatCommand(byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
-      return MinecraftInput.string(input, 256);
+      return MinecraftInput.string(input, CHAT_BYTES);
     }
   }
   /**
@@ -105,11 +110,28 @@ public final class PlayPackets {
    * kept byte for byte when the text is replaced.
    */
   public record SignedChat(String message, boolean signed, int acknowledged, int afterMessage) {}
+  /**
+   * A 1.19+ chat message in {@code protocol}'s layout. 1.19 to 1.19.2 sign with a length-prefixed
+   * signature, empty when unsigned, and acknowledge nothing Conduit relays on its own, so their
+   * {@code acknowledged} is 0.
+   */
+  public static SignedChat signedChat(int protocol, byte[] packet) throws IOException {
+    if (ProtocolEras.chatSession(protocol)) return signedChat(packet);
+    try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
+      MinecraftInput.varInt(input);
+      String message = MinecraftInput.string(input, CHAT_BYTES);
+      int afterMessage = packet.length - input.available();
+      input.readLong();                            // timestamp
+      input.readLong();                            // salt
+      boolean signed = MinecraftInput.bytes(input, 256).length > 0;
+      return new SignedChat(message, signed, 0, afterMessage);
+    }
+  }
   /** Every release from 1.19.3 lays these fields out alike; what later ones append is not read. */
   public static SignedChat signedChat(byte[] packet) throws IOException {
     try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet))) {
       MinecraftInput.varInt(input);
-      String message = MinecraftInput.string(input, 256);
+      String message = MinecraftInput.string(input, CHAT_BYTES);
       int afterMessage = packet.length - input.available();
       input.readLong();                            // timestamp
       input.readLong();                            // salt

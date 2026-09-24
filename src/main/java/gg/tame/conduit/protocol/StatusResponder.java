@@ -33,7 +33,23 @@ public final class StatusResponder {
     String json = json(ping.description(), ping.versionName(), ping.versionProtocol(),
         ping.playersHidden(), ping.maxPlayers(), ping.onlinePlayers(), ping.samplePlayers(), ping.favicon(), ping.protocolVersion());
     if (preventsChatReports) json = json.substring(0, json.length() - 1) + ",\"preventsChatReports\":true}";
+    if (ping.modInfo().isPresent()) json = json.substring(0, json.length() - 1) + modInfo(ping.modInfo().get()) + "}";
     return answer(protocol, request, json);
+  }
+  /** {@code ,"modinfo":{...}}: the shape public docs give for a 1.7-1.12 Forge server's answer, which its clients read. */
+  private static String modInfo(gg.tame.conduit.api.server.ModInfo info) {
+    StringBuilder json = new StringBuilder(",\"modinfo\":{\"type\":");
+    ComponentCodec.quote(json, info.type());
+    json.append(",\"modList\":[");
+    for (int index = 0; index < info.mods().size(); index++) {
+      if (index > 0) json.append(',');
+      json.append("{\"modid\":");
+      ComponentCodec.quote(json, info.mods().get(index).id());
+      json.append(",\"version\":");
+      ComponentCodec.quote(json, info.mods().get(index).version());
+      json.append('}');
+    }
+    return json.append("]}").toString();
   }
   /** Throws unless {@code request} is a status request, so nothing is asked of plugins for a malformed one. */
   public static void checkRequest(ProtocolDefinition protocol, byte[] request) throws IOException {

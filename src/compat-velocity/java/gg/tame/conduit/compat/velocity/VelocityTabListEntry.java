@@ -12,9 +12,10 @@ import java.util.function.UnaryOperator;
 import net.kyori.adventure.text.Component;
 
 /**
- * One proxy entry of a player's tab list. A setter changes this view and, when the entry is on the
- * tab list, the entry itself, read fresh from Conduit so that two views of one entry never undo each
- * other's changes.
+ * One entry of a player's tab list, the proxy's or the backend's. A setter changes this view and, when
+ * the entry is on the tab list, the entry itself, read fresh from Conduit so that two views of one
+ * entry never undo each other's changes. A backend entry's change is sent to the client, and lasts
+ * until the backend next updates that field.
  */
 final class VelocityTabListEntry implements TabListEntry {
   private final VelocityTabList tabList;
@@ -25,9 +26,16 @@ final class VelocityTabListEntry implements TabListEntry {
   private volatile boolean listed;
   private volatile int listOrder;
   private volatile boolean showHat;
+  private final ChatSession chatSession;
 
   VelocityTabListEntry(VelocityTabList tabList, GameProfile profile, Component displayName, int latency, int gameMode,
                        boolean listed, int listOrder, boolean showHat) {
+    this(tabList, profile, displayName, latency, gameMode, listed, listOrder, showHat, null);
+  }
+
+  VelocityTabListEntry(VelocityTabList tabList, GameProfile profile, Component displayName, int latency, int gameMode,
+                       boolean listed, int listOrder, boolean showHat, ChatSession chatSession) {
+    this.chatSession = chatSession;
     this.tabList = tabList;
     this.profile = profile;
     this.displayName = displayName;
@@ -40,13 +48,14 @@ final class VelocityTabListEntry implements TabListEntry {
 
   VelocityTabListEntry(VelocityTabList tabList, gg.tame.conduit.api.player.TabListEntry entry) {
     this(tabList, profile(entry), entry.displayName() == null ? null : Texts.toAdventure(entry.displayName()),
-        entry.latency(), entry.gameMode(), entry.listed(), entry.listOrder(), entry.showHat());
+        entry.latency(), entry.gameMode(), entry.listed(), entry.listOrder(), entry.showHat(),
+        VelocityIdentifiedKey.Session.of(entry.chatSession(), entry.id(), tabList.player.getProtocolVersion().getProtocol()));
   }
 
   @Override public TabList getTabList() { return tabList; }
   @Override public GameProfile getProfile() { return profile; }
-  /** None: the proxy's entries have no chat session. */
-  @Override public ChatSession getChatSession() { return null; }
+  /** The session a plugin gave the entry, which a 1.19.3+ client is sent with it (a 1.19-1.19.2 client, its key); null for none. */
+  @Override public ChatSession getChatSession() { return chatSession; }
   @Override public Optional<Component> getDisplayNameComponent() { return Optional.ofNullable(displayName); }
   @Override public int getLatency() { return latency; }
   @Override public int getGameMode() { return gameMode; }
@@ -81,19 +90,18 @@ final class VelocityTabListEntry implements TabListEntry {
   }
 
   private TabListEntry push(UnaryOperator<gg.tame.conduit.api.player.TabListEntry> change) {
-    tabList.current(profile.getId()).ifPresent(entry -> tabList.player.nativePlayer().addTabListEntry(change.apply(entry)));
+    tabList.change(profile.getId(), change);
     return this;
   }
 
   private static gg.tame.conduit.api.player.TabListEntry copy(gg.tame.conduit.api.player.TabListEntry entry,
       gg.tame.conduit.api.text.Text displayName, int latency, int gameMode, boolean listed, int listOrder, boolean showHat) {
     return new gg.tame.conduit.api.player.TabListEntry(entry.id(), entry.name(), entry.properties(), displayName, latency, gameMode,
-        listed, listOrder, showHat);
+        listed, listOrder, showHat, entry.chatSession());
   }
 
   /** Any Velocity entry as Conduit's; its profile names it. */
   static gg.tame.conduit.api.player.TabListEntry toConduit(TabListEntry entry) {
-    if (entry.getChatSession() != null) throw Unsupported.api("TabListEntry chat sessions");
     GameProfile profile = entry.getProfile();
     List<gg.tame.conduit.api.player.TabListEntry.Property> properties = new ArrayList<>();
     for (GameProfile.Property property : profile.getProperties()) {
@@ -103,7 +111,13 @@ final class VelocityTabListEntry implements TabListEntry {
     }
     return new gg.tame.conduit.api.player.TabListEntry(profile.getId(), profile.getName(), properties,
         entry.getDisplayNameComponent().map(Texts::toConduit).orElse(null), entry.getLatency(), entry.getGameMode(),
-        entry.isListed(), entry.getListOrder(), entry.isShowHat());
+        entry.isListed(), entry.getListOrder(), entry.isShowHat(), chatSession(entry.getChatSession()));
+  }
+
+  /** A plugin's session as Conduit's; none for a session without a key, which gives a client nothing to check chat with. */
+  private static gg.tame.conduit.api.player.ChatSession chatSession(ChatSession session) {
+    if (session == null || session.getIdentifiedKey() == null) return null;
+    return VelocityIdentifiedKey.toConduit(session.getSessionId(), session.getIdentifiedKey());
   }
 
   private static GameProfile profile(gg.tame.conduit.api.player.TabListEntry entry) {

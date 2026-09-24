@@ -1,4 +1,4 @@
-# Conduit compatibility matrix (Minecraft 1.13 - 26.2)
+# Conduit compatibility matrix (Minecraft 1.13 - 26.3)
 
 Generated from the live registries, not hand-maintained: every row is what
 `CompatibilityRegistry.resolve(client, backend)` would tell a real session.
@@ -23,7 +23,9 @@ below marked "Via enabled" are therefore the default behaviour, not an opt-in.
 | 5 (1.7.6) → 765, and after `/server` 765 → 393 → 765 (Via+Rewind) | TRANSLATED | **REAL-CLIENT VERIFIED** — see the real-client matrix below |
 | 47 (1.8.9) → 765, and after `/server` 765 → 393 → 765 (Via+Rewind) | TRANSLATED | **REAL-CLIENT VERIFIED** — see the real-client matrix below |
 | modern → 1.7.6 (Via+Legacy) | TRANSLATED | UNTESTED — ViaLegacy not loaded; not shown to be required |
-| * → 26.3 / 26.3 → * on Via 5.11.0 | UNSUPPORTED | Via does not register 26.3; out of scope for this phase |
+| 777 (26.3) → 777 | DIRECT | DIRECT_VERIFIED (scripted) — protocol-777 probe through Conduit to two official 26.3 servers: login, configuration, Join Game, dimension change, `/server` switch |
+| 776 (26.2) → 777 (Via 5.12.0) | TRANSLATED | scripted 26.2 probe, same two servers, same steps, carried by `Protocol26_3To26_2`; no real-client run yet |
+| any other pair with 26.3 on either side | Via | whatever Via 5.12.0 reports a path for; not run |
 
 ## Real-client matrix (Via engine, target 1.7.6 → 26.2)
 
@@ -163,13 +165,33 @@ command tree before 1.13, no brand line on the F3 screen before 1.13). BLOCKED: 
 against (no Paper build with Velocity support for that release). UNSUPPORTED: Conduit does not
 implement it. UNTESTED: not run.
 
-OVERALL STATUS covers the DIRECT checklist and the forwarding modes Conduit implements (none and
-modern). Legacy (BungeeCord IP forwarding) and BungeeGuard are not implemented by Conduit for any
-release: `Forwarders.create` handles `none` and `modern` only, and Conduit configured with either
-refuses to start. The configuration is now rejected as it loads (`forwarding.mode must be none or
-modern: Conduit does not implement legacy forwarding`); the runs recorded under
-`logs-forwarding/startup-*` predate that and show `java.lang.UnsupportedOperationException: forwarding
-mode legacy is not implemented`, and the same for `bungeeguard`.
+OVERALL STATUS covers the DIRECT checklist and the forwarding modes run across the matrix (none and
+modern). The LEGACY FORWARDING and BUNGEEGUARD columns were recorded when Conduit did not implement
+either mode and refused to start with one (the runs under `logs-forwarding/startup-*` show that
+refusal). Both are implemented now, but have not been re-run across the matrix; see
+[Legacy and BungeeGuard forwarding](#legacy-and-bungeeguard-forwarding) for what has been observed.
+
+### Legacy and BungeeGuard forwarding
+
+`forwarding.mode = "legacy"` writes the player into the backend handshake's host field the way a
+Spigot or Paper backend with `settings.bungeecord: true` in `spigot.yml` reads it:
+`host \0 clientIp \0 uuidWithoutDashes`, then `\0` and a JSON array of the profile properties
+(`name`, `value`, `signature` where signed) when there are any. `"bungeeguard"` is the same plus a
+`{"name":"bungeeguard-token","value":<token>}` property, for backends running the BungeeGuard plugin;
+the token is the content of `forwarding.secret-file`, so put that value in the plugin's
+`allowed-tokens`. A Forge marker (`\0FML2\0` etc.) cannot stay on the host, since the backend accepts
+four NUL-separated parts at most; it is sent as an `extraData` property with its NULs written as
+`\1`, which is where Forge-aware Bukkit hybrids look for it (not tested against one).
+
+Nothing signs legacy forwarding: any connection to the backend can claim any player. Conduit warns at
+start; the backends must accept connections from Conduit only. Prefer `modern` wherever the backend
+supports it.
+
+Observed: Paper 1.20.4 (git-Paper-499) with `bungeecord: true` and Velocity support off accepted a
+login through Conduit in `legacy` mode, named the player by the forwarded UUID and placed them in the
+world; with `none`, the same backend refused it ("If you wish to use IP forwarding, please enable it
+in your BungeeCord config as well!"). `bungeeguard` is covered by unit tests on the exact handshake
+string only; it has not been run against the BungeeGuard plugin.
 
 <!-- DIRECT TABLES -->
 
@@ -416,7 +438,8 @@ fixed, locked by a regression test that fails without the fix, and re-run on the
   are what the DIRECT row covers); chat, `/conduit`, `/server`, both switches, the hold and the
   Disconnect remain. Paper 1.13 has no Velocity support (BLOCKED) and there is no Paper build for 1.16
   (BLOCKED); before 1.13 there is no login plugin message, so modern forwarding does not apply (N/A).
-- **legacy** and **bungeeguard**: UNSUPPORTED BY CONDUIT for every release (startup refusal, above).
+- **legacy** and **bungeeguard**: recorded as UNSUPPORTED when Conduit refused both at startup; now
+  implemented, observed on Paper 1.20.4 only (see Legacy and BungeeGuard forwarding, above).
 - **Authentication**: every row but 1.16.5 runs with `[authentication] mode = "offline"` and a harness
   client launched offline. **1.16.5 is the authenticated pair**, both DIRECT and modern, run with
   `mode = "online"` and a real Microsoft account launched by the Modrinth App, because an offline
@@ -536,9 +559,10 @@ Known gaps:
 
 - **Protocol 485 (1.14.2)** has no codec - no published packet data to derive
   from. It stays a catalog entry.
-- **Protocol 776 (26.2)** and **763 (1.20.1)** have thin declared tables (38 and
-  21 packets). 26.2 has no published packet data yet, so it cannot be enriched
-  by derivation the way the rest of the range was. Both name the Play Keep
+- **Protocol 776 (26.2)**, **777 (26.3)** and **763 (1.20.1)** have thin tables (38,
+  38 and 21 packets). 26.x has no published packet data, so they cannot be
+  enriched by derivation the way the rest of the range was; 776's and 777's ids
+  were checked against Mojang's own packet report for each release. Both name the Play Keep
   Alive (26.2 with 26.1's ids, 1.20.1 with minecraft-data's), since without it
   `Player.ping()` was -1 for the whole session; `PlayerLatencyTests` checks
   every codec for it.
@@ -600,6 +624,7 @@ Known gaps:
 | 774 | 1.21.11 | V1_21 | DERIVED | 84 | yes | DIRECT/PARTIAL | published packet ids for 1.21.11; capabilities inherited from 1.21.10 (derived from 1.21.10) |
 | 775 | 26.1 | V26 | DERIVED | 84 | yes | DIRECT/PARTIAL | published packet ids for 26.1; capabilities inherited from 1.21.11 (derived from 1.21.11) |
 | 776 | 26.2 | V26 | DECLARED | 38 | yes | DIRECT/FULL | authored packet table |
+| 777 | 26.3 | V26 | DECLARED | 38 | yes | DIRECT/FULL | Mojang packet report for 26.3 (derived from 26.2) |
 
 ### Registered translators (ordered pairs)
 
@@ -859,6 +884,16 @@ the client announced to the first.
 | Fabric | Configuration/Play custom payloads | channel classification only; nothing loader-specific is needed |
 
 Mod-list synchronisation is not implemented for any loader. Conduit observes and
-classifies; it does not parse, cache or replay a mod list, and it does not
-negotiate registries. A backend switch between two modded servers therefore
+classifies; it does not cache or replay a mod list, and it does not negotiate
+registries. (Mod lists are read in passing and never changed: the Velocity adapter
+reads a 1.7 - 1.12 client's `FML|HS` mod list, and Conduit reads a 1.13+ client's
+ModListReply out of its first server's `fml:loginwrapper` exchange -- mod ids only,
+as the client sends no versions -- for the native `PlayerModInfoEvent` and Velocity's
+`Player.getModInfo`. Both the Forge-documented wrapping and the one a real NeoForge
+20.2.93 client sent, which repeats the message id and `fml:loginwrapper` ahead of
+`fml:handshake`, are read. The same NeoForge client sent nothing in Configuration
+that names its mods, only its brand; a later NeoForge that negotiates there has not
+been observed and is not read. A backend's status answer is read for its mod list
+too: `modinfo`, `forgeData`, or the packed `d` field of Forge 1.18.2+ and NeoForge's
+`neoForgeData`.) A backend switch between two modded servers therefore
 carries no loader state across.

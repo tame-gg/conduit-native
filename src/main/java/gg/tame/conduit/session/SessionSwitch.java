@@ -211,7 +211,7 @@ final class SessionSwitch {
       Handshake switchHandshake = pending.support() == TranslationSupport.TRANSLATED
           ? new Handshake(pending.backendProtocol(), session.handshake.requestedHost(), session.handshake.requestedPort(), 2)
           : session.handshake;
-      BackendConnection.handshake(socket, switchHandshake, server, session.profile(), session.modClassifier.marker(), session.modClassifier.family());
+      BackendConnection.handshake(socket, switchHandshake, server, session.profile(), session.modClassifier.marker(), session.modClassifier.family(), session.forwarder, session.address);
       next = session.track(new BackendConnection(server, socket, pending.definition(), session.forwarder, session.profile(), session.address, session.configuration, true));
       next.setReadTimeoutMillis(remainingMillis(deadline));
       session.completeBackendLogin(next, false, pending);

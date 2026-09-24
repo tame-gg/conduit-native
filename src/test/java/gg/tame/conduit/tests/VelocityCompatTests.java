@@ -521,7 +521,7 @@ public final class VelocityCompatTests {
             event.setResult(KickedFromServerEvent.RedirectPlayer.create(proxy.getServer(server.equals("lobby") ? "survival" : "lobby").orElseThrow(),
                 Component.text("redirected by vtest")));
           }
-          /** Conduit never fires this; registering it must say so. */
+          /** Fired only when [query] is on (VelocityApiGapTests); registering it logs nothing. */
           @Subscribe public void query(ProxyQueryEvent event) { signal("query"); }
         }
       }
@@ -590,8 +590,8 @@ public final class VelocityCompatTests {
         
         var vtest = proxy.runtime().plugins().plugin("vtest").orElseThrow(() -> new AssertionError("vtest is a Conduit plugin"));
         require(proxy.runtime().plugins().plugin("nside").isPresent(), "a native plugin loads beside Velocity plugins");
-        require(logged.stream().anyMatch(line -> line.startsWith("velocity: ") && line.contains("ProxyQueryEvent") && line.contains("never fires")),
-            "a listener for an event Conduit never fires is reported: " + logged);
+        require(logged.stream().noneMatch(line -> line.contains("ProxyQueryEvent") && line.contains("never fires")),
+            "ProxyQueryEvent is fired, so its listener is not reported: " + logged);
         require(logged.stream().noneMatch(line -> line.contains("ProxyPingEvent") && line.contains("never fires")), "ProxyPingEvent is fired: " + logged);
 
         // ProxyPingEvent: the plugin's ServerPing is the answer; a denied one is no answer at all.
@@ -849,7 +849,7 @@ public final class VelocityCompatTests {
     plain(root, plugins, "optdep", ", dependencies = @com.velocitypowered.api.plugin.Dependency(id = \"absent\", optional = true)", "");
     plain(root, plugins, "needy", ", dependencies = @com.velocitypowered.api.plugin.Dependency(id = \"absent\")", "");
     plain(root, plugins, "boom", "", "public Main() { signal(\"boom-ran\"); throw new IllegalStateException(\"boom\"); }");
-    plain(root, plugins, "badinject", "", "@javax.inject.Inject public Main(Thread notInjectable) { }");
+    plain(root, plugins, "badinject", "", "@javax.inject.Inject public Main(Runnable notInjectable) { }");
     Path classes = compile(root, "nomain.Main", PLAIN.formatted("nomain", "", ""), List.of(), false);
     jar(classes, plugins.resolve("NoMain.jar"), "{\"id\":\"nomain\",\"main\":\"nomain.Missing\"}");
     jar(classes, plugins.resolve("BadJson.jar"), "{\"id\": \"badjson\", \"main\": ");

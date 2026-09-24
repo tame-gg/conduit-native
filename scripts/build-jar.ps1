@@ -169,8 +169,8 @@ try {
 
   $manifest = Join-Path $stage "conduit-manifest.txt"
   @(
-    # The bootstrap, not the launcher: it decides whether a newer ViaVersion in
-    # lib/via displaces the one merged into this jar, then calls the launcher.
+    # The bootstrap, not the launcher: it installs ViaVersion into lib/via when
+    # there is none and loads it from there, then calls the launcher.
     "Main-Class: gg.tame.conduit.boot.Bootstrap",
     # Configurate, night-config and adventure's SLF4J logger keep classes for newer JDKs under
     # META-INF/versions/, which a jar only uses when it says it is multi-release.

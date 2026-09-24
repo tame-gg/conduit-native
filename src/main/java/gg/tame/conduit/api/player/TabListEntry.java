@@ -22,9 +22,12 @@ import java.util.UUID;
  * @param listed      whether it appears on the list at all
  * @param listOrder   higher sorts first
  * @param showHat     whether the skin's hat layer is drawn
+ * @param chatSession the chat key a 1.19+ client verifies this entry's signed chat with; null for none.
+ *                    Sent to 1.19 to 1.19.2 clients as the entry's profile key, which then has no
+ *                    session id, and to 1.19.3+ clients as its chat session, which needs one
  */
 public record TabListEntry(UUID id, String name, List<Property> properties, Text displayName, int latency, int gameMode,
-                           boolean listed, int listOrder, boolean showHat) {
+                           boolean listed, int listOrder, boolean showHat, ChatSession chatSession) {
   /** A profile property; {@code signature} is null when unsigned. */
   public record Property(String name, String value, String signature) {
     public Property {
@@ -39,5 +42,11 @@ public record TabListEntry(UUID id, String name, List<Property> properties, Text
     if (name.length() > 16) throw new IllegalArgumentException("a profile name is at most 16 characters: " + name);
     if (gameMode < 0 || gameMode > 3) throw new IllegalArgumentException("game mode must be 0-3, was " + gameMode);
     properties = properties == null ? List.of() : List.copyOf(properties);
+  }
+
+  /** An entry without a chat session. */
+  public TabListEntry(UUID id, String name, List<Property> properties, Text displayName, int latency, int gameMode,
+                      boolean listed, int listOrder, boolean showHat) {
+    this(id, name, properties, displayName, latency, gameMode, listed, listOrder, showHat, null);
   }
 }

@@ -1,4 +1,3 @@
-import java.net.URI
 import java.security.MessageDigest
 
 plugins {
@@ -13,7 +12,9 @@ java {
 }
 
 application {
-  mainClass.set("gg.tame.conduit.launcher.Main")
+  // The bootstrap, as in the release jar: the distribution carries no Via, and it is what installs
+  // the pinned set into lib/via beside conduit.toml on the first start.
+  mainClass.set("gg.tame.conduit.boot.Bootstrap")
 }
 
 repositories {
@@ -23,9 +24,9 @@ repositories {
   maven("https://repo.papermc.io/repository/maven-public")
 }
 
-val viaVersion = "5.11.0"
-val viaRewind = "4.1.3"
-val viaLegacy = "3.0.16"
+val viaVersion = "5.12.0"
+val viaRewind = "4.2.0"
+val viaLegacy = "3.1.0"
 val velocityVersion = "3.4.0"
 
 // The Velocity-compatibility adapter is built with the rest, not as a source set of its own: the
@@ -116,40 +117,22 @@ dependencies {
   // The Velocity plugin runtime is declared in velocityRuntime above, which implementation extends.
 }
 
-// A distribution (distZip, distTar, installDist) conveys GPL object code: Conduit itself and the Via
-// jars. It carries its own Corresponding Source inside the same archive, which meets GPLv3 section 6
-// with no written offer to honour afterwards. See docs/LICENSING_VIA.md.
-// ponytail: GitHub tag archives are trusted as-is, with no pinned hash; pin SHA-256s if a release
-// pipeline needs reproducible archives.
-val gplSources = mapOf(
-  "ViaVersion-$viaVersion" to "https://github.com/ViaVersion/ViaVersion/archive/refs/tags/$viaVersion.zip",
-  "ViaBackwards-$viaVersion" to "https://github.com/ViaVersion/ViaBackwards/archive/refs/tags/$viaVersion.zip",
-  "ViaRewind-$viaRewind" to "https://github.com/ViaVersion/ViaRewind/archive/refs/tags/$viaRewind.zip",
-  "ViaLegacy-$viaLegacy" to "https://github.com/ViaVersion/ViaLegacy/archive/refs/tags/v$viaLegacy.zip",
-)
-val fetchViaSource = tasks.register("fetchViaSource") {
-  val target = layout.buildDirectory.dir("corresponding-source")
-  val sources = gplSources // a local copy: the configuration cache cannot serialize the script itself
-  // Downloads name Conduit's build and nothing else: no user, machine or path.
-  val userAgent = "Conduit-Development/$version"
-  inputs.property("sources", sources)
-  outputs.dir(target)
-  doLast {
-    sources.forEach { (name, url) ->
-      val file = target.get().file("$name.zip").asFile
-      val part = File(file.path + ".part")
-      file.parentFile.mkdirs()
-      val connection = URI(url).toURL().openConnection()
-      connection.setRequestProperty("User-Agent", userAgent)
-      connection.getInputStream().use { input -> part.outputStream().use { input.copyTo(it) } }
-      if (!part.renameTo(file) && !(file.delete() && part.renameTo(file))) throw GradleException("cannot write $file")
-    }
-  }
+// A distribution (distZip, distTar, installDist) conveys Conduit's GPL object code and carries its
+// Corresponding Source in the same archive, which meets GPLv3 section 6 with no written offer to
+// honour afterwards. Via is a compile dependency but is not shipped, the same as in the release jar:
+// the bootstrap installs it on first start. See docs/LICENSING_VIA.md.
+// File-name prefixes of what is left out: the five Via jars, and the com.seedfinding mc_* jars that
+// only ViaLegacy pulls in, which neither the release jar nor the bootstrap's install carries either.
+val viaJars = listOf("viaversion-api-", "viaversion-common-", "viabackwards-common-", "viarewind-common-", "ViaLegacy-", "mc_")
+tasks.startScripts {
+  val via = viaJars // a local copy: the configuration cache cannot serialize the script itself
+  classpath = classpath!!.filter { jar -> via.none { jar.name.startsWith(it) } }
 }
 
 distributions {
   main {
     contents {
+      exclude(viaJars.map { "**/$it*.jar" })
       from("LICENSE", "THIRD-PARTY-NOTICES")
       into("source/conduit") {
         from(rootDir) {
@@ -159,7 +142,6 @@ distributions {
           exclude("**/__pycache__/**")
         }
       }
-      into("source/third-party") { from(fetchViaSource) }
     }
   }
 }

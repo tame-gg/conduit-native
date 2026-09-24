@@ -40,7 +40,7 @@ final class VelocityRegisteredServer implements RegisteredServer, Unsupported.Pl
   @Override public CompletableFuture<ServerPing> ping() { return ping(PingOptions.DEFAULT); }
   /**
    * The backend's own status answer: version, players with their sample, description (as Conduit
-   * Text carries it) and favicon; never mod info. Every option is honoured: an unknown version or no
+   * Text carries it), favicon and a Forge backend's mod list. Every option is honoured: an unknown version or no
    * virtual host leaves the native defaults, and a zero timeout is Conduit's health-check timeout. A
    * backend that does not answer fails the future, and callbacks run on the adapter's threads.
    */
@@ -53,8 +53,9 @@ final class VelocityRegisteredServer implements RegisteredServer, Unsupported.Pl
           .map(player -> new ServerPing.SamplePlayer(player.name(), player.uniqueId())).toList();
       return new ServerPing(new ServerPing.Version(status.protocol().orElse(-1), status.versionName()),
           counted ? new ServerPing.Players(status.onlinePlayers().orElse(0), status.maxPlayers().orElse(0), sample) : null,
-          // The four-argument constructor would claim an empty FML mod list the backend never sent.
-          Texts.toAdventure(status.description()), status.favicon().map(Favicon::new).orElse(null), null);
+          // Null, not the four-argument constructor's empty FML list, for a backend that sent none.
+          Texts.toAdventure(status.description()), status.favicon().map(Favicon::new).orElse(null),
+          status.modInfo().map(VelocityEventBridge::toVelocity).orElse(null));
     }, environment.work);
   }
   /** Through a player on the server, as there is no other connection to it; false with nobody there. */

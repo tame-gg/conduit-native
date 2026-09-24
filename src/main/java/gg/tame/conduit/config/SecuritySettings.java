@@ -107,16 +107,28 @@ public record SecuritySettings(
     }
   }
 
+  /**
+   * @param autoTripPerSecond connections accepted in one second, from anywhere, that switch attack
+   *     mode on by themselves; 0 leaves it to {@code /conduit attack}
+   * @param knownSourcesOnly while attack mode is on, logins are taken only from sources a player has
+   *     already logged in from since the proxy started; status pings are still answered
+   */
   public record AttackModeSettings(
       int throttleMaxAttempts,
-      int botStrikeThreshold
+      int botStrikeThreshold,
+      int autoTripPerSecond,
+      boolean knownSourcesOnly
   ) {
     public AttackModeSettings {
       if (throttleMaxAttempts < 1) throw new IllegalArgumentException("security.attack-mode.throttle-max-attempts must be >= 1");
       if (botStrikeThreshold < 1) throw new IllegalArgumentException("security.attack-mode.bot-strike-threshold must be >= 1");
+      if (autoTripPerSecond < 0) throw new IllegalArgumentException("security.attack-mode.auto-trip-per-second must be >= 0");
+    }
+    public AttackModeSettings(int throttleMaxAttempts, int botStrikeThreshold) {
+      this(throttleMaxAttempts, botStrikeThreshold, 0, false);
     }
     public static AttackModeSettings defaults() {
-      return new AttackModeSettings(8, 3);
+      return new AttackModeSettings(8, 3, 0, false);
     }
   }
 }

@@ -1,6 +1,6 @@
 # Conduit multi-version protocol architecture
 
-Scope: Minecraft 1.13 (protocol 393) through 26.2 (protocol 776). 1.12.2 and
+Scope: Minecraft 1.13 (protocol 393) through 26.3 (protocol 777). 1.12.2 and
 older are deliberately postponed.
 
 ## Attribution
@@ -54,7 +54,10 @@ So a protocol now enters the registry one of two ways:
 
 - **Declared** (`ProtocolDefinition.define`) — spells out its whole table.
   Appropriate for a version with a genuinely novel layout. Conduit declares 393,
-  763, 765, 766, 776.
+  763, 765, 766, 776. 777 (26.3) is a delta on 776 kept beside it in
+  `ProtocolDefinition` rather than in the generated `ProtocolRevisions`: its ids
+  come from Mojang's own packet report (`server.jar --reports`), which is also
+  what every id in the 776 table was checked against.
 - **Derived** (`ProtocolDefinition.derive` + `ProtocolRevision`) — inherits an
   existing table and applies only the mappings that release changed, including
   explicit removals via `PacketMapping.removed`. 32 protocols are derived.
@@ -152,5 +155,8 @@ a wrong packet id is a silently corrupted stream rather than a test failure.
   cross-version track. It is not evidence of native 393 support.
 - Per-release `ProtocolCapabilities` auditing is outstanding for all 32 derived
   protocols; they currently inherit their base's.
-- 485 (1.14.2) has no codec; 776 (26.2) and 763 (1.20.1) have thin declared
-  tables.
+- 485 (1.14.2) has no codec; 776 (26.2), 777 (26.3) and 763 (1.20.1) have thin
+  tables: only the packets Conduit reads or writes itself.
+- 26.3 is native only for a 26.3 client on a 26.3 backend. Every other pair
+  involving 777 goes through ViaVersion (5.12.0 registers 26.3); Conduit has no
+  native 776 &harr; 777 translator and is not meant to.

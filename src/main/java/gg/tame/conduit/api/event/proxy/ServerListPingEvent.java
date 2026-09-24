@@ -44,6 +44,7 @@ public final class ServerListPingEvent implements Event, Cancellable {
   private volatile int versionProtocol;
   private volatile Optional<String> favicon;
   private volatile boolean playersHidden;
+  private volatile Optional<gg.tame.conduit.api.server.ModInfo> modInfo = Optional.empty();
   private volatile boolean cancelled;
 
   public ServerListPingEvent(InetSocketAddress remoteAddress, Optional<String> virtualHost, int virtualPort, int protocolVersion,
@@ -90,6 +91,14 @@ public final class ServerListPingEvent implements Event, Cancellable {
    */
   public boolean playersHidden() { return playersHidden; }
   public void setPlayersHidden(boolean playersHidden) { this.playersHidden = playersHidden; }
+
+  /**
+   * A Forge mod list for the answer, empty by default. It is sent as {@code modinfo}, which 1.7-1.12
+   * Forge clients read to mark the entry modded; a 1.13+ Forge client reads another field, which
+   * this does not fill.
+   */
+  public Optional<gg.tame.conduit.api.server.ModInfo> modInfo() { return modInfo; }
+  public void setModInfo(Optional<gg.tame.conduit.api.server.ModInfo> modInfo) { this.modInfo = Objects.requireNonNull(modInfo, "modInfo"); }
 
   @Override public boolean cancelled() { return cancelled; }
   @Override public void setCancelled(boolean cancelled) { this.cancelled = cancelled; }

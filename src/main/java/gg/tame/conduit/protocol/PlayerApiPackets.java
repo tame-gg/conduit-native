@@ -58,6 +58,11 @@ public final class PlayerApiPackets {
     });
   }
 
+  /** Clear Dialog (1.21.6+): the id and nothing else. */
+  public static byte[] clearDialog(int id) throws IOException {
+    return packet(id, output -> { });
+  }
+
   /** Cookie Request (1.20.5+): the key alone. */
   public static byte[] cookieRequest(int id, String key) throws IOException {
     return packet(id, output -> MinecraftOutput.string(output, key));

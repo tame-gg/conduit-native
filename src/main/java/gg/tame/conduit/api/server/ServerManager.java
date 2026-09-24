@@ -11,6 +11,14 @@ public interface ServerManager {
   Collection<RegisteredServer> getServers();
   /** Adds a backend players can be sent to. Throws IllegalArgumentException when the name is taken. */
   RegisteredServer register(String name, InetSocketAddress address);
+  /**
+   * A server the proxy does not have, for plugins to {@link RegisteredServer#ping ping}: not
+   * registered, not health-checked ({@code isOnline()} is false), and nobody can be sent to it
+   * ({@code connect} completes false). This default cannot ping.
+   */
+  default RegisteredServer raw(String name, InetSocketAddress address) {
+    throw new UnsupportedOperationException("this proxy has no raw servers");
+  }
   /** Removes a backend; players already on it stay until they leave. */
   boolean unregister(String name);
   /** Where a new player is sent, in the order tried (routing {@code initial}). */

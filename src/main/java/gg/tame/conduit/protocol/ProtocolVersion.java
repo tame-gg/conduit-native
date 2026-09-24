@@ -8,7 +8,7 @@ import java.util.Map;
 
 /**
  * Protocol identities. A catalog entry is not a codec.
- * Modern compatibility program: 1.13 (393) through 26.2 (776).
+ * Modern compatibility program: 1.13 (393) through 26.3 (777).
  * ≤1.12.2 is LEGACY / OUT OF SCOPE for this program.
  */
 public record ProtocolVersion(int number, String displayName, ProtocolEra era, ProtocolFamily family) {
@@ -64,6 +64,7 @@ public record ProtocolVersion(int number, String displayName, ProtocolEra era, P
   public static final ProtocolVersion MINECRAFT_1_21_11 = new ProtocolVersion(774, "1.21.11", ProtocolEra.CURRENT, ProtocolFamily.V1_21);
   public static final ProtocolVersion MINECRAFT_26_1 = new ProtocolVersion(775, "26.1", ProtocolEra.CURRENT, ProtocolFamily.V26);
   public static final ProtocolVersion MINECRAFT_26_2 = new ProtocolVersion(776, "26.2", ProtocolEra.CURRENT, ProtocolFamily.V26);
+  public static final ProtocolVersion MINECRAFT_26_3 = new ProtocolVersion(777, "26.3", ProtocolEra.CURRENT, ProtocolFamily.V26);
 
   /** Unique protocol-number identities (one entry per protocol number). */
   public static final List<ProtocolVersion> CATALOG = List.of(
@@ -78,7 +79,7 @@ public record ProtocolVersion(int number, String displayName, ProtocolEra era, P
       MINECRAFT_1_20_1, MINECRAFT_1_20_2, MINECRAFT_1_20_4, MINECRAFT_1_20_5,
       MINECRAFT_1_21, MINECRAFT_1_21_3, MINECRAFT_1_21_4, MINECRAFT_1_21_5, MINECRAFT_1_21_6,
       MINECRAFT_1_21_8, MINECRAFT_1_21_10, MINECRAFT_1_21_11,
-      MINECRAFT_26_1, MINECRAFT_26_2);
+      MINECRAFT_26_1, MINECRAFT_26_2, MINECRAFT_26_3);
 
   /**
    * Named releases including aliases that share a protocol number.
@@ -143,6 +144,7 @@ public record ProtocolVersion(int number, String displayName, ProtocolEra era, P
     list.add(rel("26.1.1", 775, true));
     list.add(rel("26.1.2", 775, true));
     list.add(rel("26.2", 776, true));
+    list.add(rel("26.3", 777, true));
     return List.copyOf(list);
   }
 
@@ -162,7 +164,7 @@ public record ProtocolVersion(int number, String displayName, ProtocolEra era, P
 
   public static String display(int number) {
     for (ProtocolVersion version : CATALOG) if (version.number() == number) return version.displayName();
-    // A release newer than this catalog, which ViaVersion may well have a name for. "protocol 777"
+    // A release newer than this catalog, which ViaVersion may well have a name for. "protocol 778"
     // in a kick message or a server list entry tells a player nothing they can act on.
     var carried = gg.tame.conduit.viaversion.ConduitViaSupport.knownName(number);
     return carried.orElse("protocol " + number);

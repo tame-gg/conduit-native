@@ -4,6 +4,7 @@ package gg.tame.conduit.compat.velocity;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.google.inject.Key;
 import com.velocitypowered.api.command.CommandManager;
 import com.velocitypowered.api.event.EventManager;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
@@ -21,20 +22,22 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Type;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 
 /**
  * A Velocity plugin as Conduit's plugin manager sees it. Everything the Velocity plugin registers
  * natively (commands, scheduled tasks) is owned by this handle, so Conduit releases it on disable.
  *
- * <p>Injection is Conduit's own, not Guice: one constructor, then {@code @Inject} fields and methods, each
+ * <p>Injection is Conduit's own first: one constructor, then {@code @Inject} fields and methods, each
  * resolved by type from {@link #services}, or, for the plugin's own concrete classes, built the same
- * way. Anything else fails the load, naming the type, rather than being left null. A plugin that asks
- * for Guice's {@link Injector} gets a real one holding the same bindings, for its own child injectors.
+ * way. Anything else (a {@code Provider}, a qualified binding, a library class) is asked of the plugin's
+ * real Guice {@link Injector}, which holds the same bindings, and fails the load under Guice's rules.
  */
 final class VelocityPluginHandle extends ConduitPlugin {
   private static final Set<String> INJECT = Set.of("javax.inject.Inject", "jakarta.inject.Inject", "com.google.inject.Inject");
@@ -112,7 +115,8 @@ final class VelocityPluginHandle extends ConduitPlugin {
       constructor.setAccessible(true);
       Object[] arguments = new Object[constructor.getParameterCount()];
       for (int index = 0; index < arguments.length; index++) {
-        arguments[index] = resolve(container, constructor.getParameterTypes()[index], constructor.getParameterAnnotations()[index], depth);
+        arguments[index] = resolve(container, constructor.getParameterTypes()[index],
+            generic(constructor.getGenericParameterTypes(), constructor.getParameterTypes(), index), constructor.getParameterAnnotations()[index], depth);
       }
       Object instance = constructor.newInstance(arguments);
       if (depth == 0 && type == mainClass) plugin = instance;
@@ -124,13 +128,14 @@ final class VelocityPluginHandle extends ConduitPlugin {
         for (Field field : declaring.getDeclaredFields()) {
           if (!injectable(field) || Modifier.isStatic(field.getModifiers())) continue;
           field.setAccessible(true);
-          field.set(instance, resolve(container, field.getType(), field.getAnnotations(), depth));
+          field.set(instance, resolve(container, field.getType(), field.getGenericType(), field.getAnnotations(), depth));
         }
         for (Method method : declaring.getDeclaredMethods()) {
           if (!injectable(method) || Modifier.isStatic(method.getModifiers())) continue;
           Object[] values = new Object[method.getParameterCount()];
           for (int index = 0; index < values.length; index++) {
-            values[index] = resolve(container, method.getParameterTypes()[index], method.getParameterAnnotations()[index], depth);
+            values[index] = resolve(container, method.getParameterTypes()[index],
+                generic(method.getGenericParameterTypes(), method.getParameterTypes(), index), method.getParameterAnnotations()[index], depth);
           }
           method.setAccessible(true);
           method.invoke(instance, values);
@@ -156,38 +161,61 @@ final class VelocityPluginHandle extends ConduitPlugin {
     throw new IllegalStateException(type.getName() + " has several constructors and none is marked @Inject");
   }
 
-  private Object resolve(VelocityPluginHost.Container container, Class<?> type, Annotation[] annotations, int depth) {
+  private Object resolve(VelocityPluginHost.Container container, Class<?> type, Type generic, Annotation[] annotations, int depth) {
     Object service = services(container).get(type);
     if (service != null) return service;
+    if (type == ExecutorService.class) return container.getExecutorService();
     if (type == Path.class) {
       for (Annotation annotation : annotations) if (annotation instanceof DataDirectory) return dataDirectory();
       throw new IllegalStateException("a Path is injected only with @DataDirectory");
     }
     if (type == Injector.class) return injector(container);
     if (type == mainClass) return plugin();
+    Annotation qualifier = qualifier(annotations);
     // The plugin's own concrete classes are built on demand, as Guice does: bStats' Metrics.Factory,
     // which almost every plugin bundles, is injected this way.
-    if (type.getClassLoader() instanceof VelocityClassLoader && !type.isInterface() && !Modifier.isAbstract(type.getModifiers())) {
+    if (qualifier == null && type.getClassLoader() instanceof VelocityClassLoader && !type.isInterface() && !Modifier.isAbstract(type.getModifiers())) {
       return construct(container, type, depth + 1);
     }
-    throw new IllegalStateException("cannot inject " + type.getName() + " into Velocity plugin " + container.id()
-        + "; Conduit injects ProxyServer, org.slf4j.Logger, ComponentLogger, java.util.logging.Logger, @DataDirectory Path, PluginContainer,"
-        + " PluginDescription, EventManager, CommandManager, PluginManager, Scheduler, Guice's Injector and the plugin's own concrete classes");
+    // Anything else is Guice's to answer, as it is on Velocity: a Provider<T>, a qualified binding, a
+    // library class Guice can build. What Guice cannot give fails the load with Guice's reason.
+    Key<?> key = qualifier == null ? Key.get(generic) : Key.get(generic, qualifier);
+    try {
+      return injector(container).getInstance(key);
+    } catch (com.google.inject.ConfigurationException | com.google.inject.ProvisionException refused) {
+      var errors = refused instanceof com.google.inject.ConfigurationException configuration
+          ? configuration.getErrorMessages() : ((com.google.inject.ProvisionException) refused).getErrorMessages();
+      throw new IllegalStateException("cannot inject " + key + " into Velocity plugin " + container.id() + ": "
+          + (errors.isEmpty() ? refused.getMessage() : errors.iterator().next().getMessage()), refused);
+    }
+  }
+  /** The generic type of parameter {@code index}; an inner class's constructor has a raw parameter more than generic ones. */
+  private static Type generic(Type[] generic, Class<?>[] raw, int index) { return generic.length == raw.length ? generic[index] : raw[index]; }
+  /** A Guice binding annotation or a javax/jakarta qualifier among {@code annotations}, else null. */
+  private static Annotation qualifier(Annotation[] annotations) {
+    for (Annotation annotation : annotations) {
+      for (Annotation meta : annotation.annotationType().getDeclaredAnnotations()) {
+        String name = meta.annotationType().getName();
+        if (name.equals("com.google.inject.BindingAnnotation") || name.equals("javax.inject.Qualifier") || name.equals("jakarta.inject.Qualifier")) return annotation;
+      }
+    }
+    return null;
   }
 
   /** What a plugin can be given, by type; @DataDirectory Path and the Injector come on top. */
   private Map<Class<?>, Object> services(VelocityPluginHost.Container container) {
     // Both loggers through slf4j, which the proxy binds to java.util.logging: the plugin's own Conduit logger.
-    return Map.of(ProxyServer.class, environment.proxy,
-        org.slf4j.Logger.class, org.slf4j.LoggerFactory.getLogger(getLogger().getName()),
-        ComponentLogger.class, ComponentLogger.logger(getLogger().getName()),
-        java.util.logging.Logger.class, getLogger(),
-        PluginContainer.class, container,
-        com.velocitypowered.api.plugin.PluginDescription.class, container.getDescription(),
-        EventManager.class, environment.events,
-        CommandManager.class, environment.commands,
-        PluginManager.class, environment.plugins,
-        Scheduler.class, environment.scheduler);
+    return Map.ofEntries(Map.entry(ProxyServer.class, environment.proxy),
+        Map.entry(org.slf4j.Logger.class, org.slf4j.LoggerFactory.getLogger(getLogger().getName())),
+        Map.entry(ComponentLogger.class, ComponentLogger.logger(getLogger().getName())),
+        Map.entry(java.util.logging.Logger.class, getLogger()),
+        Map.entry(PluginContainer.class, container),
+        Map.entry(com.velocitypowered.api.plugin.PluginDescription.class, container.getDescription()),
+        Map.entry(EventManager.class, environment.events),
+        Map.entry(CommandManager.class, environment.commands),
+        Map.entry(PluginManager.class, environment.plugins),
+        Map.entry(Scheduler.class, environment.scheduler),
+        Map.entry(com.velocitypowered.api.proxy.messages.ChannelRegistrar.class, environment.channels));
   }
 
   /**
@@ -207,6 +235,8 @@ final class VelocityPluginHandle extends ConduitPlugin {
             if (service.getKey() != java.util.logging.Logger.class) bind((Class<Object>) service.getKey()).toInstance(service.getValue());
           }
           bind(Path.class).annotatedWith(DataDirectory.class).toInstance(data);
+          // Made when first asked for, as getExecutorService makes it.
+          bind(ExecutorService.class).toProvider((com.google.inject.Provider<ExecutorService>) container::getExecutorService);
           // Through a provider, not toInstance: Guice injects the members of an instance it is bound
           // to, and the plugin's were injected once already.
           bind((Class<Object>) mainClass).toProvider((com.google.inject.Provider<Object>) VelocityPluginHandle.this::plugin);

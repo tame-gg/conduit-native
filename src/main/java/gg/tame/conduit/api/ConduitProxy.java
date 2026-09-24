@@ -68,6 +68,12 @@ public interface ConduitProxy {
   default void shutdown(Text reason) { shutdown(); }
   boolean shuttingDown();
   /**
+   * Stops taking new connections, the game listener's and the query port's, and leaves everyone
+   * already connected where they are. There is no reopening them; {@link #shutdown()} still ends the
+   * proxy as usual. This default does nothing.
+   */
+  default void closeListeners() { }
+  /**
    * Tells every backend a player joins that the proxy listens on this plugin channel, and tells the
    * backends players are on now. A Paper or Spigot backend sends a plugin message only on a channel
    * the connection registered, so a plugin that wants to hear its backend half on a channel of its
@@ -85,4 +91,11 @@ public interface ConduitProxy {
   default ServerListDefaults serverListDefaults() {
     return new ServerListDefaults(Text.of("Conduit"), 100, Optional.empty());
   }
+  /**
+   * {@code [forced-hosts]} as configured: each hostname, lower-cased without a trailing dot, to the
+   * server names tried for it in order. This default has none.
+   */
+  default java.util.Map<String, java.util.List<String>> forcedHosts() { return java.util.Map.of(); }
+  /** The UDP port the GameSpy 4 query ({@code [query]}) answers on, empty when it is off. This default has none. */
+  default java.util.OptionalInt queryPort() { return java.util.OptionalInt.empty(); }
 }

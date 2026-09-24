@@ -239,15 +239,16 @@ final class VelocityEventBridge {
 
   /**
    * The server-list answer as a ServerPing, and whatever the plugins leave in it back. A denied
-   * result sends no answer, and a ServerPing with no players hides the counts. Mod info has no place
-   * in Conduit's answer, so that part of a plugin's ServerPing is dropped.
+   * result sends no answer, and a ServerPing with no players hides the counts. Mod info a plugin sets
+   * is sent as {@code modinfo}, which only 1.7-1.12 Forge clients read.
    */
   @Subscribe public void onPing(ServerListPingEvent event) {
     if (event.cancelled() || !listening(ProxyPingEvent.class)) return;
     ServerPing offered = new ServerPing(new ServerPing.Version(event.versionProtocol(), event.versionName()),
         event.playersHidden() ? null : new ServerPing.Players(event.onlinePlayers(), event.maxPlayers(),
             event.samplePlayers().stream().map(player -> new ServerPing.SamplePlayer(player.name(), player.uniqueId())).toList()),
-        Texts.toAdventure(event.description()), event.favicon().map(Favicon::new).orElse(null));
+        Texts.toAdventure(event.description()), event.favicon().map(Favicon::new).orElse(null),
+        event.modInfo().map(VelocityEventBridge::toVelocity).orElse(null));
     ProxyPingEvent ping = environment.fireAndWait(new ProxyPingEvent(new PingConnection(event), offered));
     if (!ping.getResult().isAllowed()) {
       event.setCancelled(true);
@@ -266,6 +267,12 @@ final class VelocityEventBridge {
           .map(player -> new ServerListPingEvent.SamplePlayer(player.getName(), player.getId())).toList());
     });
     event.setFavicon(answer.getFavicon().map(Favicon::getBase64Url));
+    event.setModInfo(answer.getModinfo().map(info -> new gg.tame.conduit.api.server.ModInfo(info.getType(),
+        info.getMods().stream().map(mod -> new gg.tame.conduit.api.server.ModInfo.Mod(mod.getId(), mod.getVersion())).toList())));
+  }
+  static com.velocitypowered.api.util.ModInfo toVelocity(gg.tame.conduit.api.server.ModInfo info) {
+    return new com.velocitypowered.api.util.ModInfo(info.type(),
+        info.mods().stream().map(mod -> new com.velocitypowered.api.util.ModInfo.Mod(mod.id(), mod.version())).toList());
   }
   /**
    * Who is asking for the server list: a status connection, before any login. A class, not a
@@ -382,6 +389,82 @@ final class VelocityEventBridge {
     if (!message.getResult().isAllowed()) event.setCancelled(true);
   }
 
+  /**
+   * A 1.7-1.12 Forge client's mod list, which it sends the backend on FML|HS (discriminator 2: a
+   * VarInt count, then each mod's id and version) as the backend's FML handshake asks. Read in
+   * passing, never changed. A 1.13+ client's list comes from its login, as {@link #onModInfo}.
+   */
+  @Subscribe public void onModList(gg.tame.conduit.api.event.messaging.PluginMessageEvent event) {
+    if (event.direction() != gg.tame.conduit.api.event.messaging.PluginMessageEvent.Direction.CLIENT_TO_PROXY
+        || !"FML|HS".equals(event.channel())) return;
+    com.velocitypowered.api.util.ModInfo mods = modList(event.data());
+    if (mods == null) return;
+    VelocityPlayer player = environment.player(event.player());
+    if (mods.equals(player.modInfo)) return;
+    player.modInfo = mods;
+    if (listening(com.velocitypowered.api.event.player.PlayerModInfoEvent.class)) {
+      environment.events.fire(new com.velocitypowered.api.event.player.PlayerModInfoEvent(player, mods));
+    }
+  }
+  /** A 1.13+ Forge client's mod list, which Conduit read from its answer to the login handshake. */
+  @Subscribe public void onModInfo(gg.tame.conduit.api.event.player.PlayerModInfoEvent event) {
+    VelocityPlayer player = environment.player(event.player());
+    player.modInfo = toVelocity(event.modInfo());
+    if (listening(com.velocitypowered.api.event.player.PlayerModInfoEvent.class)) {
+      environment.events.fire(new com.velocitypowered.api.event.player.PlayerModInfoEvent(player, player.modInfo));
+    }
+  }
+  /** FML|HS ModList as {@code ModInfo} of type "FML"; null for another FML|HS message or a malformed one. */
+  static com.velocitypowered.api.util.ModInfo modList(byte[] data) {
+    if (data.length == 0 || data[0] != 2) return null;
+    java.nio.ByteBuffer input = java.nio.ByteBuffer.wrap(data, 1, data.length - 1);
+    try {
+      int count = varInt(input);
+      if (count < 0 || count > input.remaining() / 2) return null;
+      java.util.List<com.velocitypowered.api.util.ModInfo.Mod> mods = new java.util.ArrayList<>(count);
+      for (int index = 0; index < count; index++) mods.add(new com.velocitypowered.api.util.ModInfo.Mod(string(input), string(input)));
+      return input.hasRemaining() ? null : new com.velocitypowered.api.util.ModInfo("FML", mods);
+    } catch (RuntimeException malformed) {
+      return null;
+    }
+  }
+  private static int varInt(java.nio.ByteBuffer input) {
+    int value = 0;
+    for (int shift = 0; shift < 35; shift += 7) {
+      byte next = input.get();
+      value |= (next & 0x7F) << shift;
+      if (next >= 0) return value;
+    }
+    throw new IllegalArgumentException("VarInt too long");
+  }
+  private static String string(java.nio.ByteBuffer input) {
+    int length = varInt(input);
+    if (length < 0 || length > input.remaining()) throw new IllegalArgumentException("string runs past the message");
+    byte[] bytes = new byte[length];
+    input.get(bytes);
+    return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+  }
+
+  /** A GameSpy 4 stat request: plugins may replace the answer, and the query thread waits for them. */
+  @Subscribe public void onQuery(gg.tame.conduit.api.event.proxy.ServerQueryEvent event) {
+    if (!listening(com.velocitypowered.api.event.query.ProxyQueryEvent.class)) return;
+    var offered = event.response();
+    var response = com.velocitypowered.api.proxy.server.QueryResponse.builder()
+        .hostname(offered.motd()).gameVersion(offered.gameVersion()).map(offered.map())
+        .currentPlayers(offered.onlinePlayers()).maxPlayers(offered.maxPlayers())
+        .proxyHost(offered.host()).proxyPort(offered.port()).players(offered.players()).proxyVersion(offered.proxyVersion())
+        .plugins(offered.plugins().stream().map(plugin -> com.velocitypowered.api.proxy.server.QueryResponse.PluginInformation.of(plugin.name(), plugin.version())).toList())
+        .build();
+    var query = environment.fireAndWait(new com.velocitypowered.api.event.query.ProxyQueryEvent(event.full()
+        ? com.velocitypowered.api.event.query.ProxyQueryEvent.QueryType.FULL : com.velocitypowered.api.event.query.ProxyQueryEvent.QueryType.BASIC,
+        event.querier(), response));
+    var answer = query.getResponse();
+    event.setResponse(new gg.tame.conduit.api.event.proxy.ServerQueryEvent.Response(answer.getHostname(), answer.getGameVersion(),
+        answer.getMap(), answer.getCurrentPlayers(), answer.getMaxPlayers(), answer.getProxyHost(), answer.getProxyPort(),
+        java.util.List.copyOf(answer.getPlayers()), answer.getProxyVersion(),
+        answer.getPlugins().stream().map(plugin -> new gg.tame.conduit.api.event.proxy.ServerQueryEvent.PluginInfo(plugin.getName(), plugin.getVersion().orElse(null))).toList()));
+  }
+
   // Told, not asked: Velocity does not wait for these either, so neither does the thread that raised them.
   @Subscribe public void onServerRegistered(ServerRegisteredEvent event) {
     if (listening(com.velocitypowered.api.event.proxy.server.ServerRegisteredEvent.class)) {
@@ -426,6 +509,31 @@ final class VelocityEventBridge {
     java.util.List<String> suggestions = new java.util.ArrayList<>(tab.getSuggestions());
     event.suggestions().clear();
     event.suggestions().addAll(suggestions);
+  }
+  /**
+   * The root plugins get holds one bare literal per top-level command the client will be sent, not
+   * the command's own nodes: Conduit never decodes the backend's argument nodes into Brigadier ones.
+   * Read back once they are done: a literal taken off hides that command, and a node that is new,
+   * replaced or given children of its own is declared as the plugin left it, in place of whatever
+   * held that name.
+   */
+  @Subscribe public void onAvailableCommands(gg.tame.conduit.api.event.player.PlayerAvailableCommandsEvent event) {
+    if (!listening(com.velocitypowered.api.event.command.PlayerAvailableCommandsEvent.class)) return;
+    var root = new com.mojang.brigadier.tree.RootCommandNode<com.velocitypowered.api.command.CommandSource>();
+    var offered = new java.util.HashMap<String, com.mojang.brigadier.tree.CommandNode<com.velocitypowered.api.command.CommandSource>>();
+    for (String name : event.commands()) {
+      var literal = com.mojang.brigadier.builder.LiteralArgumentBuilder.<com.velocitypowered.api.command.CommandSource>literal(name).build();
+      root.addChild(literal);
+      offered.put(name, literal);
+    }
+    var available = new com.velocitypowered.api.event.command.PlayerAvailableCommandsEvent(environment.player(event.player()), root);
+    if (!environment.await(environment.events.fire(available), "PlayerAvailableCommandsEvent")) return;
+    java.util.List<String> kept = new java.util.ArrayList<>();
+    for (var node : java.util.List.copyOf(root.getChildren())) {
+      if (offered.get(node.getName()) == node && node.getChildren().isEmpty()) kept.add(node.getName());
+      else event.added().put(node.getName(), VelocityCommandSyntax.of(node));
+    }
+    event.commands().retainAll(kept);
   }
   /**
    * Waited for, as Velocity waits, but for at most {@link VelocityEnvironment#WAIT_MS}: the shutdown

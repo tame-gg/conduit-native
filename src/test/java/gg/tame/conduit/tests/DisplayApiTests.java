@@ -197,8 +197,8 @@ public final class DisplayApiTests {
   /**
    * Tab-list entries: 1.8-1.19.2 one action per Player Info packet (1.19-1.19.2 with an absent profile
    * key after an add), 1.19.3+ Player Info Update action bits with Remove split off, list order from
-   * 1.21.2 and the hat from 1.21.4. 1.7 names entries by string and 1.20.1 has no Player Info ids in
-   * Conduit's table, so neither is sent anything.
+   * 1.21.2 and the hat from 1.21.4. 1.7 names entries by string, in its own Player List Item, which
+   * the display writes itself (TabListTrackingTests).
    */
   private static void tabListEntriesEncodePerFamily() throws Exception {
     record Legacy(int protocol, int id, boolean profileKey) {}
@@ -222,7 +222,7 @@ public final class DisplayApiTests {
       }), where + " entry remove");
     }
     record Split(int protocol, int update, int remove, int addActions) {}
-    for (Split family : List.of(new Split(761, 0x36, 0x35, 0x3D), new Split(764, 0x3C, 0x3B, 0x3D), new Split(765, 0x3C, 0x3B, 0x3D),
+    for (Split family : List.of(new Split(761, 0x36, 0x35, 0x3D), new Split(763, 0x3A, 0x39, 0x3D), new Split(764, 0x3C, 0x3B, 0x3D), new Split(765, 0x3C, 0x3B, 0x3D),
         new Split(768, 0x40, 0x3F, 0x7D), new Split(769, 0x40, 0x3F, 0xFD), new Split(776, 0x46, 0x45, 0xFD))) {
       ProtocolDefinition p = ProtocolDefinition.forVersion(family.protocol());
       boolean nbt = family.protocol() >= 765;
@@ -243,11 +243,12 @@ public final class DisplayApiTests {
         MinecraftOutput.varInt(out, 1); uuid(out, ENTRY);
       }), where + " entry remove");
     }
-    for (int protocol : new int[] {5, 763}) {
-      ProtocolDefinition p = ProtocolDefinition.forVersion(protocol);
-      require(!DisplayPackets.tabListEntries(p) && DisplayPackets.tabListAdd(p, List.of(entry(5, true))).isEmpty()
-          && DisplayPackets.tabListRemove(p, List.of(ENTRY)).isEmpty(), "protocol " + protocol + " is sent no entries");
-    }
+    ProtocolDefinition p5 = ProtocolDefinition.forVersion(5);
+    require(!DisplayPackets.tabListEntries(p5) && DisplayPackets.tabListAdd(p5, List.of(entry(5, true))).isEmpty()
+        && DisplayPackets.tabListRemove(p5, List.of(ENTRY)).isEmpty() && DisplayPackets.legacyTabList(p5), "1.7 has no UUID-keyed Player Info");
+    require(Arrays.equals(DisplayPackets.legacyListItem(p5, "Shown", true, 5), packet(0x38, out -> {
+      MinecraftOutput.string(out, "Shown"); out.writeBoolean(true); out.writeShort(5);
+    })), "1.7 Player List Item: name, online, ping as a short");
   }
 
   private static void properties(DataOutputStream out) throws IOException {

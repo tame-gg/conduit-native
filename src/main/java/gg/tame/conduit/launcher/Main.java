@@ -87,6 +87,7 @@ public final class Main {
       ConduitLog.info("Conduit " + gg.tame.conduit.Conduit.VERSION + " listening on "
           + config.listener().getHostString() + ":" + listener.port());
       listener.probeBackends();
+      gg.tame.conduit.ops.ConduitUpdateCheck.start(config.ops().updates());
       consoleCommands(listener.runtime());
       listener.serve();
     }

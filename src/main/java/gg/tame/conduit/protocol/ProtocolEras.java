@@ -307,6 +307,21 @@ public final class ProtocolEras {
   public static int chatLimit(int protocol) { return protocol >= CHAT_256_FROM ? 256 : 100; }
   public static boolean unsignedChatCommand(int protocol) { return protocol >= UNSIGNED_CHAT_COMMAND_FROM; }
 
+  // Secure chat (SecureChat): how a client says which signed messages it has seen.
+
+  /** First protocol whose chat and commands carry the list of signed messages the client has seen (1.19.1). */
+  public static final int CHAT_LAST_SEEN_LIST_FROM = 760;
+  /**
+   * First protocol with chat sessions (1.19.3): the key moved from Login Start to a Play packet, and chat
+   * and commands acknowledge seen messages as an offset and 20 bits instead of a list.
+   */
+  public static final int CHAT_SESSION_FROM = 761;
+  /** First protocol whose chat acknowledgement ends with a checksum byte, 0 meaning none (1.21.5). */
+  public static final int CHAT_CHECKSUM_FROM = 770;
+  public static boolean chatLastSeenList(int protocol) { return protocol >= CHAT_LAST_SEEN_LIST_FROM && protocol < CHAT_SESSION_FROM; }
+  public static boolean chatSession(int protocol) { return protocol >= CHAT_SESSION_FROM; }
+  public static boolean chatChecksum(int protocol) { return protocol >= CHAT_CHECKSUM_FROM; }
+
   public static final int CHUNK_HEIGHTMAPS_FROM = 477;
 
   /** First protocol with Open Window menu registry ids (title still JSON until 765). */

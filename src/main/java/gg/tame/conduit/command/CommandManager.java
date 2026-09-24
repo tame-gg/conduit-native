@@ -103,6 +103,52 @@ public final class CommandManager implements gg.tame.conduit.api.command.Command
     RegisteredCommand command = name == null ? null : commands.get(normalize(name));
     return command == null ? List.of() : command.syntax();
   }
+  /**
+   * The command tree {@code player} is sent: the backend's {@code packet} with the proxy's commands
+   * merged in, as PlayerAvailableCommandsEvent's listeners leave it.
+   */
+  public <P extends gg.tame.conduit.api.player.Player & CommandSource> byte[] declare(P player,
+      gg.tame.conduit.protocol.ProtocolDefinition protocol, byte[] packet, List<String> serverNames) throws java.io.IOException {
+    List<String> names = names();
+    java.util.Set<String> displacedNow = displacedBuiltIns();
+    java.util.function.Predicate<String> shown = shownTo(player);
+    if (!(events instanceof gg.tame.conduit.event.ConduitEventManager manager)
+        || !manager.listening(gg.tame.conduit.api.event.player.PlayerAvailableCommandsEvent.class)) {
+      return CommandGraphs.mergeProxyCommands(protocol, packet, serverNames, names, displacedNow, shown, this::syntaxOf);
+    }
+    LinkedHashSet<String> sent = new LinkedHashSet<>();
+    List<String> backend = CommandGraphs.rootNames(protocol, packet);
+    if (backend != null) sent.addAll(backend);
+    sent.addAll(CommandGraphs.proxyNames(protocol, serverNames, names, displacedNow, shown));
+    var event = events.fire(new gg.tame.conduit.api.event.player.PlayerAvailableCommandsEvent(player,
+        new ArrayList<>(sent), new LinkedHashMap<>()));
+    java.util.Set<String> removed = new java.util.HashSet<>(sent);
+    removed.removeAll(event.commands());
+    Map<String, List<gg.tame.conduit.api.command.CommandSyntax>> added = new LinkedHashMap<>();
+    event.added().forEach((name, syntax) -> {
+      if (name != null && !name.isBlank()) added.put(normalize(name), syntax == null ? List.of() : syntax);
+    });
+    // An added name replaces whatever held it, backend or proxy, so the root never has two children
+    // of one name; declaring it as displaced is what makes a built-in take the added shape.
+    java.util.Set<String> dropped = new java.util.HashSet<>(removed);
+    dropped.addAll(added.keySet());
+    List<String> extra = new ArrayList<>(names);
+    extra.addAll(added.keySet());
+    java.util.Set<String> displacing = new java.util.HashSet<>(displacedNow);
+    displacing.addAll(added.keySet());
+    return CommandGraphs.mergeProxyCommands(protocol, packet, serverNames, extra, displacing,
+        name -> added.containsKey(name) || !removed.contains(name) && shown.test(name),
+        name -> added.containsKey(name) ? added.get(name) : syntaxOf(name), dropped);
+  }
+  /**
+   * Whether this proxy answers {@code name} for {@code source}: a command it has, which is there for
+   * that source. One whose requirement says no is the backend's, for completion as for running.
+   */
+  public boolean handles(CommandSource source, String name, List<String> arguments) {
+    RegisteredCommand command;
+    synchronized (this) { command = commands.get(normalize(name)); }
+    return command != null && there(source, command, arguments);
+  }
   /** Removes a command by any of its names; returns it, or null when nothing matched. */
   public RegisteredCommand unregister(String name) {
     RegisteredCommand gone;

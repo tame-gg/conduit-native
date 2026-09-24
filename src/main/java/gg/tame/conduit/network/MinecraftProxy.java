@@ -109,6 +109,10 @@ public final class MinecraftProxy implements AutoCloseable {
     runtime.onShutdownRequest(() -> {
       try { close(); } catch (IOException failure) { ConduitLog.warn("shutdown: " + failure.getMessage()); }
     });
+    // The accept loop sees the listener gone and waits for close() instead of ending the proxy.
+    runtime.onCloseListenersRequest(() -> {
+      try { listener.close(); } catch (IOException failure) { ConduitLog.warn("closing the listener: " + failure.getMessage()); }
+    });
     CoreCommands.register(runtime);
     // The one bootstrap an optional layer gets: the Velocity adapter, when it is on the classpath, is
     // handed the native API and registers its plugin format there (PluginManager#registerLoader).
@@ -195,6 +199,12 @@ public final class MinecraftProxy implements AutoCloseable {
         }
         workers.submit(() -> handle(client));
       }
+      // A plugin's closeListeners() closed the listener: the players on it stay until close().
+      synchronized (this) {
+        while (running) {
+          try { wait(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); break; }
+        }
+      }
     } finally {
       drain(workers);
     }
@@ -267,6 +277,7 @@ public final class MinecraftProxy implements AutoCloseable {
           return;
         }
       }
+      runtime.security().attackMode().recordConnection(System.nanoTime());
       if (runtime.security().botFilter().isBlocked(remote)) {
         return;
       }
@@ -338,6 +349,11 @@ public final class MinecraftProxy implements AutoCloseable {
         // Through the same reader status.motd goes through, so a kick screen takes MiniMessage and
         // & codes like every other line an operator writes.
         try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(runtime.versionGate().kickMessage()))); } catch (IOException ignored) { }
+        return;
+      }
+      if (!runtime.security().attackMode().admitsLogin(configuration.forwardedPlayerAddress().orElse(remote))) {
+        // Before the login is read: a join flood from new addresses costs a handshake and no more.
+        try { transport.write(LoginDisconnect.encode(protocol, "This server is only letting returning players in right now. Try again in a minute.")); } catch (IOException ignored) { }
         return;
       }
       byte[] loginStart = transport.read(configuration.maxFrameBytes());
@@ -507,6 +523,7 @@ public final class MinecraftProxy implements AutoCloseable {
     }
     if (player.authenticated()) runtime.events().fire(new PlayerAuthenticatedEvent(player));
     runtime.addresses().record(player.uniqueId(), player.username(), player.remoteAddress().getHostAddress());
+    runtime.security().attackMode().recordLogin(player.remoteAddress());
     // What plugins asked the client since the first exchange, answered before a backend is dialled.
     // The login is decided: nothing more can be asked, and the ids stay clear of the backend's queries.
     messages.exchange(transport, configuration.maxFrameBytes());
@@ -750,6 +767,7 @@ public final class MinecraftProxy implements AutoCloseable {
     }
     running = false;
     accepting = false;
+    notifyAll();
     listener.close();
     runtime.close();
   }

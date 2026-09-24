@@ -17,11 +17,11 @@ $maven = "https://repo1.maven.org/maven2"
 # rewrote it, is caught here rather than at the far end of a build. Bumping a version means
 # fetching the new jar, checking it, and putting its hash here -- the hash follows the version.
 $sha256 = @{
-  "viaversion-api-5.11.0.jar"      = "5f98cff9ffe6519e0371f59ff34633996a3246b3f584bb6b4339eb9427d4e848"
-  "viaversion-common-5.11.0.jar"   = "a4dd9f63257ed923f73a64ecece31010acd04247db12855383172e1226912b3e"
-  "viabackwards-common-5.11.0.jar" = "f17e79dc3622a361f9bab9dcf2d11d03ed3461897b1aeaefe13ede0047b15ec5"
-  "viarewind-common-4.1.3.jar"     = "f5fe56b4691f045d04662659d45bc182b610cb4b693501f72272c8877a021c8f"
-  "ViaLegacy-3.0.16.jar"           = "e17735824328f92349bcbb5e4b00ea2791affaeea2f3b2933827ccca9527bf0e"
+  "viaversion-api-5.12.0.jar"      = "b46c01cc123d55f79789e2f4eaf89827e636e3b398c84a7af6c2b51b810c6920"
+  "viaversion-common-5.12.0.jar"   = "183e0ba9e5c8a19ac192b884e4a7d9402af5f321738e4f18010ba139214f76cc"
+  "viabackwards-common-5.12.0.jar" = "232651d294c8608d579886e1d95e9ab8b42a0b2dcaec28818b5218fd1ddb2385"
+  "viarewind-common-4.2.0.jar"     = "572e0f57bea56a52269c6d39cfb60e3648f9cc95fbb7ae29242264dd9b2ae68d"
+  "ViaLegacy-3.1.0.jar"           = "92ae9376c93aee611c891ba576576a0f501dd8d9c94b3b08f2a2e16a2d9c8e27"
   "netty-common-4.1.118.Final.jar"    = "65cce901ecf0f9d6591cc7750772614ab401a84415dc9aec9da4d046f0f9a77c"
   "netty-buffer-4.1.118.Final.jar"    = "0eea4e8666a9636a28722661d8ba5fa8564477e75fec6dd2ff3e324e361f8b3c"
   "netty-transport-4.1.118.Final.jar" = "ab3751e717daef9c8d91e4d74728a48730bd8530b72e2466b222b2ea3fb07db9"
@@ -57,9 +57,9 @@ function Get-Artifact([string]$url, [string]$out) {
   Write-Host "OK $(Split-Path $out -Leaf) $((Get-Item $out).Length)"
 }
 
-$viaVersion = "5.11.0"
-$viaRewind = "4.1.3"
-$viaLegacy = "3.0.16"
+$viaVersion = "5.12.0"
+$viaRewind = "4.2.0"
+$viaLegacy = "3.1.0"
 $netty = "4.1.118.Final"
 # One Guava for the whole jar: the Velocity-compatibility layer (fetch-velocity-compat.ps1) and its
 # plugins use this copy too, so it is the newer of the two those sets asked for. Via runs on it.
@@ -87,11 +87,17 @@ foreach ($artifact in @(
   Get-Artifact "$maven/$artifact" (Join-Path $lib $name)
 }
 
-# A Guava this script used to pin, left behind, would sit on the class path beside the new one.
-Get-ChildItem $lib -Filter "guava-*.jar" | Where-Object { $_.Name -ne "guava-$guava.jar" } | ForEach-Object {
-  Write-Host "remove superseded $($_.Name)"
-  try { Remove-Item $_.FullName }
-  catch { throw "cannot remove superseded $($_.Name): a running JVM still has it open. Stop it and rerun." }
+# A jar this script used to pin, left behind after a version bump, would sit on the class path
+# beside its replacement: test.ps1 and build-jar.ps1 take every jar at the top of lib/via. Anything
+# not pinned above is moved into superseded/, the way the runtime updater (boot/ViaUpdater) parks
+# an old set: out of the class path, one copy back, and never deleted. Source jars are not class
+# path and are left alone.
+$superseded = Join-Path $lib "superseded"
+Get-ChildItem $lib -Filter *.jar -File | Where-Object { $_.Name -notlike "*-sources.jar" -and -not $sha256.ContainsKey($_.Name) } | ForEach-Object {
+  Write-Host "supersede $($_.Name)"
+  New-Item -ItemType Directory -Force -Path $superseded | Out-Null
+  try { Move-Item -LiteralPath $_.FullName -Destination (Join-Path $superseded $_.Name) -Force }
+  catch { throw "cannot move superseded $($_.Name): a running JVM still has it open. Stop it and rerun." }
 }
 
 Write-Host "Via dependency fetch complete: $lib"

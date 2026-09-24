@@ -351,9 +351,13 @@ public final class ConfigValidationTests {
   }
 
   private static void forwarding() throws Exception {
-    fails(BASE.replace("mode = \"none\"", "mode = \"legacy\""),
-        "conduit.toml line 6: forwarding.mode must be none or modern: Conduit does not implement legacy forwarding, found \"legacy\"");
-    fails(BASE.replace("mode = \"none\"", "mode = \"velocity\""), "conduit.toml line 6: forwarding.mode must be none or modern, found \"velocity\"");
+    String[] warnings = new String[1];
+    require(load(BASE.replace("mode = \"none\"", "mode = \"legacy\""), warnings).forwardingMode() == gg.tame.conduit.config.ForwardingMode.LEGACY
+        && warnings[0].contains("must be firewalled"), "legacy loads, and says the backends need a firewall: " + warnings[0]);
+    // BungeeGuard's token is the secret, so it needs one exactly as modern does.
+    Path guarded = write(BASE.replace("mode = \"none\"", "mode = \"bungeeguard\""));
+    require(failure(guarded).startsWith("conduit.toml: forwarding.secret-file does not exist at "), "bungeeguard without a secret: " + failure(guarded));
+    fails(BASE.replace("mode = \"none\"", "mode = \"velocity\""), "conduit.toml line 6: forwarding.mode must be none, modern, legacy or bungeeguard, found \"velocity\"");
     String modern = BASE.replace("mode = \"none\"", "mode = \"modern\"");
     // An unset secret-file under modern forwarding is a default, not a mistake:
     // the file sits beside the configuration and a start creates it. Validating

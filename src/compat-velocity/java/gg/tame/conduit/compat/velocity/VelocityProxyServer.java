@@ -76,7 +76,10 @@ final class VelocityProxyServer implements ProxyServer, Unsupported.PlayerGroup 
     }
     environment.conduit.servers().unregister(server.getName());
   }
-  @Override public RegisteredServer createRawRegisteredServer(ServerInfo server) { throw Unsupported.api("ProxyServer.createRawRegisteredServer"); }
+  /** Pingable, as the contract has it; a connection request to it fails, as Conduit sends players only to servers it has registered. */
+  @Override public RegisteredServer createRawRegisteredServer(ServerInfo server) {
+    return new VelocityRegisteredServer(environment, environment.conduit.servers().raw(server.getName(), server.getAddress()));
+  }
 
   /** A broadcast: every player, and the console. */
   @Override public void deliver(Component message) {
@@ -98,7 +101,8 @@ final class VelocityProxyServer implements ProxyServer, Unsupported.PlayerGroup 
   @Override public void shutdown(Component reason) { environment.conduit.shutdown(reason == null ? null : Texts.toConduit(reason)); }
   @Override public void shutdown() { environment.conduit.shutdown(); }
   @Override public boolean isShuttingDown() { return environment.conduit.shuttingDown(); }
-  @Override public void closeListeners() { throw Unsupported.api("ProxyServer.closeListeners"); }
+  /** The game listener and the query port; players already connected stay. */
+  @Override public void closeListeners() { environment.conduit.closeListeners(); }
   @Override public InetSocketAddress getBoundAddress() { return environment.conduit.boundAddress(); }
   @Override public ResourcePackInfo.Builder createResourcePackBuilder(String url) { return new VelocityResourcePackInfo.Builder(url); }
   @Override public String toString() { return "Conduit " + environment.conduit.version(); }

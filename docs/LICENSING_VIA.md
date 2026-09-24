@@ -14,11 +14,11 @@ version Conduit uses.
 
 | Artifact | Version | License | Source |
 |---|---|---|---|
-| `viaversion-api` | 5.11.0 | MIT (the `api/` directory only) | https://github.com/ViaVersion/ViaVersion/tree/5.11.0/api |
-| `viaversion-common` | 5.11.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaVersion/tree/5.11.0 |
-| `viabackwards-common` | 5.11.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaBackwards/tree/5.11.0 |
-| `viarewind-common` | 4.1.3 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaRewind/tree/4.1.3 |
-| `net.raphimc:ViaLegacy` | 3.0.16 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaLegacy/tree/v3.0.16 (the file headers still name github.com/RaphiMC/ViaLegacy) |
+| `viaversion-api` | 5.12.0 | MIT (the `api/` directory only) | https://github.com/ViaVersion/ViaVersion/tree/5.12.0/api |
+| `viaversion-common` | 5.12.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaVersion/tree/5.12.0 |
+| `viabackwards-common` | 5.12.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaBackwards/tree/5.12.0 |
+| `viarewind-common` | 4.2.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaRewind/tree/4.2.0 |
+| `net.raphimc:ViaLegacy` | 3.1.0 | GPL-3.0-or-later | https://github.com/ViaVersion/ViaLegacy/tree/v3.1.0 (the file headers still name github.com/RaphiMC/ViaLegacy) |
 
 - ViaVersion's README says: "The entirety of the API directory is licensed under
   the MIT License". It says everything else is GPLv3, "including the
@@ -87,16 +87,24 @@ downloads the ones the build uses.
 
 ### A binary distribution
 
-`scripts/build-jar.ps1` produces a single `conduit.jar`, and `gradle distZip`,
-`distTar` and `installDist` produce the same thing laid out as a directory.
+`scripts/build-jar.ps1` produces a single `conduit.jar`, which is what a release
+ships. `gradle distZip`, `distTar` and `installDist` lay a build out as a
+directory instead, and treat Via the same way (below).
 
-**Neither carries ViaVersion.** Via is GPL-3.0-or-later object code, and a jar
+**The jar carries no ViaVersion.** Via is GPL-3.0-or-later object code, and a jar
 holding it could only be handed on together with Via's Corresponding Source. It
 is instead installed by the operator's own copy of Conduit, from ViaVersion's
 repository, into `lib/via` (see the next section). What ships is Conduit's own
 code and the Velocity-compatibility and Via-supporting libraries -- MIT,
 Apache-2.0, LGPL-3.0 night-config, public-domain aopalliance -- each keeping its
 license and notice files under `META-INF/licenses/<jar>/`.
+
+The Gradle distribution carries no Via either. Via is a compile dependency
+there, but `build.gradle.kts` leaves its five jars, and the `com.seedfinding`
+`mc_*` jars only ViaLegacy pulls in, out of the distribution's `lib/` and its
+start scripts, and those start `gg.tame.conduit.boot.Bootstrap` so that the
+first start installs Via into `lib/via` exactly as the jar does. With no Via
+object code in it, the distribution carries no Via source either.
 
 Conduit itself is GPL-3.0-or-later, so a distribution still conveys object code
 under the GPL and carries what GPLv3 requires for it:
@@ -137,7 +145,9 @@ for anyone who needs to do that.
 The versions Conduit pins live in two places that have to agree:
 `src/main/resources/gg/tame/conduit/via-bundled.properties`, which the bootstrap
 installs from, and `scripts/fetch-via.ps1`, which populates `lib/via` for a
-development build. `ViaOverrideTests` fails if they drift apart.
+development build. `ViaOverrideTests` fails if they drift apart. `build.gradle.kts`
+names the same versions a third time, for compiling under Gradle; nothing checks
+that copy.
 
 ## Open points
 

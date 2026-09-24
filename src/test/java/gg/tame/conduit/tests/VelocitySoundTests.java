@@ -123,7 +123,7 @@ public final class VelocitySoundTests {
           require(Arrays.equals(SoundApiTests.next(in, 0x65), following), "Audience.playSound(sound) follows the player, entity 7");
           require(Arrays.equals(SoundApiTests.next(in, 0x65), following), "and so does playSound(sound, Emitter.self())");
           MinecraftFrames.write(out, ModLoaderTests.command(chatCommand, "vsound other"));
-          VelocityCompatTests.awaitSignal("other:Player.playSound(Sound, Emitter) with an emitter other than Sound.Emitter.self()"
+          VelocityCompatTests.awaitSignal("other:Player.playSound(Sound, Emitter) with an emitter that is not a player"
               + " is not supported by Conduit's Velocity compatibility layer");
           MinecraftFrames.write(out, ModLoaderTests.command(chatCommand, "vsound stop"));
           require(Arrays.equals(SoundApiTests.next(in, 0x68), SoundApiTests.stop(0x68, 1, SoundApiTests.NAME)), "SoundStop.namedOnSource");

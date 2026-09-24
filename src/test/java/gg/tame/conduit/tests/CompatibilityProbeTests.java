@@ -58,8 +58,8 @@ public final class CompatibilityProbeTests {
     require(gg.tame.conduit.protocol.CompatibilityRegistry.resolve(765, 776).selectable(),
         "765 to 776 is selectable, whatever an explicit entry once recorded");
 
-    // Protocol 777 is past the installed artifacts' ceiling in both directions.
-    var beyond = CompatibilityProbe.probe(765, 777);
+    // Protocol 778 is past the installed artifacts' ceiling in both directions.
+    var beyond = CompatibilityProbe.probe(765, 778);
     require(beyond.support() == TranslationSupport.UNSUPPORTED, "beyond the ceiling is unsupported");
     require(beyond.engine() == CompatibilityProbe.Engine.NONE, "unsupported pairs name no engine");
     require(!beyond.usable(), "an unsupported pair is not usable");

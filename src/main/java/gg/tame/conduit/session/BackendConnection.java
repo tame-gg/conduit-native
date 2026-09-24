@@ -60,6 +60,12 @@ public final class BackendConnection implements AutoCloseable {
 
   public static void handshake(Socket socket, Handshake clientHandshake, BackendServer server, PlayerProfile player,
                                FmlAddressMarkers.MarkerKind clientMarker, ModLoaderFamily clientFamily) throws IOException {
+    handshake(socket, clientHandshake, server, player, clientMarker, clientFamily, new gg.tame.conduit.forwarding.NoneForwarder(), null);
+  }
+
+  public static void handshake(Socket socket, Handshake clientHandshake, BackendServer server, PlayerProfile player,
+                               FmlAddressMarkers.MarkerKind clientMarker, ModLoaderFamily clientFamily,
+                               PlayerInfoForwarder forwarder, InetAddress client) throws IOException {
     String host = server.address().getHostString();
     boolean wantsForge = server.accepts(ModLoaderFamily.FORGE) && !server.supportedModLoaders().isEmpty()
         && server.supportedModLoaders().contains(ModLoaderFamily.FORGE)
@@ -76,6 +82,7 @@ public final class BackendConnection implements AutoCloseable {
     if (marker != FmlAddressMarkers.MarkerKind.NONE) {
       host = FmlAddressMarkers.append(host, marker);
     }
+    host = forwarder.handshakeHost(host, player, client);
     Handshake backendHandshake = new Handshake(clientHandshake.protocolVersion(), host, server.address().getPort(), 2);
     byte[] handshakeBytes = backendHandshake.encode();
     MinecraftFrames.write(socket.getOutputStream(), handshakeBytes);

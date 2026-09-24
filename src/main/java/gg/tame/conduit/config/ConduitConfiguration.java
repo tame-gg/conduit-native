@@ -75,6 +75,7 @@ public record ConduitConfiguration(InetSocketAddress listener, int maxFrameBytes
     if (maxFrameBytes < 1 || maxFrameBytes > 8 * 1024 * 1024) throw new IllegalArgumentException("listener.max-frame-bytes must be 1..8388608");
     if (compressionThreshold < -1) throw new IllegalArgumentException("listener.compression-threshold must be -1 (off) or at least 0");
     if (forwardingMode == ForwardingMode.MODERN && forwardingSecretFile.isEmpty()) throw new IllegalArgumentException("forwarding.secret-file is required for modern forwarding");
+    if (forwardingMode == ForwardingMode.BUNGEEGUARD && forwardingSecretFile.isEmpty()) throw new IllegalArgumentException("forwarding.secret-file is required for bungeeguard forwarding: it holds the token");
     // A secret file in another mode used to be refused. It is now the default in every mode: the
     // file is generated on first start so that turning modern forwarding on later is one line here
     // and a copy into each backend. Only ForwardingMode.MODERN reads it; in any other mode it sits

@@ -15,23 +15,24 @@ import java.util.Map;
 /**
  * The jar's entry point. Decides which ViaVersion the proxy runs on, then starts the proxy.
  *
- * <p>Via is merged into the jar so translation works offline with nothing to fetch, but a jar cannot
- * update itself and Via supports each new Minecraft release well before a Conduit release can. So
- * {@code lib/via} beside the configuration is an override: a complete, newer set of Via jars there is
- * used in place of the bundled copies, whether an operator put them there or {@link ViaUpdater} did.
+ * <p>The jar carries no Via. {@code lib/via} beside the configuration is where it comes from: a first
+ * start that finds no complete set there installs the pinned one from repo.viaversion.com
+ * ({@link ViaUpdater}), and since Via supports each new Minecraft release well before a Conduit
+ * release can, the updater keeps that set current. An operator may also put the jars there by hand.
+ * An older build that did merge Via into its jar still prefers a newer set in {@code lib/via}.
  *
- * <p>The override works by class path order rather than by unpacking anything. A child loader is built
- * over {@code [the override jars, then everything that was already on the class path]} with the
- * <em>platform</em> loader as its parent, not the application loader -- delegation goes to the parent
- * first, so a child whose parent could see the jar would find the bundled Via there and the override
- * would never be reached. The whole original class path is carried across, so that nothing else on
+ * <p>The set in {@code lib/via} is loaded by class path order rather than by unpacking anything. A
+ * child loader is built over {@code [those jars, then everything that was already on the class path]}
+ * with the <em>platform</em> loader as its parent, not the application loader -- delegation goes to
+ * the parent first, so a child whose parent could see a jar with Via merged in would find that copy
+ * and never reach {@code lib/via}. The whole original class path is carried across, so that nothing else on
  * it -- the Velocity API merged into the jar included -- is lost in the process.
  *
  * <p>Nothing in this package may touch a Conduit or Via class: see {@link ViaArtifacts}. It reads the
  * configuration with {@link BootConfig} rather than the real loader for the same reason.
  *
- * <p>When there is no override -- the ordinary case -- no loader is built at all and the proxy is
- * called directly. A mechanism that is not needed should not be in the way.
+ * <p>When {@code lib/via} holds no usable set, no loader is built at all and the proxy is called
+ * directly, without translation. A mechanism that is not needed should not be in the way.
  */
 public final class Bootstrap {
   /** Where the proxy actually starts. */
@@ -60,7 +61,7 @@ public final class Bootstrap {
       try {
         prepareVia(viaDirectory, configPath);
       } catch (IOException | RuntimeException failure) {
-        // The bundled Via is still there, so this is never fatal.
+        // Never fatal: Conduit starts on whatever lib/via holds, or without translation.
         say("WARN", "Could not check for a ViaVersion update: " + failure);
       }
     }

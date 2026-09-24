@@ -79,7 +79,8 @@ public final class PlayerInfoUpdate {
         MinecraftOutput.varInt(output, id);
         output.writeByte(actions);
         MinecraftOutput.varInt(output, count);
-        for (int index = 0; index < count; index++) substituted |= copyPlayer(input, output, actions, profile);
+        boolean nbt = ProtocolEras.textComponentNbt(protocol.version().number());
+        for (int index = 0; index < count; index++) substituted |= copyPlayer(input, output, actions, profile, nbt);
       }
       if (input.available() != 0) throw new IOException(input.available() + " trailing bytes after " + count + " entries");
       return substituted ? bytes.toByteArray() : packet;
@@ -89,7 +90,7 @@ public final class PlayerInfoUpdate {
     }
   }
   /** Returns true when this entry's properties were replaced by the authenticated ones. */
-  private static boolean copyPlayer(DataInputStream input, DataOutputStream output, int actions, PlayerProfile profile) throws IOException {
+  private static boolean copyPlayer(DataInputStream input, DataOutputStream output, int actions, PlayerProfile profile, boolean nbt) throws IOException {
     boolean substituted = false;
     UUID uuid = GameProfiles.readUuid(input);
     GameProfiles.writeUuid(output, uuid);
@@ -107,7 +108,7 @@ public final class PlayerInfoUpdate {
     if ((actions & UPDATE_GAME_MODE) != 0) MinecraftOutput.varInt(output, copyVarInt(input));
     if ((actions & UPDATE_LISTED) != 0) output.writeBoolean(input.readBoolean());
     if ((actions & UPDATE_LATENCY) != 0) MinecraftOutput.varInt(output, copyVarInt(input));
-    if ((actions & UPDATE_DISPLAY_NAME) != 0) copyOptionalComponent(input, output);
+    if ((actions & UPDATE_DISPLAY_NAME) != 0) copyOptionalComponent(input, output, nbt);
     if ((actions & UPDATE_LIST_PRIORITY) != 0) MinecraftOutput.varInt(output, copyVarInt(input));
     if ((actions & UPDATE_HAT) != 0) output.writeBoolean(input.readBoolean());
     return substituted;
@@ -126,9 +127,12 @@ public final class PlayerInfoUpdate {
     MinecraftOutput.varInt(output, data.length);
     output.write(data);
   }
-  private static void copyOptionalComponent(DataInputStream input, DataOutputStream output) throws IOException {
+  /** A display name: network NBT from 1.20.3, a JSON string before it. */
+  private static void copyOptionalComponent(DataInputStream input, DataOutputStream output, boolean nbt) throws IOException {
     boolean present = input.readBoolean();
     output.writeBoolean(present);
-    if (present) NetworkNbt.copy(input, output);
+    if (!present) return;
+    if (nbt) NetworkNbt.copy(input, output);
+    else MinecraftOutput.string(output, MinecraftInput.string(input, 262144));
   }
 }

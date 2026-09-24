@@ -16,6 +16,11 @@ public final class CompatibilityRegistry {
     register(765, 765, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL, "same-version 1.20.4");
     register(766, 766, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL, "same-version 1.20.5/1.20.6");
     register(776, 776, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL, "same-version 26.2");
+    // Scripted protocol-777 client against two official 26.3 servers through Conduit: login,
+    // configuration, Join Game, a dimension change (Respawn), commands and a /server switch.
+    registerValidated(777, 777, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL,
+        ValidationStatus.DIRECT_VERIFIED,
+        "same-version 26.3 -- verified with a scripted protocol-777 client against official 26.3 servers");
     register(763, 763, TranslationSupport.DIRECT, CompatibilityCompleteness.FULL, "same-version 1.20/1.20.1");
     // Validated on the wire: the official Minecraft 1.13 client reached the
     // official 1.13 server through Conduit and played for ~3 minutes with no

@@ -2,17 +2,21 @@
 package gg.tame.conduit.protocol;
 
 import gg.tame.conduit.api.player.BossBar;
+import gg.tame.conduit.api.player.ChatSession;
 import gg.tame.conduit.api.player.Sound;
 import gg.tame.conduit.api.player.TabListEntry;
 import gg.tame.conduit.api.text.Text;
 import gg.tame.conduit.login.ProfileProperty;
 import gg.tame.conduit.protocol.text.ComponentCodec;
 import gg.tame.conduit.text.TextCodec;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -156,7 +160,7 @@ public final class DisplayPackets {
   private static final int INFO_LATENCY = 2;
   private static final int INFO_DISPLAY_NAME = 3;
   private static final int INFO_REMOVE = 4;
-  /** What an add sets on 1.19.3+. Initialize Chat is left out: the proxy's entries have no chat session. */
+  /** What an add sets on 1.19.3+; Initialize Chat as well when an entry has a chat session (see tabListAdd). */
   private static final int ADD_ACTIONS = PlayerInfoUpdate.ADD_PLAYER | PlayerInfoUpdate.UPDATE_GAME_MODE
       | PlayerInfoUpdate.UPDATE_LISTED | PlayerInfoUpdate.UPDATE_LATENCY | PlayerInfoUpdate.UPDATE_DISPLAY_NAME
       | PlayerInfoUpdate.UPDATE_LIST_PRIORITY | PlayerInfoUpdate.UPDATE_HAT;
@@ -178,7 +182,12 @@ public final class DisplayPackets {
   /** Adds {@code entries} in one packet. Sent for entries the client has, it sets them again. */
   public static Optional<byte[]> tabListAdd(ProtocolDefinition protocol, List<TabListEntry> entries) throws IOException {
     if (!tabListEntries(protocol) || entries.isEmpty()) return Optional.empty();
-    if (splitPlayerInfo(protocol)) return Optional.of(playerInfoUpdate(protocol, supported(protocol, ADD_ACTIONS), entries));
+    if (splitPlayerInfo(protocol)) {
+      // Initialize Chat only when there is a session to give: sent without one, it would take away a
+      // session the client already had for that id.
+      boolean chat = entries.stream().anyMatch(entry -> entry.chatSession() != null && entry.chatSession().sessionId() != null);
+      return Optional.of(playerInfoUpdate(protocol, supported(protocol, ADD_ACTIONS | (chat ? PlayerInfoUpdate.INITIALIZE_CHAT : 0)), entries));
+    }
     boolean profileKey = ProtocolEras.playerInfoProfileKey(protocol.version().number());
     return Optional.of(packet(protocol, PacketKind.PLAY_PLAYER_INFO_UPDATE, output -> {
       MinecraftOutput.varInt(output, INFO_ADD);
@@ -190,7 +199,12 @@ public final class DisplayPackets {
         MinecraftOutput.varInt(output, entry.gameMode());
         MinecraftOutput.varInt(output, entry.latency());
         optionalText(output, protocol, entry.displayName());
-        if (profileKey) output.writeBoolean(false);
+        if (profileKey) {
+          // 1.19-1.19.2: the entry's profile key, the chat key without a session id.
+          ChatSession key = entry.chatSession();
+          output.writeBoolean(key != null);
+          if (key != null) chatKey(output, key);
+        }
       }
     }));
   }
@@ -235,6 +249,164 @@ public final class DisplayPackets {
     return defines(protocol, PacketKind.PLAY_PLAYER_INFO_REMOVE);
   }
 
+  // 1.7's Player List Item names an entry by the text it shows and carries only online and ping.
+
+  /** Whether this client has 1.7's Player List Item rather than a Player Info keyed by UUID. */
+  public static boolean legacyTabList(ProtocolDefinition protocol) {
+    return !ProtocolEras.playerInfoByUuid(protocol.version().number()) && defines(protocol, PacketKind.PLAY_PLAYER_INFO_UPDATE);
+  }
+
+  /** A 1.7 Player List Item: {@code online} false takes the entry named {@code name} off the list. */
+  public static byte[] legacyListItem(ProtocolDefinition protocol, String name, boolean online, int latency) throws IOException {
+    return packet(protocol, PacketKind.PLAY_PLAYER_INFO_UPDATE, output -> {
+      MinecraftOutput.string(output, name);
+      output.writeBoolean(online);
+      output.writeShort(Math.max(Short.MIN_VALUE, Math.min(Short.MAX_VALUE, latency)));
+    });
+  }
+
+  /** The text a 1.7 client lists the proxy's entry under: its display name, colours as section codes, else its name; 16 characters at most. */
+  public static String legacyListName(TabListEntry entry) {
+    String name = entry.displayName() == null ? entry.name() : TextCodec.toLegacy(entry.displayName());
+    return name.length() > 16 ? name.substring(0, 16) : name;
+  }
+
+  /** The id a 1.7 entry, which has none, is known by: the offline-mode UUID of the name it shows. */
+  public static UUID legacyListId(String name) {
+    return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
+  // ---- the backend's tab list, read as it passes --------------------------------------------
+
+  /**
+   * Applies one Player Info packet (Update or Remove; 1.7's Player List Item), in this client's own
+   * release, to {@code entries}: the list the backend has told the client, by id. Only reads. An
+   * update for an entry that was never added is skipped, as the client skips it. A field the release
+   * does not have keeps its default: listed before 1.19.3, list order before 1.21.2, the hat before
+   * 1.21.4. A 1.7 entry is keyed by {@link #legacyListId}.
+   */
+  public static void readPlayerInfo(ProtocolDefinition protocol, byte[] packet, Map<UUID, TabListEntry> entries) throws IOException {
+    int number = protocol.version().number();
+    boolean nbt = ProtocolEras.textComponentNbt(number);
+    DataInputStream input = new DataInputStream(new ByteArrayInputStream(packet));
+    int id = MinecraftInput.varInt(input);
+    if (!ProtocolEras.playerInfoByUuid(number)) {
+      String name = name(input);
+      boolean online = input.readBoolean();
+      int latency = input.readShort();
+      UUID key = legacyListId(name);
+      TabListEntry entry = entries.get(key);
+      if (!online) entries.remove(key);
+      else if (entry == null) entries.put(key, new TabListEntry(key, name, List.of(), null, latency, 0, true, 0, true));
+      else entries.put(key, with(entry, entry.displayName(), latency, entry.gameMode(), entry.listed(), entry.listOrder(), entry.showHat()));
+      return;
+    }
+    if (splitPlayerInfo(protocol) && protocol.is(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, id, PacketKind.PLAY_PLAYER_INFO_REMOVE)) {
+      int count = count(input);
+      for (int index = 0; index < count; index++) entries.remove(GameProfiles.readUuid(input));
+      return;
+    }
+    if (!splitPlayerInfo(protocol)) {
+      int action = MinecraftInput.varInt(input);
+      int count = count(input);
+      for (int index = 0; index < count; index++) {
+        UUID uuid = GameProfiles.readUuid(input);
+        TabListEntry entry = entries.get(uuid);
+        switch (action) {
+          case INFO_ADD -> {
+            String name = name(input);
+            List<TabListEntry.Property> properties = readProperties(input);
+            int gameMode = MinecraftInput.varInt(input);
+            int latency = MinecraftInput.varInt(input);
+            Text displayName = optionalText(input, nbt);
+            if (ProtocolEras.playerInfoProfileKey(number) && input.readBoolean()) {
+              input.readLong();
+              MinecraftInput.bytes(input, 8192);
+              MinecraftInput.bytes(input, 8192);
+            }
+            entries.put(uuid, new TabListEntry(uuid, name, properties, displayName, latency, gameMode(gameMode), true, 0, true));
+          }
+          case INFO_GAME_MODE -> {
+            int gameMode = gameMode(MinecraftInput.varInt(input));
+            if (entry != null) entries.put(uuid, with(entry, entry.displayName(), entry.latency(), gameMode, entry.listed(), entry.listOrder(), entry.showHat()));
+          }
+          case INFO_LATENCY -> {
+            int latency = MinecraftInput.varInt(input);
+            if (entry != null) entries.put(uuid, with(entry, entry.displayName(), latency, entry.gameMode(), entry.listed(), entry.listOrder(), entry.showHat()));
+          }
+          case INFO_DISPLAY_NAME -> {
+            Text displayName = optionalText(input, nbt);
+            if (entry != null) entries.put(uuid, with(entry, displayName, entry.latency(), entry.gameMode(), entry.listed(), entry.listOrder(), entry.showHat()));
+          }
+          case INFO_REMOVE -> entries.remove(uuid);
+          default -> throw new IOException("unknown Player Info action " + action);
+        }
+      }
+      return;
+    }
+    int actions = input.readUnsignedByte();
+    int count = count(input);
+    for (int index = 0; index < count; index++) {
+      UUID uuid = GameProfiles.readUuid(input);
+      TabListEntry entry = entries.get(uuid);
+      // A new entry starts as the client starts one: unlisted, survival, no latency, the hat shown.
+      if ((actions & PlayerInfoUpdate.ADD_PLAYER) != 0) {
+        entry = new TabListEntry(uuid, name(input), readProperties(input), null, 0, 0, false, 0, true);
+      }
+      if ((actions & PlayerInfoUpdate.INITIALIZE_CHAT) != 0 && input.readBoolean()) {
+        GameProfiles.readUuid(input);
+        input.readLong();
+        MinecraftInput.bytes(input, 8192);
+        MinecraftInput.bytes(input, 8192);
+      }
+      Text displayName = entry == null ? null : entry.displayName();
+      int latency = entry == null ? 0 : entry.latency();
+      int gameMode = entry == null ? 0 : entry.gameMode();
+      boolean listed = entry != null && entry.listed();
+      int listOrder = entry == null ? 0 : entry.listOrder();
+      boolean showHat = entry == null || entry.showHat();
+      if ((actions & PlayerInfoUpdate.UPDATE_GAME_MODE) != 0) gameMode = gameMode(MinecraftInput.varInt(input));
+      if ((actions & PlayerInfoUpdate.UPDATE_LISTED) != 0) listed = input.readBoolean();
+      if ((actions & PlayerInfoUpdate.UPDATE_LATENCY) != 0) latency = MinecraftInput.varInt(input);
+      if ((actions & PlayerInfoUpdate.UPDATE_DISPLAY_NAME) != 0) displayName = optionalText(input, nbt);
+      if ((actions & PlayerInfoUpdate.UPDATE_LIST_PRIORITY) != 0) listOrder = MinecraftInput.varInt(input);
+      if ((actions & PlayerInfoUpdate.UPDATE_HAT) != 0) showHat = input.readBoolean();
+      if (entry != null) entries.put(uuid, with(entry, displayName, latency, gameMode, listed, listOrder, showHat));
+    }
+  }
+
+  private static int count(DataInputStream input) throws IOException {
+    int count = MinecraftInput.varInt(input);
+    if (count < 0 || count > 4096) throw new IOException("Player Info entry count " + count);
+    return count;
+  }
+
+  private static String name(DataInputStream input) throws IOException {
+    String name = MinecraftInput.string(input, 64);
+    if (name.length() > 16) throw new IOException("a profile name over 16 characters");
+    return name;
+  }
+
+  private static List<TabListEntry.Property> readProperties(DataInputStream input) throws IOException {
+    List<TabListEntry.Property> properties = new ArrayList<>();
+    for (ProfileProperty property : GameProfiles.readProperties(input)) {
+      properties.add(new TabListEntry.Property(property.name(), property.value(), property.signature().orElse(null)));
+    }
+    return properties;
+  }
+
+  private static Text optionalText(DataInputStream input, boolean nbt) throws IOException {
+    if (!input.readBoolean()) return null;
+    return TextCodec.fromJson(nbt ? ComponentCodec.nbtToJson(input) : MinecraftInput.string(input, 262144));
+  }
+
+  /** A game mode the client does not know (a server's -1 for none) shows as survival. */
+  private static int gameMode(int gameMode) { return gameMode < 0 || gameMode > 3 ? 0 : gameMode; }
+
+  private static TabListEntry with(TabListEntry entry, Text displayName, int latency, int gameMode, boolean listed, int listOrder, boolean showHat) {
+    return new TabListEntry(entry.id(), entry.name(), entry.properties(), displayName, latency, gameMode, listed, listOrder, showHat);
+  }
+
   /** A 1.19.3+ Player Info Update. Each entry's fields follow in action-bit order, as the client reads them. */
   private static byte[] playerInfoUpdate(ProtocolDefinition protocol, int actions, List<TabListEntry> entries) throws IOException {
     return packet(protocol, PacketKind.PLAY_PLAYER_INFO_UPDATE, output -> {
@@ -246,6 +418,15 @@ public final class DisplayPackets {
           MinecraftOutput.string(output, entry.name());
           GameProfiles.writeProperties(output, properties(entry));
         }
+        if ((actions & PlayerInfoUpdate.INITIALIZE_CHAT) != 0) {
+          ChatSession session = entry.chatSession();
+          boolean present = session != null && session.sessionId() != null;
+          output.writeBoolean(present);
+          if (present) {
+            GameProfiles.writeUuid(output, session.sessionId());
+            chatKey(output, session);
+          }
+        }
         if ((actions & PlayerInfoUpdate.UPDATE_GAME_MODE) != 0) MinecraftOutput.varInt(output, entry.gameMode());
         if ((actions & PlayerInfoUpdate.UPDATE_LISTED) != 0) output.writeBoolean(entry.listed());
         if ((actions & PlayerInfoUpdate.UPDATE_LATENCY) != 0) MinecraftOutput.varInt(output, entry.latency());
@@ -254,6 +435,17 @@ public final class DisplayPackets {
         if ((actions & PlayerInfoUpdate.UPDATE_HAT) != 0) output.writeBoolean(entry.showHat());
       }
     });
+  }
+
+  /** A chat key as Player Info carries it: expiry, then the key and Mojang's signature, each length-prefixed. */
+  private static void chatKey(DataOutputStream output, ChatSession key) throws IOException {
+    output.writeLong(key.expiresAt());
+    byte[] publicKey = key.publicKey();
+    MinecraftOutput.varInt(output, publicKey.length);
+    output.write(publicKey);
+    byte[] signature = key.keySignature();
+    MinecraftOutput.varInt(output, signature.length);
+    output.write(signature);
   }
 
   private static byte[] playerInfoAction(ProtocolDefinition protocol, int action, UUID id, Body body) throws IOException {

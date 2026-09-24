@@ -47,6 +47,10 @@ import java.util.UUID;
  * <p>While the gate is closed, bars, the header and entries are state and go out on reopening; titles
  * and the action bar are moments, and the last {@value #MAX_HELD} are held and sent then. Sounds are
  * dropped instead: one played seconds late, in a world loaded since, is a different sound.
+ *
+ * <p>The backend's own tab-list entries are read, never changed, from its Player Info packets as they
+ * reach the client, so plugins can see and edit them; each new backend starts the record afresh at
+ * its Join Game.
  */
 public final class ClientDisplay {
   /** Writes one packet to the client the way every other clientbound packet goes. */
@@ -76,11 +80,33 @@ public final class ClientDisplay {
   private final List<UUID> removedWhileClosed = new ArrayList<>();
   /** The player's own entity id, from the last Join Game the client was written; -1 before one. */
   private int entityId = -1;
+  /** The backend's tab-list entries by id, as its Player Info packets told the client since its Join Game. */
+  private final Map<UUID, TabListEntry> backendEntries = new LinkedHashMap<>();
+  /** 1.7 only: the text each of the proxy's entries is listed under on the client, which names it there. */
+  private final Map<UUID, String> legacyShown = new LinkedHashMap<>();
+  /** True while this display writes a packet of its own, so that it is not read back as the backend's. */
+  private boolean writingOwn;
+  /** This client's Player Info (1.7: Player List Item) and Player Info Remove ids; -1 where it has none. */
+  private final int infoId;
+  private final int infoRemoveId;
+  private final boolean legacyList;
 
   public ClientDisplay(Player player, ProtocolDefinition protocol, Output output) {
     this.player = player;
     this.protocol = protocol;
-    this.output = output;
+    // Every write of the display's own happens holding lock, so only the writer ever sees the flag set.
+    this.output = packet -> {
+      writingOwn = true;
+      try { output.write(packet); } finally { writingOwn = false; }
+    };
+    this.infoId = playId(protocol, PacketKind.PLAY_PLAYER_INFO_UPDATE);
+    this.infoRemoveId = playId(protocol, PacketKind.PLAY_PLAYER_INFO_REMOVE);
+    this.legacyList = DisplayPackets.legacyTabList(protocol);
+  }
+
+  private static int playId(ProtocolDefinition protocol, PacketKind kind) {
+    return protocol.defines(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, kind)
+        ? protocol.id(ConnectionState.PLAY, PacketDirection.SERVER_TO_CLIENT, kind) : -1;
   }
 
   // ---- every clientbound packet passes these ------------------------------------------------
@@ -93,14 +119,21 @@ public final class ClientDisplay {
 
   /** After {@code packet} was written in {@code state}: reopens the gate and sends everything again. */
   public void afterWrite(ConnectionState state, byte[] packet) {
-    if (state != ConnectionState.PLAY || !rebuildsWorld(protocol, packet)) return;
+    if (state != ConnectionState.PLAY) return;
+    if (readBackendEntries(packet)) return;
+    if (!rebuildsWorld(protocol, packet)) return;
     synchronized (lock) {
       if (closed) return;
       inWorld = true;
       // Every release's Join Game opens with the player's entity id as an int, and it is the id as
       // this client knows it, since the packet has already been through any translator.
-      if (is(protocol, packet, PacketKind.PLAY_LOGIN)) entityId = joinGameEntityId(packet);
+      if (is(protocol, packet, PacketKind.PLAY_LOGIN)) {
+        entityId = joinGameEntityId(packet);
+        // A new backend, which sends its own list from scratch after its Join Game.
+        backendEntries.clear();
+      }
       try {
+        if (legacyList) syncLegacy();
         for (UUID hidden : hiddenWhileClosed) send(DisplayPackets.bossBarRemove(protocol, hidden));
         for (BossBar bar : bars.keySet()) send(DisplayPackets.bossBarAdd(protocol, bar));
         if (header != null || clearHeaderOnReopen) send(DisplayPackets.playerListHeaderAndFooter(protocol, header, footer));
@@ -115,6 +148,27 @@ public final class ClientDisplay {
       removedWhileClosed.clear();
       held.clear();
     }
+  }
+
+  /**
+   * Reads a backend's Player Info packet as it passes, into what {@link #backendEntries} reports;
+   * true if it was one. Only these ids are decoded; any other packet costs one id read. The display's
+   * own packets are not the backend's and are skipped. A packet that cannot be read leaves the record
+   * as far as it got, and the packet itself has already gone to the client unchanged.
+   */
+  private boolean readBackendEntries(byte[] packet) {
+    int id;
+    try { id = PlayPackets.peekId(packet); } catch (IOException unreadable) { return false; }
+    if (id < 0 || (id != infoId && id != infoRemoveId)) return false;
+    synchronized (lock) {
+      if (writingOwn || closed) return true;
+      try {
+        DisplayPackets.readPlayerInfo(protocol, packet, backendEntries);
+      } catch (IOException | RuntimeException unreadable) {
+        // The rest of this packet is not known; the backend's next one for an entry puts it right.
+      }
+    }
+    return true;
   }
 
   /** Whether {@code packet}, about to be written in {@code state}, takes the client's world away. Shared with the resource packs. */
@@ -227,6 +281,10 @@ public final class ClientDisplay {
     synchronized (lock) {
       if (closed) return;
       TabListEntry before = entries.put(entry.id(), entry);
+      if (legacyList) {
+        if (inWorld) trySync();
+        return;
+      }
       boolean newProfile = before != null && !(before.name().equals(entry.name()) && before.properties().equals(entry.properties()));
       if (!inWorld) {
         // The reopen adds every entry as it then is; a changed profile has to go first, as below.
@@ -253,6 +311,10 @@ public final class ClientDisplay {
     synchronized (lock) {
       if (entries.remove(id) == null) return false;
       if (closed) return true;
+      if (legacyList) {
+        if (inWorld) trySync();
+        return true;
+      }
       if (inWorld) trySend(() -> DisplayPackets.tabListRemove(protocol, List.of(id)));
       else if (!removedWhileClosed.contains(id)) removedWhileClosed.add(id);
       return true;
@@ -261,16 +323,96 @@ public final class ClientDisplay {
 
   public List<TabListEntry> entries() { synchronized (lock) { return List.copyOf(entries.values()); } }
 
+  /**
+   * 1.7 names an entry by the text it shows, so the proxy's list is put right by name: an entry gone,
+   * or shown under new text, is taken off under its old text, then every entry is listed again.
+   * Called holding lock, with the client in a world.
+   */
+  // ponytail: resends every proxy entry on each change, fine for the handful a plugin adds; send only the changed one if 1.7 lists grow.
+  private void syncLegacy() throws IOException {
+    for (var shown = legacyShown.entrySet().iterator(); shown.hasNext(); ) {
+      Map.Entry<UUID, String> listed = shown.next();
+      TabListEntry entry = entries.get(listed.getKey());
+      if (entry != null && DisplayPackets.legacyListName(entry).equals(listed.getValue())) continue;
+      output.write(DisplayPackets.legacyListItem(protocol, listed.getValue(), false, 0));
+      shown.remove();
+    }
+    for (TabListEntry entry : entries.values()) {
+      String name = DisplayPackets.legacyListName(entry);
+      output.write(DisplayPackets.legacyListItem(protocol, name, true, entry.latency()));
+      legacyShown.put(entry.id(), name);
+    }
+  }
+
+  private void trySync() {
+    try { syncLegacy(); } catch (IOException gone) { /* the session notices a dead client on its own */ }
+  }
+
+  // ---- the backend's tab-list entries -------------------------------------------------------
+
+  /** The backend's entries on this client's tab list, as it last told the client, in the order it added them. */
+  public List<TabListEntry> backendEntries() { synchronized (lock) { return List.copyOf(backendEntries.values()); } }
+
+  /**
+   * Shows the backend's entry with {@code entry}'s id as {@code entry} says: display name, latency,
+   * game mode, listed, list order and hat, as far as the client's release has them; the profile stays
+   * the backend's. A 1.7 client is sent the latency only, under the name the backend listed. The
+   * backend's next update of a field replaces the proxy's. False when the backend has no such entry.
+   */
+  public boolean updateBackendEntry(TabListEntry entry) {
+    synchronized (lock) {
+      TabListEntry before = backendEntries.get(entry.id());
+      if (before == null || closed) return false;
+      TabListEntry after = new TabListEntry(before.id(), before.name(), before.properties(), entry.displayName(), entry.latency(),
+          entry.gameMode(), entry.listed(), entry.listOrder(), entry.showHat());
+      backendEntries.put(after.id(), after);
+      if (!inWorld) return true;
+      try {
+        if (legacyList) output.write(DisplayPackets.legacyListItem(protocol, before.name(), true, after.latency()));
+        else for (byte[] update : DisplayPackets.tabListUpdate(protocol, before, after)) output.write(update);
+      } catch (IOException gone) {
+        // The session notices a dead client on its own.
+      }
+      return true;
+    }
+  }
+
+  /** Takes the backend's entry with this id off the client's list; false when the backend has none. */
+  public boolean removeBackendEntry(UUID id) {
+    synchronized (lock) {
+      TabListEntry removed = backendEntries.remove(id);
+      if (removed == null || closed) return false;
+      if (!inWorld) return true;
+      try {
+        if (legacyList) output.write(DisplayPackets.legacyListItem(protocol, removed.name(), false, 0));
+        else send(DisplayPackets.tabListRemove(protocol, List.of(id)));
+      } catch (IOException gone) {
+        // The session notices a dead client on its own.
+      }
+      return true;
+    }
+  }
+
   // ---- sounds -------------------------------------------------------------------------------
 
   /** At the player, following them: an entity sound on their own entity. */
   public void playSound(Sound sound) {
-    synchronized (lock) {
-      if (closed || !inWorld || entityId < 0) return;
-      int self = entityId;
-      trySend(() -> DisplayPackets.soundFollowing(protocol, sound, self, seed(sound)));
-    }
+    synchronized (lock) { playSoundFollowing(sound, entityId); }
   }
+
+  /** Following entity {@code entity} of this client's world: another player's, from their own {@link #entityId()}. */
+  public void playSound(Sound sound, int entity) {
+    synchronized (lock) { playSoundFollowing(sound, entity); }
+  }
+
+  /** Called holding lock. */
+  private void playSoundFollowing(Sound sound, int entity) {
+    if (closed || !inWorld || entity < 0) return;
+    trySend(() -> DisplayPackets.soundFollowing(protocol, sound, entity, seed(sound)));
+  }
+
+  /** The player's own entity id on their backend, from the last Join Game; -1 before one. */
+  public int entityId() { synchronized (lock) { return entityId; } }
 
   public void playSound(Sound sound, double x, double y, double z) {
     synchronized (lock) {
@@ -310,6 +452,8 @@ public final class ClientDisplay {
       hiddenWhileClosed.clear();
       entries.clear();
       removedWhileClosed.clear();
+      backendEntries.clear();
+      legacyShown.clear();
       held.clear();
     }
   }

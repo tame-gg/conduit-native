@@ -67,12 +67,17 @@ public record ProtocolCapabilities(
     return new ProtocolCapabilities(true, joinGameOnlineMode, knownPacks, joinGameOnlineMode, cookies, transfer, true, true);
   }
 
-  /** 1.20.1-style: play after login, binary login success with properties, no configuration. */
+  /**
+   * 1.20.1-style: play after login, binary login success with properties, no configuration. Its
+   * Player Info ids are in the table for tab-list entries, but with no Configuration phase the
+   * client never loses its own entry, so none is synthesised for it (playerInfoUpdate false), as
+   * for 1.19.x.
+   */
   public static ProtocolCapabilities legacyPlay() {
     return new ProtocolCapabilities(
         false, false, false, false, false, false, false, false,
         true, true, true, true, true, true, true,
-        false, false, true, true, false, true, true, false);
+        false, false, true, false, false, true, true, false);
   }
 
   /**

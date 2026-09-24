@@ -12,9 +12,11 @@ import gg.tame.conduit.api.player.Player;
  *
  * <p>From 1.19 a client may sign its chat. Cancelling a signed message still works -- Conduit tells
  * the backend how many messages it had acknowledged, which is the part of it later messages build
- * on -- but its text cannot be changed without the signature failing, so {@link #setMessage} on a
- * signed message is logged and not carried out. Fired for every release Conduit reads chat on,
- * which leaves out a 1.19 to 1.19.2 client. Fired on the player's connection thread; do not block.
+ * on -- except from a 1.19.1-1.19.2 client, whose signed messages each name the one before and so
+ * cannot be left out: that cancellation is logged and the message goes on. Its text cannot be
+ * changed without the signature failing, so {@link #setMessage} on a signed message is logged and
+ * not carried out. Fired for every release Conduit reads chat on. Fired on the player's connection
+ * thread; do not block.
  */
 public final class PlayerChatEvent implements Event, Cancellable {
   private final Player player;

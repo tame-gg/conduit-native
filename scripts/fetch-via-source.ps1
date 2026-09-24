@@ -21,9 +21,9 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $userAgent = "Conduit-Development/0.9.8-SNAPSHOT"
 
 # Keep in step with scripts/fetch-via.ps1.
-$viaVersion = "5.11.0"
-$viaRewind = "4.1.3"
-$viaLegacy = "3.0.16"
+$viaVersion = "5.12.0"
+$viaRewind = "4.2.0"
+$viaLegacy = "3.1.0"
 
 # The upstream release tags. Conduit assumes these tags built the published Maven
 # jars and does not verify it by rebuilding them; docs/LICENSING_VIA.md says so

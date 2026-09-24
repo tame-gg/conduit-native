@@ -211,6 +211,9 @@ public final class ConfigurationLoader {
               + ". Every backend must be given the same value -- for Paper, velocity.secret in"
               + " config/paper-global.yml -- and must run with online-mode=false, since Conduit"
               + " authenticates instead. Until then those backends will refuse this proxy's logins.");
+        } else if (mode == ForwardingMode.BUNGEEGUARD) {
+          ConduitLog.warn("Created a forwarding secret at " + secretFile + ". It is the BungeeGuard token: add it to"
+              + " allowed-tokens in every backend's BungeeGuard config, or they will refuse this proxy's logins.");
         } else {
           // Written ahead of being wanted, so forwarding.mode = "modern" is the
           // only change needed later. Not a warning: nothing is wrong yet.
@@ -219,10 +222,10 @@ public final class ConfigurationLoader {
               + " value into every backend when you want signed forwarding.");
         }
       }
-      // Only modern forwarding reads it, so an unreadable or empty file is a
-      // mistake only then. In any other mode the file is a convenience, and
-      // refusing to start over one Conduit itself had just created would be absurd.
-      if (mode == ForwardingMode.MODERN) {
+      // Only modern and bungeeguard forwarding read it (bungeeguard sends it as its token), so an
+      // unreadable or empty file is a mistake only then. In any other mode the file is a
+      // convenience, and refusing to start over one Conduit itself had just created would be absurd.
+      if (mode == ForwardingMode.MODERN || mode == ForwardingMode.BUNGEEGUARD) {
         String text;
         try { text = Files.readString(secretFile); }
         catch (NoSuchFileException missing) {
@@ -234,6 +237,12 @@ public final class ConfigurationLoader {
         catch (IOException unreadable) { throw new IllegalArgumentException("forwarding.secret-file cannot be read at " + secretFile + " (" + unreadable.getClass().getSimpleName() + ")"); }
         if (text.isBlank()) throw new IllegalArgumentException("forwarding.secret-file is empty at " + secretFile);
       }
+    }
+    if (mode == ForwardingMode.LEGACY) {
+      // Nothing in legacy forwarding proves the handshake came from Conduit.
+      ConduitLog.warn("forwarding.mode is \"legacy\": a backend believes whatever identity a handshake claims,"
+          + " so every backend must be firewalled to accept connections from Conduit only. Prefer \"modern\","
+          + " or \"bungeeguard\" where the backend runs the BungeeGuard plugin.");
     }
     configuration.ops().metrics().prometheusAddress().ifPresent(metrics -> {
       // Otherwise the bind failed at start, was logged once, and the proxy ran without metrics.
@@ -312,7 +321,13 @@ public final class ConfigurationLoader {
       }
       webhook = Optional.of(parsed);
     }
-    return new MetricsSettings(prometheus, webhook);
+    java.util.OptionalInt query = java.util.OptionalInt.empty();
+    int port = optionalInteger(values, "query.port", 0);
+    if (optionalBoolean(values, "query.enabled", false)) {
+      if (port < 0 || port > 65535) throw new IllegalArgumentException("query.port must be 1..65535, or 0 for the listener's port");
+      query = java.util.OptionalInt.of(port);
+    }
+    return new MetricsSettings(prometheus, webhook, query);
   }
 
   private static BanSettings bans(Map<String, String> values) {
@@ -340,7 +355,8 @@ public final class ConfigurationLoader {
         optionalBoolean(values, "updates.via", UpdateSettings.DEFAULT_VIA),
         optionalBoolean(values, "updates.check-only", false),
         optionalInteger(values, "updates.timeout-ms", UpdateSettings.DEFAULT_TIMEOUT_MS),
-        optionalInteger(values, "updates.via-check-interval-hours", UpdateSettings.DEFAULT_CHECK_INTERVAL_HOURS));
+        optionalInteger(values, "updates.via-check-interval-hours", UpdateSettings.DEFAULT_CHECK_INTERVAL_HOURS),
+        optionalBoolean(values, "updates.conduit", UpdateSettings.DEFAULT_CONDUIT));
   }
 
   /**
@@ -474,7 +490,9 @@ public final class ConfigurationLoader {
         channels);
     SecuritySettings.AttackModeSettings attack = new SecuritySettings.AttackModeSettings(
         optionalInteger(values, "security.attack-mode.throttle-max-attempts", 8),
-        optionalInteger(values, "security.attack-mode.bot-strike-threshold", 3));
+        optionalInteger(values, "security.attack-mode.bot-strike-threshold", 3),
+        optionalInteger(values, "security.attack-mode.auto-trip-per-second", 0),
+        optionalBoolean(values, "security.attack-mode.known-sources-only", false));
     return new SecuritySettings(throttle, bot, guard, attack);
   }
 

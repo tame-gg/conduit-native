@@ -301,11 +301,21 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     shutdown();
   }
   @Override public boolean shuttingDown() { return closed.get() || gracefulShutdown.isShuttingDown(); }
+  /** What {@link #closeListeners()} runs besides closing the query port: the owning listener's own. */
+  public void onCloseListenersRequest(Runnable hook) { this.closeListenersHook = hook; }
+  private volatile Runnable closeListenersHook;
+  @Override public void closeListeners() {
+    Runnable hook = closeListenersHook;
+    if (hook != null) hook.run();
+    var responder = queryResponder;
+    if (responder != null) responder.close();
+  }
   /** Read per call, so a reload is seen at once. */
   @Override public gg.tame.conduit.api.server.ServerListDefaults serverListDefaults() {
     var status = configuration.status();
     return new gg.tame.conduit.api.server.ServerListDefaults(status.motd(), status.displayMaxPlayers(), status.favicon());
   }
+  @Override public java.util.Map<String, java.util.List<String>> forcedHosts() { return configuration.forcedHosts().all(); }
   /** Fires ProxyStartEvent, once; the matching ProxyShutdownEvent comes from {@link #close()}. */
   public void started() {
     if (!started.compareAndSet(false, true)) return;
@@ -321,11 +331,33 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       try { metricsEndpoint = gg.tame.conduit.metrics.PrometheusEndpoint.start(address, this); }
       catch (IOException | RuntimeException failed) { gg.tame.conduit.log.ConduitLog.error("could not serve metrics on " + address + ": " + failed); }
     });
+    configuration.ops().metrics().queryPort().ifPresent(port -> {
+      InetSocketAddress address = new InetSocketAddress(boundAddress.getAddress(), port == 0 ? boundAddress.getPort() : port);
+      try { queryResponder = gg.tame.conduit.network.QueryResponder.start(address, this::queryAnswer); }
+      catch (IOException | RuntimeException failed) { gg.tame.conduit.log.ConduitLog.error("could not answer queries on UDP " + address + ": " + failed); }
+    });
     events.fire(new gg.tame.conduit.api.event.proxy.ProxyStartEvent(this));
   }
   /** The Prometheus endpoint when one is configured and bound, for tests. */
   public Optional<gg.tame.conduit.metrics.PrometheusEndpoint> metricsEndpoint() { return Optional.ofNullable(metricsEndpoint); }
   private volatile gg.tame.conduit.metrics.PrometheusEndpoint metricsEndpoint;
+  /** The GameSpy 4 query responder when {@code [query]} is enabled and bound, for tests. */
+  public Optional<gg.tame.conduit.network.QueryResponder> queryResponder() { return Optional.ofNullable(queryResponder); }
+  private volatile gg.tame.conduit.network.QueryResponder queryResponder;
+  @Override public java.util.OptionalInt queryPort() {
+    var responder = queryResponder;
+    return responder == null ? java.util.OptionalInt.empty() : java.util.OptionalInt.of(responder.port());
+  }
+  /** The server-list entry as configured, the players by name and no plugins, as ServerQueryEvent listeners leave it. */
+  private gg.tame.conduit.api.event.proxy.ServerQueryEvent.Response queryAnswer(boolean full, java.net.InetAddress querier) {
+    var entry = serverListDefaults();
+    List<String> names = playerViews.all().stream().map(Player::username).toList();
+    var event = new gg.tame.conduit.api.event.proxy.ServerQueryEvent(full, querier, new gg.tame.conduit.api.event.proxy.ServerQueryEvent.Response(
+        entry.description().plain(), versionGate.describeAllowedBriefly(), "Conduit", names.size(), entry.maxPlayers(),
+        boundAddress.getHostString(), boundAddress.getPort(), names, "Conduit " + version(), List.of()));
+    events.fire(event);
+    return event.response();
+  }
   public ConduitPluginManager pluginRuntime() { return plugins; }
   public Optional<RegisteredServer> registered(String name) { return servers.getServer(name); }
   public boolean isMaintenanceActive() { return maintenance.isActive(); }
@@ -361,7 +393,11 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       if (!current.initialBackends().equals(next.initialBackends()) || !current.fallbackBackends().equals(next.fallbackBackends())) {
         restart.add("routing.initial / routing.fallback");
       }
-      if (!current.ops().metrics().equals(next.ops().metrics())) restart.add("metrics.prometheus-address");
+      // The alert webhook in the same record is live (below); only the two listeners need a restart.
+      if (!current.ops().metrics().prometheusAddress().equals(next.ops().metrics().prometheusAddress())) {
+        restart.add("metrics.prometheus-address");
+      }
+      if (!current.ops().metrics().queryPort().equals(next.ops().metrics().queryPort())) restart.add("query.*");
       List<String> live = new ArrayList<>();
       health.applySettings(next.health());
       live.add("health.*");
@@ -428,6 +464,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       if (connectionSelector != null) connectionSelector.close();
     }
     if (metricsEndpoint != null) metricsEndpoint.close();
+    if (queryResponder != null) queryResponder.close();
     // Via is deliberately not stopped here. Its manager is a per-JVM singleton that cannot be
     // re-initialised, so a runtime closing would take translation away from every later one in the
     // same process. Stopping it belongs to the process, and ConduitViaBootstrap owns that as a
@@ -476,6 +513,7 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       runtime.events().fire(new gg.tame.conduit.api.event.proxy.ServerRegisteredEvent(view));
       return view;
     }
+    @Override public RegisteredServer raw(String name, InetSocketAddress address) { return new RawServer(runtime, new BackendServer(name, address)); }
     @Override public boolean unregister(String name) {
       ApiServer removed = views.remove(ServerRegistry.normalize(name));
       boolean unregistered = selector.unregister(name);
@@ -509,11 +547,28 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
     }
     /** On the probe's bounded pool of socket threads. The cache is left alone. */
     @Override public CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping(int protocol, String virtualHost, java.time.Duration timeout) {
+      return ping(runtime, server, protocol, virtualHost, timeout);
+    }
+    static CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping(ConduitRuntime runtime, BackendServer server,
+        int protocol, String virtualHost, java.time.Duration timeout) {
       int millis = timeout == null || timeout.isZero() || timeout.isNegative()
           ? runtime.configuration().health().timeoutMs() : (int) Math.min(Integer.MAX_VALUE, timeout.toMillis());
       return gg.tame.conduit.protocol.BackendStatusProbe.ping(server.name(), server.address(), virtualHost, protocol, millis);
     }
     @Override public CompletableFuture<Boolean> connect(Player player) { return player.connect(this); }
     BackendServer backend() { return server; }
+  }
+  /** {@link ServerManager#raw}: a server to ping, which nobody can be sent to and nobody is on. */
+  record RawServer(ConduitRuntime runtime, BackendServer server) implements RegisteredServer {
+    @Override public String getName() { return server.name(); }
+    @Override public InetSocketAddress getAddress() { return server.address(); }
+    @Override public boolean isOnline() { return false; }
+    @Override public CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping() {
+      return ping(gg.tame.conduit.protocol.BackendStatusProbe.ANY_PROTOCOL, null, null);
+    }
+    @Override public CompletableFuture<gg.tame.conduit.api.server.ServerStatus> ping(int protocol, String virtualHost, java.time.Duration timeout) {
+      return ApiServer.ping(runtime, server, protocol, virtualHost, timeout);
+    }
+    @Override public CompletableFuture<Boolean> connect(Player player) { return CompletableFuture.completedFuture(false); }
   }
 }

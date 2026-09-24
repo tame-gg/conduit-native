@@ -279,5 +279,15 @@ public enum PacketKind {
    * last said. Conduit sends one in place of a chat message a plugin withheld, which carried such a
    * count of its own.
    */
-  PLAY_CHAT_ACKNOWLEDGEMENT
+  PLAY_CHAT_ACKNOWLEDGEMENT,
+  /** Clear Dialog (1.21.6+), an empty packet in both states; written by Conduit for a plugin's closeDialog. */
+  PLAY_CLEAR_DIALOG,
+  CONFIGURATION_CLEAR_DIALOG,
+  /**
+   * Serverbound Chat Session Update (Player Session), 1.19.3+: the client's session id and its
+   * Mojang-signed chat key. Read for Player.getIdentifiedKey and passed on unchanged.
+   */
+  PLAY_CHAT_SESSION_UPDATE,
+  /** Serverbound Signed Chat Command, 1.20.5+: a command with argument signatures, split off the unsigned one. */
+  PLAY_CHAT_COMMAND_SIGNED
 }

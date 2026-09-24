@@ -40,6 +40,24 @@ final class VelocityCommandSyntax {
     return children(node);
   }
 
+  /**
+   * A SimpleCommand's or a RawCommand's CommandMeta hints, each one a node under the command's name
+   * as the API describes them, next to the greedy {@code ask_server} argument such a command always
+   * gets: a hint says what the command takes, but the command still takes anything, and the line
+   * must never be red where the command would have run it. No hints, nothing: the command keeps the
+   * greedy argument alone.
+   */
+  static List<CommandSyntax> hinted(java.util.Collection<CommandNode<CommandSource>> hints) {
+    if (hints == null || hints.isEmpty()) return List.of();
+    List<CommandSyntax> converted = new ArrayList<>();
+    for (CommandNode<CommandSource> hint : hints) {
+      CommandSyntax one = one(hint);
+      if (one != null) converted.add(one);
+    }
+    converted.add(new CommandSyntax.Argument("arguments", CommandSyntax.Parser.greedy(), true));
+    return converted;
+  }
+
   private static List<CommandSyntax> children(CommandNode<CommandSource> parent) {
     List<CommandSyntax> converted = new ArrayList<>();
     for (CommandNode<CommandSource> child : parent.getChildren()) {

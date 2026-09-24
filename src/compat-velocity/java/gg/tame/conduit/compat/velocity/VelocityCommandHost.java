@@ -38,7 +38,8 @@ import net.kyori.adventure.text.format.NamedTextColor;
  * Brigadier library against the full command line, and the tree itself is declared to clients --
  * see {@link VelocityCommandSyntax}. A SimpleCommand or a RawCommand says nothing about its own
  * shape, so it gets the literal and one greedy {@code ask_server} argument Velocity declares for
- * those, which is what {@code CommandGraphs#addLiteral} gives every command that declares nothing.
+ * those, which is what {@code CommandGraphs#addLiteral} gives every command that declares nothing,
+ * plus any hint nodes its CommandMeta carries.
  */
 final class VelocityCommandHost implements CommandManager {
   private static final long SUGGEST_WAIT_MS = 3_000;
@@ -103,7 +104,7 @@ final class VelocityCommandHost implements CommandManager {
             // A BrigadierCommand has already said what it takes, so the client is told that rather
             // than the greedy argument a SimpleCommand or a RawCommand can only be given.
             .syntax(command instanceof BrigadierCommand brigadier
-                ? VelocityCommandSyntax.of(brigadier.getNode()) : List.of())
+                ? VelocityCommandSyntax.of(brigadier.getNode()) : VelocityCommandSyntax.hinted(meta.getHints()))
             .build());
         byAlias.put(alias, registration);
         done.add(alias);
@@ -343,7 +344,14 @@ final class VelocityCommandHost implements CommandManager {
       if (!aliases.contains(lower)) aliases.add(lower);
     }
     @Override public CommandMeta.Builder aliases(String... more) { for (String alias : more) add(alias); return this; }
-    @Override public CommandMeta.Builder hint(CommandNode<CommandSource> node) { hints.add(node); return this; }
+    /** As the API documents: a hint describes arguments, so it may neither run anything nor redirect. */
+    @Override public CommandMeta.Builder hint(CommandNode<CommandSource> node) {
+      if (node == null) throw new IllegalArgumentException("hint node is required");
+      if (node.getCommand() != null) throw new IllegalArgumentException("a hint node may not be executable");
+      if (node.getRedirect() != null) throw new IllegalArgumentException("a hint node may not redirect");
+      hints.add(node);
+      return this;
+    }
     @Override public CommandMeta.Builder plugin(Object plugin) { this.plugin = plugin; return this; }
     @Override public CommandMeta build() { return new Meta(List.copyOf(aliases), List.copyOf(hints), plugin); }
   }

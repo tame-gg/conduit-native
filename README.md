@@ -13,7 +13,8 @@ Conduit is free software, licensed under the GNU General Public License version 
 option) any later version (`GPL-3.0-or-later`). See `LICENSE`. Third-party components keep their
 own licenses; they are listed in `THIRD-PARTY-NOTICES`. `docs/LICENSING_VIA.md` explains how Conduit
 uses the GPL ViaVersion projects and what a binary distribution has to carry. `gradle distZip`
-builds one that includes its Corresponding Source. Each Java source file names its license with an
+builds one that includes Conduit's Corresponding Source; like the jar, it carries no Via (the first
+start installs it into `lib/via`). Each Java source file names its license with an
 `SPDX-License-Identifier` line.
 
 ## Build and test
@@ -129,14 +130,13 @@ scoreboards, titles and boss bars, which the native pairs below drop — and sou
 every native pair except 393 ↔ 765, which now has generated tables of its own.
 
 Set `enabled = false` for native-only translation, and read the completeness column before you do.
-See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`. **Minecraft 26.3 is not supported by Via
-5.11.0.**
+See `docs/VIAVERSION.md` and `docs/LICENSING_VIA.md`. Via 5.12.0 carries every pairing with 26.3 (777).
 
 ## Supported Minecraft versions
 
-### Modern compatibility program (1.13 → 26.2)
+### Modern compatibility program (1.13 → 26.3)
 
-Conduit's current roadmap targets the **modern Java protocol era**: Minecraft **1.13 through 26.2**.
+Conduit's current roadmap targets the **modern Java protocol era**: Minecraft **1.13 through 26.3**.
 
 **Minecraft 1.12.2 and older are out of scope for this program**, which is not the same as being refused: 1.7.6, 1.8.x and 1.12.2 each have a declared codec, so a client on one logs in and is carried across by ViaRewind or ViaVersion. What they do not get is the modern program's work -- no native translators, no end-to-end verification. Treat them as untested.
 
@@ -161,6 +161,7 @@ Do **not** read the catalog as "everything is supported."
 | 1.20.3 / 1.20.4 | 765 | yes | DIRECT; 1.20.4 login/Play previously verified |
 | 1.20.5 / 1.20.6 | 766 | yes | DIRECT codec; translated path from 765 is PARTIAL |
 | 26.2 | 776 | yes | DIRECT / VERIFIED — the official 26.2 client joined a real 26.2 server through Conduit and stood in the world, on the DIRECT path (`config/conduit-26.2.toml`) |
+| 26.3 | 777 | yes | DIRECT — table taken from Mojang's own 26.3 `--reports` (a delta on 776); a scripted 777 client joined, changed dimension and switched between two real 26.3 servers. Not yet exercised by the official 26.3 client |
 
 ### Catalog releases (identity only unless codec listed above)
 
@@ -543,7 +544,18 @@ packets and bytes each way. It carries the operator's server names and nothing a
 addresses, tokens or paths. It has no authentication: keep it on loopback or a private network. It is
 off unless the address is set, the address takes effect at start, and one thread answers every
 scrape; a connection whose exchange is not over within 3 s, a request sent in part and then left, is
-closed. The address must resolve and must not share the port Conduit listens on.
+closed. The address must resolve and must not share the port Conduit listens on. It also reports
+`conduit_attack_mode_active`, `conduit_uptime_seconds`, `conduit_jvm_memory_used_bytes` and
+`conduit_jvm_memory_max_bytes`.
+
+### Query and release notices
+
+`[query] enabled = true` answers the GameSpy4 UDP query protocol (basic and full stat) on
+`query.port` (0 = the listener's port) and fires `ProxyQueryEvent`. Off by default.
+
+On start, and daily after that, Conduit checks GitHub for a newer tame-gg/conduit-native release and
+logs one line if there is one. It never downloads anything. Turn it off with `[updates] conduit = false`
+or `-Dconduit.update.check=false`.
 
 ### Security (Phase 2)
 
@@ -554,7 +566,7 @@ Application-level abuse mitigation only — not upstream DDoS protection.
 * **Login deadline** — the handshake timeout bounds each read; on top of that a connection has 60 s from its handshake to reach Play (or finish a status exchange) for everything read from the client, so a peer that announces a large frame and trickles it byte by byte is cut off instead of holding its slot for hours.
 * **Usernames** — a Login Start name must be 1–16 characters from `!` to `~`, the rule vanilla servers apply; anything else (empty, spaces, control characters, `§`, non-ASCII) is refused before any plugin sees the player, and the refusal never echoes the name into the log.
 * **Channel guard** — configurable plugin-message channel rules (`log` / `drop` / `kick`); unknown channels allowed; `minecraft:brand` and `velocity:*` never blocked by default. Disabled by default.
-* **Attack mode** — `/conduit attack on|off|status` tightens live throttle/bot thresholds. **Runtime only** (reset on restart).
+* **Attack mode** — `/conduit attack on|off|status` tightens live throttle/bot thresholds. **Runtime only** (reset on restart). Set `auto-trip-per-second` to switch it on by itself when more connections than that arrive in one second; it switches back off after a quiet minute (one turned on by command stays on). With `known-sources-only = true`, attack mode only admits logins from addresses (IPv4 exact, IPv6 /64) someone has logged in from since start; server-list pings are still answered. Both are off by default.
 
 Permissions: `conduit.attack`.
 
@@ -582,6 +594,8 @@ log-list = ["schematica"]
 [security.attack-mode]
 throttle-max-attempts = 8
 bot-strike-threshold = 3
+auto-trip-per-second = 0      # 0 = only /conduit attack
+known-sources-only = false
 ```
 
 ### Modded / Forge / NeoForge (Phase 3)
@@ -666,6 +680,7 @@ Once the client has entered Minecraft's configuration phase for a switch, some f
 | 1.20.4 (765) | 1.20.4 (765) | DIRECT | Tested |
 | 1.20.5 (766) | 1.20.5 (766) | DIRECT | Codec present; unit-tested |
 | 26.2 (776) | 26.2 (776) | DIRECT | Tested |
+| 26.3 (777) | 26.3 (777) | DIRECT | Scripted client |
 | 1.20.1 (763) | 1.20.1 (763) | DIRECT | Codec present; limited testing |
 | 765 ↔ 766 | login/config/control | TRANSLATED (PARTIAL) | Semantic codec + golden unit tests; **NOT REAL-CLIENT VERIFIED** |
 | 765 ↔ 776 | — | UNSUPPORTED in Conduit | Needs backend ViaVersion or a future translator |
@@ -853,8 +868,12 @@ Velocity modern forwarding enabled, a matching secret, and
 `network-compression-threshold=-1`.
 
 `forwarding.secret-file`, relative to `conduit.toml`, must exist and hold the secret. That is checked when
-the configuration loads, so by `--check-config` and `conduit reload` too. `forwarding.mode` is `none` or
-`modern`; `legacy` and `bungeeguard` are refused, as Conduit does not implement them.
+the configuration loads, so by `--check-config` and `conduit reload` too. `forwarding.mode` is `none`,
+`modern`, `legacy` or `bungeeguard`. `legacy` is BungeeCord IP forwarding for Spigot/Paper with
+`bungeecord: true`; nothing signs it, so firewall every backend to accept Conduit only (startup and
+`/conduit doctor` warn). `bungeeguard` adds a token for the BungeeGuard plugin: the token is the content of
+`forwarding.secret-file`, so put it in the plugin's `allowed-tokens`. Forge markers reach backends as an
+`extraData` property. Legacy is verified on Paper 1.20.4; bungeeguard is covered by unit tests only.
 
 ## Real vanilla client
 
@@ -891,17 +910,25 @@ Measured causes of proxy-side hitching (not Minecraft server tick lag):
 
 Steady play now coalesces TCP writes (`writeUnflushed` + flush when the opposite socket has no more queued bytes), uses TCP_NODELAY, reuses crypto/compression buffers, and bounds deferred Play (512 packets).
 
-Event-loop utilization is **not applicable**: Conduit uses blocking sockets on virtual threads (platform threads on Windows, because of JDK-8334574; see `SocketThreads`), not a shared NIO selector. Mojang HTTPS runs on the connecting thread before Play.
+Conduit does not use Netty for proxy I/O. A playing session is relayed by `network/ConnectionSelector`:
+two to four NIO selector threads (`conduit-select-N`) watch every playing connection's non-blocking
+sockets, and a readable one is handed to a bounded pool of platform worker threads (`conduit-io-N`,
+twice the core count, at least four) that decodes, translates and writes it to the other side. Everything
+before Play -- handshake, status, login, Mojang HTTPS, dialling and logging in to the backend -- runs in
+blocking I/O on the thread the accepted connection was handed to, as does a server switch; those threads
+come from `SocketThreads`, which makes them virtual, except on Windows where JDK-8334574 makes them
+platform threads.
 
 ### How many players one instance holds
 
-A session reads each of its two sockets on a thread of its own. On Linux those are virtual threads and
-cost heap; on Windows they are platform threads, because of JDK-8334574, and cost an operating-system
-thread each. So the same session costs about forty-five kilobytes on one platform and two OS threads on
-the other, and that is the whole difference between the two rows below.
+Between packets a playing session costs no thread on either platform: its two sockets wait on the
+selector, and a worker only holds one while there is something to relay. Threads now grow with joins and
+server switches in flight, not with the player count.
 
-`scripts/load-probe.ps1` measures it: N fake players hold real 1.8.9 sessions on the DIRECT path, each
-answering a keep-alive so both relay directions are known to be moving. Held twenty seconds, `-Xss512k`:
+The table below predates that. `scripts/load-probe.ps1` measured it on 0.9.0, when a session read each of
+its two sockets on a thread of its own -- virtual on Linux, platform on Windows -- so Windows paid two OS
+threads per player. N fake players held real 1.8.9 sessions on the DIRECT path, each answering a
+keep-alive so both relay directions were known to be moving. Held twenty seconds, `-Xss512k`:
 
 | Players | OS threads (Linux) | Heap (Linux) | OS threads (Windows) | Heap (Windows) |
 |--:|--:|--:|--:|--:|
@@ -909,18 +936,11 @@ answering a keep-alive so both relay directions are known to be moving. Held twe
 | 500 | 21 | 64 MiB | 1029 | 63 MiB |
 | 1000 | 19 | 92 MiB | 2027 | 85 MiB |
 
-Every connection stayed healthy in all six runs, Windows included: two thousand threads is expensive, not
-broken. Measured on a 6-core Ubuntu 24.04 machine (kernel 6.8, Temurin 25, peak RSS 440 MiB for the whole
-run) and a 12-core Windows 11 machine (Temurin 25).
-
-**Run more than about 500 players on Linux.** Windows is fine for development and for a small server, but
-its thread count grows with the player count and nothing in Conduit's configuration changes that -- it is
-the workaround for a JDK bug, not a tuning choice. A Windows instance past a thousand players is spending
-more on thread stacks and on scheduling them than on the proxying. The ceiling is not a hard limit and
-Conduit will not refuse the connections; it is where the cost stops being worth it.
-
-Raising the ceiling on Windows means reading connections on a selector instead of on a thread each, which
-is a change to the relay rather than a setting. Until that exists, Linux is the answer.
+Every connection stayed healthy in all six runs, Windows included. Measured on a 6-core Ubuntu 24.04
+machine (kernel 6.8, Temurin 25, peak RSS 440 MiB for the whole run) and a 12-core Windows 11 machine
+(Temurin 25). The Windows thread column no longer applies to the selector relay (0.9.2 and later); it has
+not been re-measured, so run `scripts/load-probe.ps1` on your own hardware before sizing a large Windows
+instance.
 
 Metrics (quiet; packet tracing remains `-Dconduit.trace=true`):
 
@@ -1034,7 +1054,9 @@ phase open with `holdFinish`, and packs offered meanwhile go to the client as Co
 post-login, disconnect (exactly once for every player set up, whether they
 played, were let in but taken by no server, were refused, or left during the login; `loginStatus()` says
 which), chat (cancellable; clients before 1.19 only), tab completion (`PlayerTabCompleteEvent`: change the
-backend's answer to a Tab press; clients before 1.13 only),
+backend's answer to a Tab press; clients before 1.13 only), available commands
+(`PlayerAvailableCommandsEvent`: the top-level commands a 1.13+ client is sent; hide, add or replace them),
+server query (`ServerQueryEvent`, when `[query]` is on),
 command execute (cancellable) and its outcome (`PostCommandEvent`: executed, threw, or forwarded to the
 backend), handshakes (`ConnectionHandshakeEvent`, for pings and logins alike, built only when listened
 for), plugin channels a client registers and unregisters (`PlayerChannelRegisterEvent`,
@@ -1102,10 +1124,26 @@ Maintenance 5.1.0, Server Redirect 1.4.3, mclo.gs 3.3.3, velocity-hub 1.10-SNAPS
 `docs/VELOCITY_COMPATIBILITY.md`.
 
 This is not full Velocity compatibility. Titles, the action bar, boss bars, the player-list header and
-footer, a player's tab-list entries and sounds work through the adapter (only the proxy's own entries: the
-backend's are not tracked), for a player or for everyone on the proxy or a server, and so do
-resource packs a plugin offers. Plugins built around the
-backend's tab list or scoreboard teams, voice chat, Bedrock
+footer, a player's tab-list entries and sounds work through the adapter, for a player or for everyone on
+the proxy or a server, and so do resource packs a plugin offers. The tab list holds the backend's
+entries as well as the proxy's, and a plugin can edit either; 1.20.1 and 1.7 clients are sent the
+proxy's entries too.
+
+Also through the adapter:
+
+- **Mod info:** Forge and NeoForge 1.13+ client mod lists (read from the login) and Forge server mod
+  lists in backend pings.
+- **Chat:**
+  - `spoofChatInput` works for 1.19+ clients, sent unsigned; a backend with `enforce-secure-profile`
+    refuses it.
+  - `getIdentifiedKey` returns the client's chat key, but it is not checked against Mojang.
+  - Signed Adventure messages are shown as system chat, never inserted into the client's signed chain.
+- **Other calls:** `setGameProfileProperties`, `closeListeners`, `createRawRegisteredServer` (ping
+  only), `closeDialog` (26.2+) and sounds played from another player on the same backend.
+- **Still throw:** `openBook` (Conduit doesn't track the item in the player's hand) and `showDialog`
+  (Adventure's `DialogLike` gives the proxy nothing to send).
+
+Plugins built around scoreboard teams, voice chat, Bedrock
 players, packet injection or Velocity's own network pipeline (ViaVersion and its relatives) are not
 expected to work.
 
@@ -1137,4 +1175,4 @@ See `docs/VELOCITY_COMPATIBILITY.md` for the support matrix. Unsupported APIs th
 
 ## Out of scope here
 
-Full Velocity API packages, BungeeGuard, and a finished 765↔776 translator.
+Full Velocity API packages and a finished 765↔776 translator.

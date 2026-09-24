@@ -962,10 +962,12 @@ public final class ConcurrencyTests {
 
   /**
    * On Windows the JDK parks a virtual thread's socket read and socket write through two wepoll
-   * handles, and a readiness event can land on the wrong one and be dropped (JDK-8334574). A
-   * session reads each socket on one thread and writes it from another, and a real NeoForge join
-   * stalled on exactly that: the backend reader parked for good in a write to the client. There,
-   * every thread a session blocks on a socket must be a platform thread.
+   * handles, and a readiness event can land on the wrong one and be dropped (JDK-8334574). A real
+   * NeoForge join stalled on exactly that: the backend reader parked for good in a write to the
+   * client. A playing session is read by the platform selector threads on every OS; every other
+   * thread that may block on a socket comes from SocketThreads, platform on Windows and virtual
+   * elsewhere. The selector's worker pool is named conduit-io- on every OS, so counting names
+   * cannot tell the two policies apart.
    */
   private static void sessionThreadsStayOffTheWindowsPoller() throws Exception {
     boolean windows = System.getProperty("os.name", "").startsWith("Windows");
@@ -988,11 +990,14 @@ public final class ConcurrencyTests {
           MinecraftFrames.write(client.getOutputStream(), new Handshake(47, "localhost", 25565, 2).encode());
           MinecraftFrames.write(client.getOutputStream(), legacyLoginStart());
           require(PlayPackets.packetId(MinecraftFrames.read(client.getInputStream(), 4096)) == 2, "1.8 Login Success");
-          MinecraftFrames.read(client.getInputStream(), 4096); // Join Game: both of the session's readers are up
-          long platform = Thread.getAllStackTraces().keySet().stream()
-              .filter(thread -> thread.getName().startsWith("conduit-io-")).count();
-          if (windows) require(platform >= 2, "a Windows session must read and write its sockets on platform threads, found " + platform);
-          else require(platform == 0, "elsewhere a session stays on virtual threads, found " + platform);
+          MinecraftFrames.read(client.getInputStream(), 4096); // Join Game: the session is in Play
+          long selectors = Thread.getAllStackTraces().keySet().stream()
+              .filter(thread -> thread.getName().startsWith("conduit-select-")).count();
+          require(selectors >= 1, "a playing session is read by platform selector threads, found " + selectors);
+          boolean virtual = gg.tame.conduit.network.SocketThreads.factory().newThread(() -> { }).isVirtual();
+          require(virtual != windows, windows
+              ? "on Windows a socket-blocking thread must be a platform thread"
+              : "elsewhere a socket-blocking thread stays virtual");
         }
         serving.interrupt();
       }
