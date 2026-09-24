@@ -42,6 +42,16 @@ public final class ConduitViaTranslator implements ProtocolTranslator, AutoClose
     return session.stateDescription();
   }
 
+  /** See {@link ConduitViaSession#releaseRegistration}. */
+  public boolean releaseRegistration() {
+    return session.releaseRegistration();
+  }
+
+  /** See {@link ConduitViaSession#restoreRegistration}. */
+  public void restoreRegistration() {
+    session.restoreRegistration();
+  }
+
   public void rebindBackend(int backendProtocol, String host, int port) {
     this.session = session.rebindBackend(backendProtocol, host, port);
   }

@@ -198,6 +198,7 @@ final class SessionSwitch {
     Socket socket = null;
     BackendConnection next = null;
     Translation pending = null;
+    boolean viaReleased = false;
     boolean clientEnteredConfiguration = false;
     boolean finishAfterCommit = false;
     try {
@@ -206,6 +207,12 @@ final class SessionSwitch {
       // still belongs to the backend the player is actually on, and the client's packets have to
       // keep being encoded for that one.
       pending = buildTranslation(server);
+      // The target's Via session registers this player with Via when its login completes; the
+      // current one steps out of Via's registry first so that is not a duplicate. It goes on translating.
+      if (pending.translator() instanceof gg.tame.conduit.viaversion.ConduitViaTranslator
+          && session.translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator current) {
+        viaReleased = current.releaseRegistration();
+      }
       socket = session.selector.open(server);
       enforceDeadline(deadline, "connect");
       Handshake switchHandshake = pending.support() == TranslationSupport.TRANSLATED
@@ -353,7 +360,13 @@ final class SessionSwitch {
       switchingTarget = null;
       session.switchQueue.clear();
       // Only release the prepared translation if it never became the session's.
-      if (pending != null && pending.translator() != session.translator) pending.close();
+      if (pending != null && pending.translator() != session.translator) {
+        pending.close();
+        // The player stays where they were, so Via should know them there again.
+        if (viaReleased && session.translator instanceof gg.tame.conduit.viaversion.ConduitViaTranslator current) {
+          current.restoreRegistration();
+        }
+      }
       session.discard(next);
       if (next == null && socket != null) try { socket.close(); } catch (IOException ignored) { }
       gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception.getMessage());

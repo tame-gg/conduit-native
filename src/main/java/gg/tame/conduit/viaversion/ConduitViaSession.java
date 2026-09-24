@@ -377,6 +377,34 @@ public final class ConduitViaSession implements AutoCloseable {
   }
 
   /**
+   * Takes this connection out of Via's player registry while it keeps translating.
+   *
+   * <p>A switch logs the player in to the next backend through a second session while this one
+   * still carries them, and Via registers that second one under the same UUID when its login
+   * completes, logging "Duplicate UUID on frontend connection" for every translated switch. Via's
+   * disconnect also marks the connection inactive, which is put back: this session is still live.
+   *
+   * @return whether this connection was the registered one, so {@link #restoreRegistration} is owed
+   */
+  public boolean releaseRegistration() {
+    java.util.UUID id = connection.getProtocolInfo().getUuid();
+    if (id == null) return false;
+    var connections = com.viaversion.viaversion.api.Via.getManager().getConnectionManager();
+    if (connections.getServerConnection(id) != connection) return false;
+    connections.onDisconnect(connection);
+    connection.setActive(true);
+    return true;
+  }
+
+  /** Registers this connection with Via again after a switch that did not happen. */
+  public void restoreRegistration() {
+    java.util.UUID id = connection.getProtocolInfo().getUuid();
+    if (id == null || !channel.isOpen()) return;
+    var connections = com.viaversion.viaversion.api.Via.getManager().getConnectionManager();
+    if (!connections.hasServerConnection(id)) connections.onLoginSuccess(connection);
+  }
+
+  /**
    * Rebuilds Via state for a new backend protocol after a server switch.
    * Client protocol remains unchanged.
    */

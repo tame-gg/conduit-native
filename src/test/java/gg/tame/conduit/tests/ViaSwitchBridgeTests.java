@@ -78,7 +78,51 @@ public final class ViaSwitchBridgeTests {
     require(clientInformationLength(772, 765, true) == 14, "a bridged 1.21.8 -> 1.20.4 session drops the field 1.20.4 lacks");
     require(clientInformationLength(765, 772, true) == 15, "a bridged 1.20.4 -> 1.21.8 session adds the field 1.21.8 reads");
 
+    aSwitchHandsOverViasRegistration();
+
     System.out.println("ViaSwitchBridgeTests passed.");
+  }
+
+  /**
+   * Both sessions of a switch log the same player in to Via. The one carrying the player steps out
+   * of Via's registry first, so the target's login is not reported as a duplicate UUID, and steps
+   * back in when the switch does not happen.
+   */
+  private static void aSwitchHandsOverViasRegistration() throws Exception {
+    var connections = com.viaversion.viaversion.api.Via.getManager().getConnectionManager();
+    java.util.UUID notch = java.util.UUID.fromString("069a79f4-44e9-4726-a5be-fca90e38aaf5");
+    List<String> warnings = new java.util.concurrent.CopyOnWriteArrayList<>();
+    java.util.logging.Handler capture = new java.util.logging.Handler() {
+      @Override public void publish(java.util.logging.LogRecord record) { warnings.add(String.valueOf(record.getMessage())); }
+      @Override public void flush() {}
+      @Override public void close() {}
+    };
+    java.util.logging.Logger viaLog = com.viaversion.viaversion.api.Via.getPlatform().getLogger();
+    viaLog.addHandler(capture);
+    try (ConduitViaTranslator current = ConduitViaTranslator.create(CLIENT_PROTOCOL, BACKEND_PROTOCOL, "127.0.0.1", 25565)) {
+      current.backendToClient(ConnectionState.LOGIN, loginSuccess());
+      current.drainToClient();
+      require(connections.hasServerConnection(notch), "the session carrying the player is registered with Via");
+
+      // A switch that fails: the player is Via's again on the session they never left.
+      require(current.releaseRegistration(), "the current session was the registered one");
+      require(!connections.hasServerConnection(notch), "released while the target logs in");
+      current.restoreRegistration();
+      require(connections.hasServerConnection(notch), "restored when the switch does not happen");
+
+      // A switch that goes through.
+      require(current.releaseRegistration(), "released again for the next switch");
+      try (ConduitViaTranslator target = ConduitViaTranslator.create(CLIENT_PROTOCOL, BACKEND_PROTOCOL, "127.0.0.1", 25565)) {
+        target.backendToClient(ConnectionState.LOGIN, loginSuccess());
+        target.drainToClient();
+        require(warnings.stream().noneMatch(message -> message.contains("Duplicate UUID")),
+            "the target's login is not a duplicate UUID: " + warnings);
+        current.close();
+        require(connections.hasServerConnection(notch), "closing the old session leaves the target registered");
+      }
+    } finally {
+      viaLog.removeHandler(capture);
+    }
   }
 
   /**
