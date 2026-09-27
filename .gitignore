@@ -1,7 +1,13 @@
 .gradle/
+# A --gradle-user-home pointed inside the checkout, so the cache is not in ~/.gradle.
+.gradle-user/
 build/
 out/
 out-*/
+# Build and run transcripts kept beside the out-*/ directories they came from.
+out-*.log
+build-local.log
+build-local.err.log
 run/
 *.class
 *.secret

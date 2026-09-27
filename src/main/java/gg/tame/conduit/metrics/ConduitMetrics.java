@@ -21,6 +21,9 @@ public final class ConduitMetrics {
   private final LongAdder backendConnectNanos = new LongAdder();
   private final LongAdder backendConnects = new LongAdder();
   private final LongAdder switchNanos = new LongAdder();
+  /** The same two timings as distributions; the sums above stay for the counters that used them. */
+  private final Latencies backendConnectLatency = new Latencies();
+  private final Latencies switchLatency = new Latencies();
   private final LongAdder switches = new LongAdder();
   private final LongAdder failedSwitches = new LongAdder();
   private final LongAdder fallbackEvents = new LongAdder();
@@ -60,8 +63,16 @@ public final class ConduitMetrics {
   public void authentication() { authentications.increment(); }
   public void decodeFailure() { decodeFailures.increment(); }
   public void encodeFailure() { encodeFailures.increment(); }
-  public void backendConnect(long nanos) { backendConnects.increment(); backendConnectNanos.add(nanos); }
-  public void serverSwitch(long nanos) { switches.increment(); switchNanos.add(nanos); }
+  public void backendConnect(long nanos) {
+    backendConnects.increment(); backendConnectNanos.add(nanos); backendConnectLatency.record(nanos);
+  }
+  public void serverSwitch(long nanos) {
+    switches.increment(); switchNanos.add(nanos); switchLatency.record(nanos);
+  }
+  /** How long backend connects took, bucketed, so a p99 is answerable and not only a mean. */
+  public Latencies backendConnectLatency() { return backendConnectLatency; }
+  /** The same for a completed server switch, which is the wait a player actually sees. */
+  public Latencies switchLatency() { return switchLatency; }
   public void failedSwitch() { failedSwitches.increment(); }
   public void fallbackEvent() { fallbackEvents.increment(); }
   public void backendUnhealthy() { unhealthyTransitions.increment(); }

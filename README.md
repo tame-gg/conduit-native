@@ -5,7 +5,7 @@ Velocity or Velocity-CTD fork, and it has no dependency on either implementation
 
 `tame-gg/conduit` is intentionally separate and untouched.
 
-Current version: **1.0.0**. Native plugin API version: **1**.
+Current version: **1.0.1**. Native plugin API version: **1**.
 
 ## License
 
@@ -925,6 +925,39 @@ Between packets a playing session costs no thread on either platform: its two so
 selector, and a worker only holds one while there is something to relay. Threads now grow with joins and
 server switches in flight, not with the player count.
 
+Like Velocity, Conduit has no player limit you are expected to set: `status.display-max-players` is
+decoration, and nothing behind it turns anyone away. Velocity can go further and have no bound at all,
+because an idle connection costs it a socket and a buffer. Conduit is nearly there -- since the selector
+relay a playing session costs no thread either -- but its login phase is still a thread per connection,
+virtual on Linux and platform on Windows (JDK-8334574). So one bound remains, and it is a property of
+the machine rather than a policy about players.
+
+`listener.max-connections`, left unset, is read off the machine: two file descriptors per player, a few
+hundred held back for the listener, health checks and open files, clamped to at least 2048 and at most
+350000. Conduit says the number it settled on at start. Where the descriptor limit cannot be read --
+Windows -- it uses a conservative 10000. Set it only to cap the proxy *below* what the machine can hold;
+`0` means the most Conduit allows, and `/conduit reload` applies a new value without dropping anyone.
+
+The last 64 slots are kept for server-list pings. The limit is counted at the accept, before the
+handshake says whether a connection is a player joining or a client refreshing its list, so a proxy that
+counted both the same stopped answering pings once it was full -- and a list entry with no answer shows
+as *unreachable*, making a full server look exactly like a dead one to players and to uptime monitors
+alike. With the headroom, a player who cannot get in is told `The server is full.` on a real kick screen
+rather than having the socket closed under them, and the list keeps answering.
+
+Two things to size a limit you set yourself against:
+
+- **File descriptors.** A player costs two, the client's socket and the backend's. Conduit warns at
+  start if the limit it was given needs more than the process may open, since otherwise the first
+  symptom is `Too many open files` at the accept, once the network is already full.
+- **Heap.** A stalled connection may hold up to 2 MiB of unsent bytes (`ChannelWriter.MAX_PENDING_BYTES`)
+  and an idle one a few kilobytes of buffers, so the worst case is the limit times 2 MiB, not the
+  measured steady state below.
+
+A proxy turning joins away says so once every ten seconds with a count of the ones in between, never a
+line per refused connection, and distinguishes "full" from "every slot gone, pings included", which
+means a flood rather than a busy night.
+
 The table below predates that. `scripts/load-probe.ps1` measured it on 0.9.0, when a session read each of
 its two sockets on a thread of its own -- virtual on Linux, platform on Windows -- so Windows paid two OS
 threads per player. N fake players held real 1.8.9 sessions on the DIRECT path, each answering a
@@ -946,6 +979,12 @@ Metrics (quiet; packet tracing remains `-Dconduit.trace=true`):
 
 `players`, `backends`, packets/sec, bytes/sec, authentications, backend connect ms, switch ms, decode/encode failures,
 backend connect failures, Via translation failures, plugin task failures.
+
+Backend connects and completed switches are also exposed as Prometheus histograms,
+`conduit_backend_connect_duration_seconds` and `conduit_server_switch_duration_seconds`, so a quantile
+is answerable: `histogram_quantile(0.99, rate(conduit_server_switch_duration_seconds_bucket[5m]))`. The
+`_seconds_total` counters beside them are unchanged, and a mean built from those hid exactly the joins
+worth looking at.
 
 ## Native plugin API
 
@@ -999,15 +1038,15 @@ public final class ExamplePlugin extends ConduitPlugin {
 }
 ```
 
-To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-1.0.0.jar` (the version is
+To compile a plugin, `./scripts/api-jar.ps1` builds `build/conduit-api-1.0.1.jar` (the version is
 `Conduit.VERSION`) and its `-sources.jar`: the `gg.tame.conduit.api` classes and nothing else. Then:
 
 ```powershell
-javac --release 21 -cp build/conduit-api-1.0.0.jar -d classes src/com/example/ExamplePlugin.java
+javac --release 21 -cp build/conduit-api-1.0.1.jar -d classes src/com/example/ExamplePlugin.java
 jar --create --file plugins/example.jar conduit-plugin.yml -C classes .
 ```
 
-With Gradle: `compileOnly(files("path/to/conduit-api-1.0.0.jar"))`. The proxy provides the API at run time,
+With Gradle: `compileOnly(files("path/to/conduit-api-1.0.1.jar"))`. The proxy provides the API at run time,
 so do not ship it inside the plugin. Use `gg.tame.conduit.api` only: the rest of Conduit (`session`,
 `network`, `protocol` and so on) is internal and changes without notice. `ApiBoundaryTests` checks that the
 API compiles on its own and that this example loads.
@@ -1171,8 +1210,8 @@ See `docs/VELOCITY_COMPATIBILITY.md` for the support matrix. Unsupported APIs th
 
 ## Protocol translation
 
-**PARTIAL.** `765↔766` semantic translation exists for known control packets. `765→776` remains `UNSUPPORTED`. `Protocol765To776Translator` still throws. Identity forwarding is same-codec only. Join Game / full play remapping is not claimed.
+**PARTIAL.** `765↔766` semantic translation exists for known control packets. `765→776` is `UNSUPPORTED` natively and is carried by Via. Identity forwarding is same-codec only. Join Game / full play remapping is not claimed.
 
 ## Out of scope here
 
-Full Velocity API packages and a finished 765↔776 translator.
+Full Velocity API packages, and a native 765↔776 translator: Via carries that pair.

@@ -27,6 +27,7 @@ public final class ConfigValidationTests {
     portsAndAddresses();
     serverNamesAndRouting();
     numbersAndChoices();
+    theConnectionLimitIsTheOperators();
     forwarding();
     metricsAddress();
     suspiciousValuesAreOneWarning();
@@ -282,6 +283,39 @@ public final class ConfigValidationTests {
     require(commented.status().motd().plain().equals("Server #1 # kept"), "a # inside quotes stays: " + commented.status().motd().plain());
   }
 
+  /**
+   * The connection limit is a safety bound read off the machine, not a player policy an operator has
+   * to guess. Velocity has no player limit at all; Conduit needs one only because its login phase is
+   * still a thread per connection, so the number should be what the machine can hold rather than a
+   * constant somebody picked -- and an operator who does want a policy writes a smaller number.
+   */
+  private static void theConnectionLimitIsTheOperators() throws Exception {
+    String[] warnings = new String[1];
+    int automatic = gg.tame.conduit.config.ConnectionCapacity.automatic();
+    require(automatic >= 2048 && automatic <= ConduitConfiguration.MAX_MAX_CONNECTIONS,
+        "the derived limit is inside its bounds: " + automatic);
+    require(load(BASE, warnings).maxConnections() == automatic,
+        "a file that does not say takes as many as this machine can hold");
+    ConduitConfiguration raised = load(BASE + "[listener]\nmax-connections = 20000\n", warnings);
+    require(raised.maxConnections() == 20000, "and an operator may raise it: " + raised.maxConnections());
+    // 0 is the ceiling, not the absence of one: there is always a limit for the accept loop to
+    // refuse against, and it resolves here so that everything downstream reads a real number.
+    ConduitConfiguration ceiling = load(BASE + "[listener]\nmax-connections = 0\n", warnings);
+    require(ceiling.maxConnections() == ConduitConfiguration.MAX_MAX_CONNECTIONS,
+        "0 is the most Conduit allows: " + ceiling.maxConnections());
+    require(load(BASE + "[listener]\nmax-connections = " + ConduitConfiguration.MAX_MAX_CONNECTIONS + "\n",
+        warnings).maxConnections() == ConduitConfiguration.MAX_MAX_CONNECTIONS, "and the ceiling itself loads");
+    // Applied by /conduit reload, so it must survive the branch a reload takes when something else
+    // in [listener] needs a restart and the rest of the block is kept as it was -- and a limit
+    // installed that way goes through the same validation as one read from the file.
+    require(raised.withOps(raised.ops()).withMaxConnections(0).maxConnections()
+        == ConduitConfiguration.MAX_MAX_CONNECTIONS, "a reload carries the new limit across");
+    try {
+      raised.withMaxConnections(ConduitConfiguration.MAX_MAX_CONNECTIONS + 1);
+      throw new AssertionError("a reload must not install a limit the file could not have asked for");
+    } catch (IllegalArgumentException expected) { }
+  }
+
   private static void malformedLinesNameTheirLine() throws Exception {
     fails(BASE.replace("port = 25565", "port 25565"), "conduit.toml line 3: expected key = value, found port 25565");
     fails(BASE.replace("[forwarding]", "[forwarding"), "conduit.toml line 5: a [section] header must end with ], found [forwarding");
@@ -341,6 +375,12 @@ public final class ConfigValidationTests {
     fails(BASE + "[modded]\npacket-queue-max-depth = 0\n", "conduit.toml line 14: modded.packet-queue-max-depth must be 1..16384, found 0");
     fails(BASE + "[status]\ndisplay-max-players = -1\n", "conduit.toml line 14: status.display-max-players must be >= 0, found -1");
     fails(BASE.replace("max-frame-bytes = 1048576", "max-frame-bytes = 0"), "conduit.toml line 4: listener.max-frame-bytes must be 1..8388608, found 0");
+    fails(BASE + "[listener]\nmax-connections = -1\n",
+        "conduit.toml line 14: listener.max-connections must be 1..350000, or 0 for the most Conduit allows (350000), found -1");
+    // A stray zero on the limit is what the ceiling is for, and it is refused at the setting rather
+    // than at the accept where it would only say "Too many open files".
+    fails(BASE + "[listener]\nmax-connections = 3500000\n",
+        "conduit.toml line 14: listener.max-connections must be 1..350000, or 0 for the most Conduit allows (350000), found 3500000");
     fails(BASE + "[health]\nenabled = yes\n", "conduit.toml line 14: health.enabled must be true or false, found yes");
     fails(BASE + "[translation]\nengine = \"fast\"\n", "conduit.toml line 14: translation.engine must be via-preferred, via or native, found \"fast\"");
     fails(BASE + "[modded]\nunknown-policy = \"kick\"\n", "conduit.toml line 14: modded.unknown-policy must be allow, deny, or route_to_fallback, found \"kick\"");

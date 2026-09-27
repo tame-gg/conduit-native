@@ -201,7 +201,9 @@ public final class ConfigurationLoader {
         list(values, "routing.initial"), list(values, "routing.fallback"), authentication(values),
         forwardedAddress(values), ops(values, path.toAbsolutePath().getParent()),
         optionalBoolean(values, "listener.proxy-protocol", false), forcedHosts(values),
-        optionalInteger(values, "listener.compression-threshold", ConduitConfiguration.DEFAULT_COMPRESSION_THRESHOLD));
+        optionalInteger(values, "listener.compression-threshold", ConduitConfiguration.DEFAULT_COMPRESSION_THRESHOLD),
+        // Unset means what the machine can hold, not a number Conduit picked: see ConnectionCapacity.
+        optionalInteger(values, "listener.max-connections", ConnectionCapacity.automatic()));
     if (configuration.forwardingSecretFile().isPresent()) {
       // Otherwise first read by the launcher, where a missing file was a bare NoSuchFileException stack trace.
       Path secretFile = configuration.forwardingSecretFile().get();

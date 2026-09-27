@@ -21,8 +21,6 @@ import gg.tame.conduit.protocol.ProtocolCompatibility;
 import gg.tame.conduit.protocol.TranslationSupport;
 import gg.tame.conduit.runtime.ConduitRuntime;
 import gg.tame.conduit.scheduler.ConduitScheduler;
-import gg.tame.conduit.translate.Protocol765To776Translator;
-import gg.tame.conduit.translate.TranslationPipeline;
 import java.io.ByteArrayInputStream;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -124,11 +122,12 @@ public final class Phase8Tests {
     }
   }
   private static void translationFoundation() {
-    require(TranslationPipeline.support(765, 765) == TranslationSupport.DIRECT, "direct");
+    require(ProtocolCompatibility.between(765, 765) == TranslationSupport.DIRECT, "direct");
     require(ProtocolCompatibility.between(765, 776) == AllTests.viaCarried(), "765-776 is carried by Via or by nothing");
     require(ProtocolCompatibility.between(765, 766) == TranslationSupport.TRANSLATED, "765-766 translated");
-    try { new Protocol765To776Translator().clientToBackend(gg.tame.conduit.protocol.ConnectionState.PLAY, new byte[] {0}); throw new AssertionError("fake translation"); }
-    catch (UnsupportedOperationException expected) { }
+    // 765-776 had a Protocol765To776Translator that only ever threw, and this asserted that it did.
+    // Via carries that pair; the class and the gg.tame.conduit.translate package it sat in, a
+    // delegating shell in front of ProtocolCompatibility and Translators, are gone.
   }
   private static byte[] loginStart() { return new byte[] {0, 5, 'p', 'l', 'a', 'y', 'r', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}; }
   /** 1.20.4 Login Success for the same player: zero UUID, name, no properties. */

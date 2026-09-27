@@ -19,6 +19,7 @@ import gg.tame.conduit.command.CoreCommands;
 import gg.tame.conduit.command.Permissions;
 import gg.tame.conduit.config.AuthenticationMode;
 import gg.tame.conduit.config.ConduitConfiguration;
+import gg.tame.conduit.config.ConnectionCapacity;
 import gg.tame.conduit.config.StatusSettings;
 import gg.tame.conduit.crypto.RsaKeys;
 import gg.tame.conduit.forwarding.Forwarders;
@@ -46,14 +47,35 @@ import java.nio.file.Path;
 import java.security.KeyPair;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** Native transport: handshake, optional online-mode encryption, then a persistent player session. */
 public final class MinecraftProxy implements AutoCloseable {
-  private static final int MAX_CONNECTIONS = 2048;
   private static final int MAX_CONCURRENT_AUTH = 32;
+  /**
+   * How often the accept loop says it is turning connections away. One line per refused connection
+   * is a log flood at exactly the moment the log is worth reading -- and a way to make the proxy
+   * write its own disk full -- so the refusals in between are counted and reported together.
+   */
+  private static final long REJECTION_LOG_INTERVAL_MS = 10_000;
+  /**
+   * Slots no join may take, kept for server-list pings.
+   *
+   * <p>The limit is counted at the accept, before the handshake says whether this connection is a
+   * player joining or a client refreshing its list. Counted the same either way, a proxy at its
+   * limit stops answering pings -- and a server list entry with no answer shows as unreachable, so a
+   * full server looked exactly like a dead one, to players and to whatever watches it. Holding a
+   * little back means the ping is always answered, and the answer says the server is full.
+   *
+   * <p>A ping holds its slot for a few milliseconds, so this is far more than it needs; it is sized
+   * for a burst of clients all refreshing at once rather than for the steady rate.
+   */
+  private static final int STATUS_HEADROOM = 64;
+  /** What a player is told when every slot a join may take is taken. */
+  private static final String FULL_MESSAGE = "The server is full.";
   /**
    * Connections the operating system may hold for the accept loop. Left to the JDK it is 50, and a
    * network's worth of players rejoining at once after a restart overflowed it: the rest were
@@ -86,6 +108,9 @@ public final class MinecraftProxy implements AutoCloseable {
   private final ConduitRuntime runtime;
   private final Semaphore authPermits = new Semaphore(MAX_CONCURRENT_AUTH);
   private final AtomicInteger connections = new AtomicInteger();
+  /** Connections refused since the last line about it, and when that line was written. */
+  private final AtomicInteger rejected = new AtomicInteger();
+  private volatile long lastRejectionLogNanos;
   private volatile boolean running;
   private volatile boolean accepting = true;
 
@@ -164,6 +189,7 @@ public final class MinecraftProxy implements AutoCloseable {
     ConduitLog.info("Conduit booted in " + (System.currentTimeMillis()
         - java.lang.management.ManagementFactory.getRuntimeMXBean().getStartTime()) + " ms");
     gg.tame.conduit.ops.Alerts.send("Conduit " + gg.tame.conduit.Conduit.VERSION + " is up.");
+    announceConnectionLimit();
     // Not try-with-resources. ExecutorService#close() waits for every submitted task without a
     // bound, and a task here is a whole player connection: one session parked in a socket read kept
     // serve() from returning, main from returning and the JVM from exiting, which on Windows is a
@@ -191,10 +217,15 @@ public final class MinecraftProxy implements AutoCloseable {
           try { client.close(); } catch (IOException ignored) { }
           continue;
         }
-        if (connections.incrementAndGet() > MAX_CONNECTIONS) {
+        // A slot covers a whole session, not only the login, so this is the configured player count
+        // as well as a flood limit. There is always a limit -- 0 in the file means the most Conduit
+        // allows, not none of it. Read from the runtime rather than the field so that a reload
+        // raising it is felt at the next connection instead of the next restart.
+        int limit = runtime.configuration().maxConnections();
+        if (connections.incrementAndGet() > limit) {
           connections.decrementAndGet();
           try { client.close(); } catch (IOException ignored) { }
-          ConduitLog.warn("rejected connection: at max connections");
+          reportRejection(limit, true);
           continue;
         }
         workers.submit(() -> handle(client));
@@ -210,6 +241,83 @@ public final class MinecraftProxy implements AutoCloseable {
     }
     // ProxyShutdownEvent is close()'s to fire, before it disables plugins. Fired here it raced
     // that disable, and plugins were usually gone before they heard the proxy was stopping.
+  }
+
+  /**
+   * The most connections a join may take, leaving {@link #STATUS_HEADROOM} for pings. Never below
+   * one, so a limit smaller than the headroom -- which only a test sets -- still lets somebody in.
+   */
+  private int playerCeiling() {
+    return Math.max(1, runtime.configuration().maxConnections() - STATUS_HEADROOM);
+  }
+
+  /**
+   * Says at start what the connection limit is, and whether the operating system can actually hold
+   * that many. A limit raised past the descriptor limit does not fail at the setting, where it could
+   * be explained; it fails at the accept, as "Too many open files", once the network is full.
+   *
+   * <p>Said every start rather than only when it is unusual: unset, the number is read off the
+   * machine (see {@link ConnectionCapacity}), so the common case is an operator who never chose it
+   * and would otherwise have no idea what it is.
+   */
+  private void announceConnectionLimit() {
+    int limit = runtime.configuration().maxConnections();
+    // Two descriptors per connection -- the client's socket and the backend's -- plus the listener,
+    // the health checks and whatever the JVM already has open.
+    long needed = 2L * limit + 64;
+    OptionalLong descriptors = ConnectionCapacity.descriptorLimit();
+    if (descriptors.isPresent() && descriptors.getAsLong() < needed) {
+      ConduitLog.warn("listener.max-connections is " + limit + ", which needs about " + needed
+          + " file descriptors (two per player), but this process may open only " + descriptors.getAsLong()
+          + ". Conduit will fail to accept before it reaches the limit: raise the descriptor limit"
+          + " (ulimit -n) or lower listener.max-connections.");
+      return;
+    }
+    ConduitLog.info("Accepting up to " + limit + " connections: " + playerCeiling()
+        + " players, with " + STATUS_HEADROOM + " held back so the server list is still answered"
+        + " when full (listener.max-connections).");
+  }
+
+  /**
+   * Says that connections are being turned away, at most once every
+   * {@value #REJECTION_LOG_INTERVAL_MS} ms, and names the setting that raises the limit.
+   *
+   * <p>An operator whose network has outgrown the limit reads this, so it has to say what to change:
+   * before it did, a full proxy looked the same as one being flooded, and neither line mentioned
+   * that the number was theirs to set.
+   */
+  private void reportRejection(int limit) { reportRejection(limit, false); }
+
+  /**
+   * {@code atCeiling} is the rarer of the two: not a full proxy turning a player away, but every
+   * slot gone including the ones held back for pings, so the server list is dark as well. It reads
+   * differently because it means something different -- a flood, or a limit set below
+   * {@link #STATUS_HEADROOM} -- and the advice for it is not "raise the player limit".
+   */
+  private void reportRejection(int limit, boolean atCeiling) {
+    int count = rejected.incrementAndGet();
+    long now = System.nanoTime();
+    if (now - lastRejectionLogNanos < java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(REJECTION_LOG_INTERVAL_MS)
+        && lastRejectionLogNanos != 0) {
+      return;
+    }
+    lastRejectionLogNanos = now;
+    rejected.addAndGet(-count);
+    if (atCeiling) {
+      ConduitLog.warn("Refused " + count + " connection" + (count == 1 ? "" : "s")
+          + " at listener.max-connections (" + limit + "), server-list pings among them: every slot is"
+          + " taken, including the " + STATUS_HEADROOM + " held back for the list. Check"
+          + " [security.throttle] if this is a flood rather than a full server.");
+      return;
+    }
+    // At the ceiling there is nothing left to raise, so the advice is a second instance rather than
+    // a setting the operator would go looking for and not find.
+    String advice = limit >= ConduitConfiguration.MAX_MAX_CONNECTIONS - STATUS_HEADROOM
+        ? " This is the most Conduit allows on one instance: run another proxy behind the same address"
+            + " rather than looking for a larger number."
+        : " Raise listener.max-connections, or leave it unset to take as many as this machine can hold.";
+    ConduitLog.warn("Refused " + count + " join" + (count == 1 ? "" : "s")
+        + ": the proxy is full at " + limit + " players. Server-list pings are still answered." + advice);
   }
 
   /**
@@ -335,6 +443,16 @@ public final class MinecraftProxy implements AutoCloseable {
         runtime.security().botFilter().recordStatusPing(remote);
         serveStatus(transport, protocol, handshake,
             declared != null ? declared : (java.net.InetSocketAddress) client.getRemoteSocketAddress());
+        return;
+      }
+      // From here this connection is a player, and the last slots are not theirs to take: see
+      // STATUS_HEADROOM. Refused here rather than at the accept, because only now is it known that
+      // this is a join and not a ping -- and because here there is a protocol to say so in, so a
+      // full server gives a reason instead of a socket that closes without one.
+      if (connections.get() > playerCeiling()) {
+        try { transport.write(LoginDisconnect.encode(protocol, StatusSettings.parseMotd(FULL_MESSAGE))); }
+        catch (IOException ignored) { }
+        reportRejection(playerCeiling());
         return;
       }
       if (!ProtocolDefinition.hasCodec(handshake.protocolVersion())) {

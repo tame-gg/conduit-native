@@ -99,6 +99,8 @@ public final class AllTests {
     SwitchJoinGateTests.run();
     ViaOrderingTests.run();
     DirectLoginCompressionTests.run();
+    // The selector relay's two buffers on their own; ConcurrencyTests covers the relay around them.
+    gg.tame.conduit.network.RelayBufferTests.run();
     ConcurrencyTests.run();
     CommandApiTests.run();
     NativeApiTests.run();

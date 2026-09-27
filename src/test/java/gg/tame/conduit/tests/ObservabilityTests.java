@@ -198,6 +198,14 @@ public final class ObservabilityTests {
         require(value(body, "conduit_backend_connect_failures_total") >= failuresBefore + 1, "the refused first server was counted");
         require(value(body, "conduit_connections_accepted_total") >= 1 && value(body, "conduit_plugins") == 0, "counts and gauges are there");
         require(body.contains("# TYPE conduit_backend_connects_total counter"), "families are typed");
+        // The connect that reached the lobby is in the distribution too, so a slow tail can be read
+        // off it rather than inferred from a mean.
+        require(body.contains("# TYPE conduit_backend_connect_duration_seconds histogram"), "latencies are a histogram");
+        require(body.contains("conduit_backend_connect_duration_seconds_bucket{le=\"+Inf\"}"), "the histogram closes at +Inf");
+        require(value(body, "conduit_backend_connect_duration_seconds_count") >= 1, "the connect was observed:\n" + body);
+        require(value(body, "conduit_backend_connect_duration_seconds_bucket{le=\"10\"}")
+            <= value(body, "conduit_backend_connect_duration_seconds_count"), "buckets are cumulative and bounded by the count");
+        require(body.contains("# TYPE conduit_server_switch_duration_seconds histogram"), "so are switches");
         require(!body.contains("Metrics") && !body.contains("127.0.0.1"),
             "no player name or address is exposed:\n" + body);
         HttpResponse<String> post = http.send(HttpRequest.newBuilder(endpoint).POST(HttpRequest.BodyPublishers.ofString("x")).build(),

@@ -419,7 +419,12 @@ public final class ConduitRuntime implements ConduitProxy, AutoCloseable {
       live.add("permissions.toml");
       // Read from the configuration at every login, the same way.
       live.add("forced-hosts.*");
-      this.configuration = current.withOps(next.ops());
+      // Read by the accept loop on every connection, so a network that has outgrown its limit is
+      // raised without dropping every session. Carried across the restart-only branch below by hand:
+      // withOps keeps the rest of [listener] as it was, which is right for the settings that need a
+      // restart and wrong for this one.
+      live.add("listener.max-connections");
+      this.configuration = current.withOps(next.ops()).withMaxConnections(next.maxConnections());
       if (!restart.isEmpty()) {
         return new ReloadResult(true, restart, live, null);
       }

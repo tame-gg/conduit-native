@@ -138,9 +138,15 @@ public final class PrometheusEndpoint implements AutoCloseable {
     counter(out, "conduit_backend_connects_total", "Connections made to backends.", metrics.backendConnects());
     counter(out, "conduit_backend_connect_failures_total", "Backends that could not be reached when a player was sent to them.", metrics.backendConnectFailures());
     counter(out, "conduit_backend_connect_seconds_total", "Time spent making backend connections.", metrics.backendConnectSeconds());
+    histogram(out, "conduit_backend_connect_duration_seconds",
+        "How long backend connections took. The counters above give a mean; this gives the slow tail,"
+            + " which is the part a player waits through.", metrics.backendConnectLatency());
     counter(out, "conduit_server_switches_total", "Completed server switches.", metrics.switches());
     counter(out, "conduit_server_switch_failures_total", "Server switches that failed.", metrics.failedSwitches());
     counter(out, "conduit_server_switch_seconds_total", "Time spent in completed server switches.", metrics.switchSeconds());
+    histogram(out, "conduit_server_switch_duration_seconds",
+        "How long completed server switches took, which is the wait between /server and arriving.",
+        metrics.switchLatency());
     counter(out, "conduit_fallbacks_total", "Players sent to a fallback after losing their backend.", metrics.fallbackEvents());
     counter(out, "conduit_backend_unhealthy_transitions_total", "Times a backend went from healthy to unhealthy.", metrics.unhealthyTransitions());
     counter(out, "conduit_decode_failures_total", "Packets Conduit could not decode.", metrics.decodeFailures());
@@ -165,6 +171,21 @@ public final class PrometheusEndpoint implements AutoCloseable {
   private static void counter(StringBuilder out, String name, String help, double value) {
     family(out, name, "counter", help);
     out.append(name).append(' ').append(number(value)).append('\n');
+  }
+  /**
+   * A distribution in Prometheus' histogram layout: cumulative {@code _bucket} series, then the
+   * {@code _sum} and {@code _count} a quantile is worked out from. The {@code +Inf} bucket is the
+   * count, as the format requires -- every observation is at or under infinity.
+   */
+  private static void histogram(StringBuilder out, String name, String help, Latencies latencies) {
+    family(out, name, "histogram", help);
+    for (int index = 0; index < Latencies.BOUNDS.length; index++) {
+      out.append(name).append("_bucket{le=\"").append(number(Latencies.BOUNDS[index])).append("\"} ")
+          .append(latencies.upTo(index)).append('\n');
+    }
+    out.append(name).append("_bucket{le=\"+Inf\"} ").append(latencies.count()).append('\n');
+    out.append(name).append("_sum ").append(number(latencies.seconds())).append('\n');
+    out.append(name).append("_count ").append(latencies.count()).append('\n');
   }
   private static void sample(StringBuilder out, String name, String label, String value, double sample) {
     out.append(name).append('{').append(label).append("=\"").append(escape(value)).append("\"} ").append(number(sample)).append('\n');

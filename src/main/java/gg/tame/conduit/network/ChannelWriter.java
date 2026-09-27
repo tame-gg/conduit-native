@@ -228,7 +228,20 @@ final class ChannelWriter extends OutputStream {
 
   /** Lets the connection feeding this one be read again, once the peer is no longer behind. */
   private void released() {
-    if (resume == null || filled - sent > LOW_WATER_BYTES) return;
+    if (filled - sent > LOW_WATER_BYTES) return;
+    releaseNow();
+  }
+
+  /**
+   * Lets it be read again whatever is still queued here, for a writer that has failed: nothing more
+   * will ever drain, so the watermark {@link #released} weighs will never come down. Weighing it
+   * anyway is what {@link #fail} used to do, and since a writer fails at or above the high mark the
+   * release it means to perform was the one case that never happened -- leaving the connection
+   * feeding this one paused on a writer that was already gone, with only the selector's sweep to
+   * find it.
+   */
+  private void releaseNow() {
+    if (resume == null) return;
     Runnable waiting = resume;
     resume = null;
     waiting.run();
@@ -259,7 +272,7 @@ final class ChannelWriter extends OutputStream {
     broken = true;
     // So the connection feeding this one is not left paused forever on a writer that will never
     // drain; it is about to be told the session ended, and it has to be watched to hear it.
-    released();
+    releaseNow();
     try { channel.close(); } catch (IOException ignored) { }
   }
 
