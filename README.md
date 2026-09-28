@@ -925,38 +925,29 @@ Between packets a playing session costs no thread on either platform: its two so
 selector, and a worker only holds one while there is something to relay. Threads now grow with joins and
 server switches in flight, not with the player count.
 
-Like Velocity, Conduit has no player limit you are expected to set: `status.display-max-players` is
-decoration, and nothing behind it turns anyone away. Velocity can go further and have no bound at all,
-because an idle connection costs it a socket and a buffer. Conduit is nearly there -- since the selector
-relay a playing session costs no thread either -- but its login phase is still a thread per connection,
-virtual on Linux and platform on Windows (JDK-8334574). So one bound remains, and it is a property of
-the machine rather than a policy about players.
+Conduit has no player limit, the way Velocity has none. `status.display-max-players` is the number
+after the slash in the server list and nothing else; nothing behind it turns anyone away, and the
+accept loop counts connections without capping them.
 
-`listener.max-connections`, left unset, is read off the machine: two file descriptors per player, a few
-hundred held back for the listener, health checks and open files, clamped to at least 2048 and at most
-350000. Conduit says the number it settled on at start. Where the descriptor limit cannot be read --
-Windows -- it uses a conservative 10000. Set it only to cap the proxy *below* what the machine can hold;
-`0` means the most Conduit allows, and `/conduit reload` applies a new value without dropping anyone.
+That is deliberate. How many players a network holds is the backends' answer -- `servers.<name>.max-players`
+caps each one, and a full backend is skipped on join and refused by `/server` -- and what to do with
+the overflow is a queue plugin's or a routing plugin's. A proxy that turned people away at the door
+would pre-empt both, and it would do so using a number an operator had to guess.
 
-The last 64 slots are kept for server-list pings. The limit is counted at the accept, before the
-handshake says whether a connection is a player joining or a client refreshing its list, so a proxy that
-counted both the same stopped answering pings once it was full -- and a list entry with no answer shows
-as *unreachable*, making a full server look exactly like a dead one to players and to uptime monitors
-alike. With the headroom, a player who cannot get in is told `The server is full.` on a real kick screen
-rather than having the socket closed under them, and the list keeps answering.
+What this costs, stated plainly: a playing session holds no thread, so players are genuinely free,
+but the login phase is still a thread per connection -- virtual on Linux, platform on Windows
+(JDK-8334574). A flood of half-finished logins is therefore bounded by `[security.throttle]` and the
+bot filter rather than by a global cap. Both are on by default, and `[security.attack-mode]` tightens
+them under load; a network large enough to worry should put TCPShield or similar in front, as the
+large networks running Velocity do.
 
-Two things to size a limit you set yourself against:
+Two things to watch as the population grows:
 
-- **File descriptors.** A player costs two, the client's socket and the backend's. Conduit warns at
-  start if the limit it was given needs more than the process may open, since otherwise the first
-  symptom is `Too many open files` at the accept, once the network is already full.
+- **File descriptors.** A player costs two, the client's socket and the backend's. The JVM raises its
+  own soft limit to the hard limit at start, so the number that matters is `ulimit -Hn`, not the 1024
+  a shell usually shows.
 - **Heap.** A stalled connection may hold up to 2 MiB of unsent bytes (`ChannelWriter.MAX_PENDING_BYTES`)
-  and an idle one a few kilobytes of buffers, so the worst case is the limit times 2 MiB, not the
-  measured steady state below.
-
-A proxy turning joins away says so once every ten seconds with a count of the ones in between, never a
-line per refused connection, and distinguishes "full" from "every slot gone, pings included", which
-means a flood rather than a busy night.
+  and an idle one a few kilobytes of buffers, well above the measured steady state below.
 
 The table below predates that. `scripts/load-probe.ps1` measured it on 0.9.0, when a session read each of
 its two sockets on a thread of its own -- virtual on Linux, platform on Windows -- so Windows paid two OS

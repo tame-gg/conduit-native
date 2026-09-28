@@ -22,28 +22,6 @@ host = "127.0.0.1"
 port = 25565
 # Largest packet Conduit reads before dropping the connection. (default: 1048576)
 # max-frame-bytes = 1048576
-# A safety limit, not a player policy. Leave it unset and Conduit takes as many players
-# as this machine can hold, worked out from its file-descriptor limit (two per player);
-# it says the number it settled on at start. Most servers never need to set this.
-#
-# Set it only to deliberately stop at a number -- a whitelisted SMP that does not want a
-# surprise crowd, or a small box you are keeping headroom on. The value counts every
-# connection, not only players: the last 64 are kept for server-list pings, so a full
-# server still shows as full rather than as offline, and a player who cannot get in is
-# told the server is full instead of having the socket dropped. A few more are in use at
-# any moment by logins still in progress. So allow roughly 100 above the players you want:
-#
-#   players you want   set max-connections to
-#           50                    150
-#          100                    200
-#          250                    350
-#          500                    600
-#         1000                   1100
-#         5000                   5100
-#
-# 1 to 350000, or 0 for the most Conduit allows (350000).
-# Applied by /conduit reload. (default: as many as this machine can hold)
-# max-connections = 200
 # Packets this size or larger are compressed on the way to players; -1 turns it off.
 # (restart) (default: 256)
 # compression-threshold = 256
