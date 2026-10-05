@@ -23,6 +23,7 @@ public final class ConduitLog {
   public static void error(String message) { emit(Level.ERROR, message, null); }
   public static void error(String message, Throwable thrown) { emit(Level.ERROR, message, thrown); }
   public static void warn(String message) { emit(Level.WARN, message, null); }
+  public static void warn(String message, Throwable thrown) { emit(Level.WARN, message, thrown); }
   public static void info(String message) { emit(Level.INFO, message, null); }
   public static void debug(String message) { if (DEBUG) emit(Level.DEBUG, message, null); }
   public static void trace(String message) { if (TRACE) emit(Level.TRACE, message, null); }

@@ -382,7 +382,9 @@ public final class ConduitViaSession implements AutoCloseable {
    * <p>A switch logs the player in to the next backend through a second session while this one
    * still carries them, and Via registers that second one under the same UUID when its login
    * completes, logging "Duplicate UUID on frontend connection" for every translated switch. Via's
-   * disconnect also marks the connection inactive, which is put back: this session is still live.
+   * disconnect cannot be used for that: it also queues {@code clearStoredObjects} on this channel,
+   * which wiped the entity trackers of a session still relaying the old backend, and its next
+   * chunk failed with a null tracker. So the entry is taken out of the registry alone.
    *
    * @return whether this connection was the registered one, so {@link #restoreRegistration} is owed
    */
@@ -391,9 +393,20 @@ public final class ConduitViaSession implements AutoCloseable {
     if (id == null) return false;
     var connections = com.viaversion.viaversion.api.Via.getManager().getConnectionManager();
     if (connections.getServerConnection(id) != connection) return false;
-    connections.onDisconnect(connection);
-    connection.setActive(true);
-    return true;
+    // ponytail: Via has no public unregister-without-cleanup; reads ConnectionManagerImpl's fields.
+    // If they move, the duplicate-UUID warning comes back and nothing else changes.
+    try {
+      Class<?> impl = com.viaversion.viaversion.connection.ConnectionManagerImpl.class;
+      var servers = impl.getDeclaredField("serverConnections");
+      var all = impl.getDeclaredField("connections");
+      servers.setAccessible(true);
+      all.setAccessible(true);
+      ((java.util.Map<?, ?>) servers.get(connections)).remove(id, connection);
+      ((java.util.Set<?>) all.get(connections)).remove(connection);
+      return true;
+    } catch (ReflectiveOperationException | RuntimeException unavailable) {
+      return false;
+    }
   }
 
   /** Registers this connection with Via again after a switch that did not happen. */

@@ -369,7 +369,7 @@ final class SessionSwitch {
       }
       session.discard(next);
       if (next == null && socket != null) try { socket.close(); } catch (IOException ignored) { }
-      gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception.getMessage());
+      gg.tame.conduit.log.ConduitLog.warn("Switch to " + server.name() + " failed: " + exception, exception);
       if (targetView != null) {
         session.runtime.events().fire(new gg.tame.conduit.api.event.player.PlayerServerSwitchFailedEvent(session, sourceView, targetView,
             exception.getMessage() == null ? "switch failed" : exception.getMessage()));

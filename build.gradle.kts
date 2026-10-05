@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "gg.tame.conduit"
-version = "1.0.1-SNAPSHOT"
+version = "1.0.2-SNAPSHOT"
 
 java {
   toolchain.languageVersion.set(JavaLanguageVersion.of(21))
@@ -24,8 +24,9 @@ repositories {
   maven("https://repo.papermc.io/repository/maven-public")
 }
 
-val viaVersion = "5.12.0"
-val viaRewind = "4.2.0"
+val viaVersion = "5.12.1-20261004.065714-26"
+val viaBackwards = "5.12.1-20261001.164013-18"
+val viaRewind = "4.2.1-20260928.154815-1"
 val viaLegacy = "3.1.0"
 val velocityVersion = "3.4.0"
 
@@ -108,7 +109,7 @@ fun sha256(file: File): String =
 
 dependencies {
   implementation("com.viaversion:viaversion-common:$viaVersion")
-  implementation("com.viaversion:viabackwards-common:$viaVersion")
+  implementation("com.viaversion:viabackwards-common:$viaBackwards")
   implementation("com.viaversion:viarewind-common:$viaRewind")
   implementation("net.raphimc:ViaLegacy:$viaLegacy")
   implementation("io.netty:netty-all:4.1.118.Final")

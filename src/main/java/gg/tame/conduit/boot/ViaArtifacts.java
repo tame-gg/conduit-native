@@ -112,7 +112,16 @@ public final class ViaArtifacts {
 
   /** The repository path of a jar, relative to a Maven repository root. */
   public static String repositoryPath(String artifact, String version) {
-    return GROUPS.get(artifact) + "/" + artifact + "/" + version + "/" + fileName(artifact, version);
+    return GROUPS.get(artifact) + "/" + artifact + "/" + directory(version) + "/" + fileName(artifact, version);
+  }
+
+  /**
+   * A unique snapshot (5.12.1-20261004.065714-26) is served from its line's 5.12.1-SNAPSHOT
+   * directory; every other version from a directory of its own name.
+   */
+  static String directory(String version) {
+    var snapshot = java.util.regex.Pattern.compile("(.+)-\\d{8}\\.\\d{6}-\\d+").matcher(version);
+    return snapshot.matches() ? snapshot.group(1) + "-SNAPSHOT" : version;
   }
 
   /** The repository path of an artifact's metadata, relative to a Maven repository root. */
@@ -137,7 +146,10 @@ public final class ViaArtifacts {
       if (one != two) return Integer.compare(one, two);
     }
     // Same numbers: a release outranks anything with a qualifier after it.
-    return Integer.compare(qualified(left) ? 0 : 1, qualified(right) ? 0 : 1);
+    int release = Integer.compare(qualified(left) ? 0 : 1, qualified(right) ? 0 : 1);
+    if (release != 0 || !qualified(left)) return release;
+    // Two snapshots of one line: their -yyyyMMdd.HHmmss-N stamps sort as text, newest last.
+    return left.compareTo(right);
   }
 
   /** The first component, which is the line an update must stay inside. */

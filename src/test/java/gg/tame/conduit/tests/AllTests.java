@@ -145,6 +145,7 @@ public final class AllTests {
     LoginFlowTests.run();
     TabCompleteEventTests.run();
     BrigadierTreeTests.run();
+    CommandTreeVersionTests.run();
     VelocityAudienceTests.run();
     PlayerExtrasTests.run();
     SecureChatApiTests.run();

@@ -53,7 +53,7 @@ public final class ViaOverrideTests {
     Map<String, String> bundled = ViaArtifacts.bundled();
     require(bundled.size() == ViaArtifacts.NAMES.size(), "every artifact has a bundled version");
     for (String artifact : ViaArtifacts.NAMES) {
-      require(ViaArtifacts.isRelease(bundled.get(artifact)), artifact + " names a release version");
+      require(!bundled.get(artifact).isBlank(), artifact + " names a version");
       require(ViaArtifacts.GROUPS.containsKey(artifact), artifact + " has a repository group");
     }
     // The api before the common that implements it: class path order is the whole mechanism.
@@ -83,6 +83,7 @@ public final class ViaOverrideTests {
       String variable = switch (entry.getKey()) {
         case "viarewind-common" -> "viaRewind";
         case "ViaLegacy" -> "viaLegacy";
+        case "viabackwards-common" -> "viaBackwards";
         default -> "viaVersion";
       };
       require(text.contains("$" + variable + " = \"" + entry.getValue() + "\""),

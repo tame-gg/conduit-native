@@ -34,8 +34,9 @@ import java.util.Map;
  * <p>Three rules keep an update from being a downgrade or a surprise:
  *
  * <ul>
- *   <li><strong>Releases only.</strong> The repository lists snapshots and pre-releases too; only
- *       {@code <release>} is considered.
+ *   <li><strong>Newest build, snapshots included.</strong> Via fixes a new Minecraft release in
+ *       snapshots weeks before it cuts a release, so the newer of {@code <release>} and the latest
+ *       snapshot build is taken. A snapshot from another major falls back to the release.
  *   <li><strong>Inside the version line.</strong> A new major means changes to the internal Via
  *       classes {@code gg.tame.conduit.viaversion} extends, which is exactly what Conduit cannot
  *       assume still fits. A major bump is reported and not taken.
@@ -68,7 +69,7 @@ public final class ViaUpdater {
     return override.endsWith("/") ? override.substring(0, override.length() - 1) : override.strip();
   }
   /** Names Conduit and nothing else: no user, no machine, no path. */
-  private static final String USER_AGENT = "Conduit/1.0.1 (+https://github.com/tame-gg/conduit-native)";
+  private static final String USER_AGENT = "Conduit/1.0.2 (+https://github.com/tame-gg/conduit-native)";
   /** Where a superseded set is moved to, rather than deleted. */
   private static final String SUPERSEDED = "superseded";
 
@@ -104,9 +105,9 @@ public final class ViaUpdater {
       List<String> newer = new ArrayList<>();
       for (String artifact : ViaArtifacts.NAMES) {
         String current = have.get(artifact);
-        String release = release(client, artifact, timeoutMs);
-        if (release == null || !ViaArtifacts.isRelease(release)) {
-          return Outcome.of(Outcome.Kind.FAILED, "no release version listed for " + artifact);
+        String release = newest(client, artifact, ViaArtifacts.major(current), timeoutMs);
+        if (release == null) {
+          return Outcome.of(Outcome.Kind.FAILED, "no version listed for " + artifact);
         }
         if (ViaArtifacts.major(release) != ViaArtifacts.major(current)) {
           // Reported, not taken: see the class comment.
@@ -195,16 +196,34 @@ public final class ViaUpdater {
     }
   }
 
-  /** The {@code <release>} in an artifact's Maven metadata, or null. */
-  private static String release(HttpClient client, String artifact, int timeoutMs)
+  /**
+   * The newer of the artifact's {@code <release>} and its latest snapshot build, the snapshot only
+   * while it is in {@code major}; null when neither is listed.
+   */
+  private static String newest(HttpClient client, String artifact, int major, int timeoutMs)
       throws IOException, InterruptedException {
     String xml = text(client, REPOSITORY + "/" + ViaArtifacts.metadataPath(artifact), timeoutMs);
-    // One element out of a document written by the repository, not by a user. A parser would pull in
-    // XML entity handling for a value that is a version number.
-    int open = xml.indexOf("<release>");
-    int close = xml.indexOf("</release>", open + 1);
+    String release = element(xml, "release");
+    if (release != null && !ViaArtifacts.isRelease(release)) release = null;
+    String latest = element(xml, "latest");
+    if (latest == null || !latest.endsWith("-SNAPSHOT") || ViaArtifacts.major(latest) != major) return release;
+    // The jar of a snapshot is named by its build, which only the snapshot's own metadata says.
+    String line = latest.substring(0, latest.length() - "-SNAPSHOT".length());
+    String snapshotXml = text(client, REPOSITORY + "/" + ViaArtifacts.GROUPS.get(artifact) + "/" + artifact
+        + "/" + latest + "/maven-metadata.xml", timeoutMs);
+    String timestamp = element(snapshotXml, "timestamp");
+    String build = element(snapshotXml, "buildNumber");
+    if (timestamp == null || build == null) return release;
+    String snapshot = line + "-" + timestamp + "-" + build;
+    return release == null || ViaArtifacts.compare(snapshot, release) > 0 ? snapshot : release;
+  }
+
+  /** The first {@code <name>} in a document the repository wrote, or null. No parser: these are version strings. */
+  private static String element(String xml, String name) {
+    int open = xml.indexOf("<" + name + ">");
+    int close = xml.indexOf("</" + name + ">", open + 1);
     if (open < 0 || close < 0) return null;
-    return xml.substring(open + "<release>".length(), close).strip();
+    return xml.substring(open + name.length() + 2, close).strip();
   }
 
   /**

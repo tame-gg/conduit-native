@@ -23,7 +23,7 @@ public record UpdateSettings(boolean via, boolean checkOnly, int timeoutMs, int 
    * Conduit listening that waits on somebody else's server, and a proxy restarted five times while a
    * config is edited paid for it five times over. 0 checks on every start, as Conduit used to.
    */
-  public static final int DEFAULT_CHECK_INTERVAL_HOURS = 12;
+  public static final int DEFAULT_CHECK_INTERVAL_HOURS = 1;
 
   public UpdateSettings {
     // Bounded on both sides: a zero would make every start fail its check, and an unbounded value

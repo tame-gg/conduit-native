@@ -8,7 +8,7 @@ $lib = Join-Path $root "lib\via"
 New-Item -ItemType Directory -Force -Path $lib | Out-Null
 
 # Downloads name Conduit's development scripts and nothing else: no user, machine or path.
-$userAgent = "Conduit-Development/1.0.1-SNAPSHOT"
+$userAgent = "Conduit-Development/1.0.2-SNAPSHOT"
 $viaRepo = "https://repo.viaversion.com/everything"
 $maven = "https://repo1.maven.org/maven2"
 
@@ -17,10 +17,10 @@ $maven = "https://repo1.maven.org/maven2"
 # rewrote it, is caught here rather than at the far end of a build. Bumping a version means
 # fetching the new jar, checking it, and putting its hash here -- the hash follows the version.
 $sha256 = @{
-  "viaversion-api-5.12.0.jar"      = "b46c01cc123d55f79789e2f4eaf89827e636e3b398c84a7af6c2b51b810c6920"
-  "viaversion-common-5.12.0.jar"   = "183e0ba9e5c8a19ac192b884e4a7d9402af5f321738e4f18010ba139214f76cc"
-  "viabackwards-common-5.12.0.jar" = "232651d294c8608d579886e1d95e9ab8b42a0b2dcaec28818b5218fd1ddb2385"
-  "viarewind-common-4.2.0.jar"     = "572e0f57bea56a52269c6d39cfb60e3648f9cc95fbb7ae29242264dd9b2ae68d"
+  "viaversion-api-5.12.1-20261004.065714-26.jar"      = "3053a3fd7a754f183a7873550980d9222a75f695299a354f4015de28428b4e9a"
+  "viaversion-common-5.12.1-20261004.065714-26.jar"   = "71a80c5e27389e249e60b062a55358213a060d6d7f2e37be4ee69554d95adc3d"
+  "viabackwards-common-5.12.1-20261001.164013-18.jar" = "b6fc7c633575b08cdf8bc0025d08c89d7e95fb36f5c37b91be9c5a677fe9e70a"
+  "viarewind-common-4.2.1-20260928.154815-1.jar"     = "5b36197451867ac2006269cc6921f783c8e7f374b8e17581ec3b447b75902518"
   "ViaLegacy-3.1.0.jar"           = "92ae9376c93aee611c891ba576576a0f501dd8d9c94b3b08f2a2e16a2d9c8e27"
   "netty-common-4.1.118.Final.jar"    = "65cce901ecf0f9d6591cc7750772614ab401a84415dc9aec9da4d046f0f9a77c"
   "netty-buffer-4.1.118.Final.jar"    = "0eea4e8666a9636a28722661d8ba5fa8564477e75fec6dd2ff3e324e361f8b3c"
@@ -57,8 +57,10 @@ function Get-Artifact([string]$url, [string]$out) {
   Write-Host "OK $(Split-Path $out -Leaf) $((Get-Item $out).Length)"
 }
 
-$viaVersion = "5.12.0"
-$viaRewind = "4.2.0"
+# Snapshot builds: the repository directory is the -SNAPSHOT line, the file carries the build stamp.
+$viaVersion = "5.12.1-20261004.065714-26"
+$viaBackwards = "5.12.1-20261001.164013-18"
+$viaRewind = "4.2.1-20260928.154815-1"
 $viaLegacy = "3.1.0"
 $netty = "4.1.118.Final"
 # One Guava for the whole jar: the Velocity-compatibility layer (fetch-velocity-compat.ps1) and its
@@ -66,10 +68,10 @@ $netty = "4.1.118.Final"
 $guava = "33.3.1-jre"
 $fastutil = "8.5.15"
 
-Get-Artifact "$viaRepo/com/viaversion/viaversion-api/$viaVersion/viaversion-api-$viaVersion.jar" (Join-Path $lib "viaversion-api-$viaVersion.jar")
-Get-Artifact "$viaRepo/com/viaversion/viaversion-common/$viaVersion/viaversion-common-$viaVersion.jar" (Join-Path $lib "viaversion-common-$viaVersion.jar")
-Get-Artifact "$viaRepo/com/viaversion/viabackwards-common/$viaVersion/viabackwards-common-$viaVersion.jar" (Join-Path $lib "viabackwards-common-$viaVersion.jar")
-Get-Artifact "$viaRepo/com/viaversion/viarewind-common/$viaRewind/viarewind-common-$viaRewind.jar" (Join-Path $lib "viarewind-common-$viaRewind.jar")
+Get-Artifact "$viaRepo/com/viaversion/viaversion-api/5.12.1-SNAPSHOT/viaversion-api-$viaVersion.jar" (Join-Path $lib "viaversion-api-$viaVersion.jar")
+Get-Artifact "$viaRepo/com/viaversion/viaversion-common/5.12.1-SNAPSHOT/viaversion-common-$viaVersion.jar" (Join-Path $lib "viaversion-common-$viaVersion.jar")
+Get-Artifact "$viaRepo/com/viaversion/viabackwards-common/5.12.1-SNAPSHOT/viabackwards-common-$viaBackwards.jar" (Join-Path $lib "viabackwards-common-$viaBackwards.jar")
+Get-Artifact "$viaRepo/com/viaversion/viarewind-common/4.2.1-SNAPSHOT/viarewind-common-$viaRewind.jar" (Join-Path $lib "viarewind-common-$viaRewind.jar")
 Get-Artifact "$viaRepo/net/raphimc/ViaLegacy/$viaLegacy/ViaLegacy-$viaLegacy.jar" (Join-Path $lib "ViaLegacy-$viaLegacy.jar")
 
 foreach ($artifact in @(

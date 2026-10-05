@@ -29,10 +29,10 @@ public record BootConfig(boolean viaUpdates, boolean checkOnly, int timeoutMs, i
    * Conduit listening that waits on somebody else's server: an up-to-date check costs about 75 ms,
    * one that finds a release downloads some ten megabytes before the proxy binds, and one that
    * cannot reach the repository waits out timeout-ms. Restarting a proxy five times while editing a
-   * config paid that five times over for an answer that had not changed. Twelve hours is often
-   * enough for a project that releases every few weeks, and 0 means every start, as it used to be.
+   * config paid that five times over for an answer that had not changed. An hour keeps a
+   * new Minecraft release's Via fix close behind it without a check on every restart, and 0 means every start.
    */
-  private static final int DEFAULT_CHECK_INTERVAL_HOURS = 12;
+  private static final int DEFAULT_CHECK_INTERVAL_HOURS = 1;
 
   public static BootConfig defaults() {
     return new BootConfig(DEFAULT_VIA, false, DEFAULT_TIMEOUT_MS, DEFAULT_CHECK_INTERVAL_HOURS);

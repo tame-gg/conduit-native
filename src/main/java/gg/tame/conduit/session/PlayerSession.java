@@ -1242,7 +1242,9 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
               + Integer.toHexString(PlayPackets.packetId(extra)) + " len=" + extra.length);
         } catch (Exception ignored) { }
       }
-      try { writeClient(extra, true); } catch (IOException exception) {
+      // Via holds a backend's Play packets behind Join Game and releases them here, the command tree
+      // among them, so it is merged here as on the direct path.
+      try { writeClient(maybeMergeCommands(extra), true); } catch (IOException exception) {
         // Abandoning the rest of the queue silently is how a translator-built Configuration
         // phase can lose its Update Tags and Finish Configuration behind a Registry Data that
         // failed to reach the socket, leaving the client waiting in a phase nothing finishes.
@@ -1823,11 +1825,14 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
     }
     if (clientState.state() == ConnectionState.CONFIGURATION && protocol.is(ConnectionState.CONFIGURATION, PacketDirection.CLIENT_TO_SERVER, id, PacketKind.CONFIGURATION_FINISH)) {
       BackendConnection target = switching.switchingTarget != null ? switching.switchingTarget : backend;
+      // In Play before the backend hears it: its Join Game and command tree can come back on the
+      // backend reader before this thread gets further, and a tree seen while the client still read
+      // as Configuration went out without the proxy's commands, every one of them red in chat.
+      clientState.beginPlay();
       if (target != null) {
         byte[] outbound = towardBackend(ConnectionState.CONFIGURATION, packet);
         if (outbound != null) target.writeUncompressed(outbound);
       }
-      clientState.beginPlay();
       // Finishing Configuration is what makes the translator release everything it held behind the
       // backend's Join Game. Those packets are queued rather than returned, so without a flush here
       // they wait for whatever client packet happens to come next, and the client's world arrives
@@ -2010,7 +2015,7 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         try {
           translated = towardClient(engine, backendState, packet);
         } catch (TranslationException translation) {
-          gg.tame.conduit.log.ConduitLog.warn("Translation failed: " + translation.getMessage());
+          gg.tame.conduit.log.ConduitLog.warn("Translation failed: " + translation.getMessage(), translation);
           ProtocolTrace.note("FAIL " + translation.getMessage());
           close();
           return false;
@@ -2032,13 +2037,15 @@ public final class PlayerSession implements CommandSource, TrackedPlayer, gg.tam
         // be ready. Via closes those gaps itself, and closing them twice is worse than not at all
         // — a second brand, a duplicated player entry or a synthesised transition the client has
         // already made is what a real 1.13 client drops the connection over. When Via is the
-        // engine its output goes to the client as it stands.
+        // engine its output goes to the client as it stands -- except the command tree, which Via
+        // knows nothing of the proxy's commands for: unmerged, every /conduit, /server and /hub
+        // typed on a translated backend was red in the client while still running.
         if (viaEngine()) {
           if (isPlayDisconnect(translated)) {
             if (kickedWhilePlaying(current, translated)) return true;
             return false;
           }
-          writeClient(translated, true);
+          writeClient(maybeMergeCommands(translated), true);
           flushTranslatorExtras(current);
           resumeAfterSwitchedJoinGame(current);
           return true;

@@ -275,14 +275,14 @@ motd = "Conduit"
 # port = 0
 
 # ViaVersion is not inside the Conduit jar: the first start installs the set this
-# build pins into lib/via, checksummed, and via = true also takes newer releases
+# build pins into lib/via, checksummed, and via = true also takes newer builds (snapshots too)
 # in the same line on start. Nothing here can stop Conduit starting. conduit = true
 # only logs a line when a newer Conduit release is on GitHub. (restart)
 # [updates]
 # via = true
 # check-only = false
 # timeout-ms = 5000
-# via-check-interval-hours = 12
+# via-check-interval-hours = 1
 # conduit = true
 
 
